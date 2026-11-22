@@ -60,17 +60,21 @@ public class DdlReverseMapper {
             if (table == null) {
                 return Optional.empty();
             }
-            for (SQLAlterTableItem item : alter.getItems()) {
-                if (item instanceof SQLAlterTableAddColumn add) {
-                    List<com.alibaba.druid.sql.ast.statement.SQLColumnDefinition> columns = add.getColumns();
-                    if (columns.size() != 1) {
-                        return Optional.empty(); // 多列 ADD 逐列生成，首版不支持
-                    }
-                    String col = columns.get(0).getColumnName();
-                    return Optional.of(new DdlReverse(
-                            "ALTER TABLE " + table + " DROP COLUMN " + col,
-                            "回滚执行前检查变更窗口内 " + col + " 列无新写入"));
+            // 多 item 的 ALTER（如两条 ADD COLUMN）逆向无法逐条完整覆盖，
+            // 只映射第一条会生成不完整反向 SQL——一律拒映射转人工（§5.2 矩阵口径）
+            if (alter.getItems().size() != 1) {
+                return Optional.empty();
+            }
+            SQLAlterTableItem item = alter.getItems().get(0);
+            if (item instanceof SQLAlterTableAddColumn add) {
+                List<com.alibaba.druid.sql.ast.statement.SQLColumnDefinition> columns = add.getColumns();
+                if (columns.size() != 1) {
+                    return Optional.empty(); // 单条 ADD 多列同括号形态，首版不支持
                 }
+                String col = columns.get(0).getColumnName();
+                return Optional.of(new DdlReverse(
+                        "ALTER TABLE " + table + " DROP COLUMN " + col,
+                        "回滚执行前检查变更窗口内 " + col + " 列无新写入"));
             }
             return Optional.empty(); // 其他 ALTER 形态（含破坏性，已在上游分流）
         }

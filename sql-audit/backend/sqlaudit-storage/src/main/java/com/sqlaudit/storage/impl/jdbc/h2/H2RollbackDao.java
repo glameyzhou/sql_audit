@@ -169,6 +169,13 @@ public class H2RollbackDao implements RollbackDao {
     }
 
     @Override
+    public RollbackSql findById(long id) {
+        List<RollbackSql> result = jdbc.query(
+                "SELECT * FROM t_rollback_sql WHERE id=?", SQL_MAPPER, id);
+        return result.isEmpty() ? null : result.get(0);
+    }
+
+    @Override
     public List<RollbackSql> listAll() {
         return jdbc.query("SELECT * FROM t_rollback_sql ORDER BY id DESC", SQL_MAPPER);
     }

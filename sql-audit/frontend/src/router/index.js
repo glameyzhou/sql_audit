@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { STORAGE_KEYS } from '../constants'
 
 // 视图骨架对齐 UI 原型（sql-audit-ui-prototype.html）的 9 大模块。
 // W2 接 API 时逐视图替换占位内容；路由结构已定版，不再动。
@@ -27,6 +28,12 @@ const router = createRouter({ history: createWebHistory(), routes })
 
 router.beforeEach((to) => {
   document.title = to.meta.title ? `${to.meta.title} · SQL 审核平台` : 'SQL 审核平台'
+
+  // 未登录且目标非登录页 → 跳登录，并携带回跳地址
+  const token = localStorage.getItem(STORAGE_KEYS.token)
+  if (!token && to.path !== '/login') {
+    return { path: '/login', query: { redirect: to.fullPath } }
+  }
 })
 
 export default router

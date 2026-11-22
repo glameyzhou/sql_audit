@@ -1,22 +1,19 @@
-# 平台库连接（开发：本机 Docker MySQL；生产经环境变量覆盖）
+# 公共配置 + 命名组合（profile group）。
+# 启动用 SPRING_PROFILES_ACTIVE=<组名>，组名 = 环境 + 方言，一个词搞定：
+#   dev-home    = dev + mysql     在家开发（MySQL 本机）
+#   dev-company = dev + postgres  公司开发（PG，地址走 SQLAUDIT_PG_URL 注入）
+#   test        = test + postgres 公司测试（PG test 库）
+#   prod        = prod + postgres 公司生产（PG prod 库）
+# 也可直接手写组合：SPRING_PROFILES_ACTIVE=dev,mysql / dev,postgres / test,h2 …
 spring:
-  datasource:
-    url: ${SQLAUDIT_DB_URL:jdbc:mysql://127.0.0.1:3306/sql-audit?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
-    username: ${SQLAUDIT_DB_USER:root}
-    password: ${SQLAUDIT_DB_PASSWORD:password}
-    hikari:
-      maximum-pool-size: 10
-      minimum-idle: 2
-      connection-timeout: 5000
-      # 审计写入点（lockChainHead FOR UPDATE）依赖连接存活；MySQL 8 空闲断连默认 8h，保守 3h
-      max-lifetime: 10800000
-      pool-name: sqlaudit-pool
-
+  profiles:
+    group:
+      dev-home: [dev, mysql]
+      dev-company: [dev, postgres]
+      test: [test, postgres]
+      prod: [prod, postgres]
   flyway:
-    enabled: true
-    # DDL 在 storage 模块 classpath:db/migration（V1__init.sql 23 表）
-    locations: classpath:db/migration/mysql
-    baseline-on-migrate: true
+    enabled: false            # memory 默认方言无库，禁用 Flyway；mysql/postgres/h2 方言各自启用
 
 server:
   port: 8080

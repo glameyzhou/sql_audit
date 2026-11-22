@@ -1,9 +1,13 @@
 package com.sqlaudit.server.config;
 
+import com.sqlaudit.auth.AesGcmDetailCipher;
 import com.sqlaudit.audit.AuditWriter;
 import com.sqlaudit.audit.ChainVerifier;
-import com.sqlaudit.audit.NoopDetailCipher;
+import com.sqlaudit.audit.DetailCipher;
+import com.sqlaudit.executor.gateway.ProductionGateway;
 import com.sqlaudit.parser.SqlParserService;
+import com.sqlaudit.server.gateway.JdbcProductionGateway;
+import com.sqlaudit.server.service.RollbackExecutor;
 import com.sqlaudit.query.channel.ConnectionProvider;
 import com.sqlaudit.query.channel.QueryChannel;
 import com.sqlaudit.query.channel.QueryOptions;
@@ -18,6 +22,9 @@ import com.sqlaudit.storage.impl.memory.InMemoryTicketDao;
 import com.sqlaudit.storage.impl.memory.InMemoryTicketUnitDao;
 import com.sqlaudit.storage.dao.ApprovalDao;
 import com.sqlaudit.storage.dao.AuditDao;
+import com.sqlaudit.storage.dao.CredentialDao;
+import com.sqlaudit.storage.dao.InstanceDao;
+import com.sqlaudit.storage.dao.RollbackDao;
 import com.sqlaudit.storage.dao.TicketDao;
 import com.sqlaudit.storage.dao.TicketUnitDao;
 import com.sqlaudit.workflow.ApprovalFlowEngine;
@@ -53,10 +60,13 @@ public class ServerBeansConfig {
 
     /**
      * 元数据 dev stub：任何表都视为「有主键 id、在白名单、无生成列/掩码列」。
-     * <p><strong>仅用于联调</strong>——生产实现按 information_schema 实时查询；
-     * stub 会让 R_NO_PK / R_OBJECT_NOT_ALLOWED 恒不命中，不能用于真实审核。</p>
+     * <p><strong>仅 memory（默认）profile 联调用</strong>——mysql/postgres/h2 profile
+     * 下由 {@code WorkerConfig#tableMetadataProvider}（RO_META + information_schema
+     * 真实现）取代；stub 会让 R_NO_PK / R_OBJECT_NOT_ALLOWED 恒不命中，
+     * 不能用于真实审核。</p>
      */
     @Bean
+    @Profile("!mysql & !postgres & !h2")
     public TableMetadataProvider tableMetadataProvider() {
         return new TableMetadataProvider() {
             @Override
@@ -85,6 +95,27 @@ public class ServerBeansConfig {
         return new RollbackCapabilityAssessor();
     }
 
+    // ---------------- 回滚执行 ----------------
+
+    /**
+     * 回滚执行网关（回滚执行经此路由到实例 RW_EXEC 连接池，无前镜像路径）。
+     *
+     * <p>与 worker 侧 {@code WorkerConfig#workerProductionGateway}（unit 执行网关，前镜像
+     * 协议）在 mysql/postgres/h2 profile 下共存——两者都实现 {@link ProductionGateway}，
+     * 注入一律按具体类解析（见本方法与 {@code WorkerConfig#gatewayBridge}），不按接口。</p>
+     */
+    @Bean
+    public JdbcProductionGateway productionGateway(InstanceDao instanceDao, CredentialDao credentialDao) {
+        return new JdbcProductionGateway(instanceDao, credentialDao);
+    }
+
+    @Bean
+    public RollbackExecutor rollbackExecutor(RollbackDao rollbackDao, TicketUnitDao ticketUnitDao,
+                                             JdbcProductionGateway productionGateway,
+                                             AuditWriter auditWriter, ZoneId zone) {
+        return new RollbackExecutor(rollbackDao, ticketUnitDao, productionGateway, auditWriter, zone);
+    }
+
     // ---------------- 审计（§7 hash 链） ----------------
 
     @Bean
@@ -92,15 +123,23 @@ public class ServerBeansConfig {
         return ZoneId.of("Asia/Shanghai");
     }
 
+    /**
+     * 审计明细加密器（§7.3：detail 密文落库、哈希算明文）。
+     * AES-GCM 实现属 auth 模块；密钥经 {@code SQLAUDIT_DETAIL_KEY} 注入，缺省用本地开发密钥。
+     */
     @Bean
-    public AuditWriter auditWriter(AuditDao auditDao, ZoneId zone) {
-        // detail 加密：W2 接 AES-GCM 实现（auth 模块）
-        return new AuditWriter(auditDao, new NoopDetailCipher(), zone);
+    public DetailCipher detailCipher() {
+        return new AesGcmDetailCipher();
     }
 
     @Bean
-    public ChainVerifier chainVerifier(AuditDao auditDao, ZoneId zone) {
-        return new ChainVerifier(auditDao, new NoopDetailCipher(), zone);
+    public AuditWriter auditWriter(AuditDao auditDao, DetailCipher detailCipher, ZoneId zone) {
+        return new AuditWriter(auditDao, detailCipher, zone);
+    }
+
+    @Bean
+    public ChainVerifier chainVerifier(AuditDao auditDao, DetailCipher detailCipher, ZoneId zone) {
+        return new ChainVerifier(auditDao, detailCipher, zone);
     }
 
     // ---------------- 工单与审批流 ----------------

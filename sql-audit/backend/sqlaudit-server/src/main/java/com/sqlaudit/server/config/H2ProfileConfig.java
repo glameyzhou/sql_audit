@@ -2,13 +2,25 @@ package com.sqlaudit.server.config;
 
 import com.sqlaudit.storage.dao.ApprovalDao;
 import com.sqlaudit.storage.dao.AuditDao;
+import com.sqlaudit.storage.dao.CredentialDao;
+import com.sqlaudit.storage.dao.FlowRuleDao;
+import com.sqlaudit.storage.dao.InstanceDao;
+import com.sqlaudit.storage.dao.RoleDao;
+import com.sqlaudit.storage.dao.RuleDao;
 import com.sqlaudit.storage.dao.TicketDao;
+import com.sqlaudit.storage.dao.UserDao;
 import com.sqlaudit.storage.impl.jdbc.h2.H2ApprovalDao;
 import com.sqlaudit.storage.impl.jdbc.h2.H2AuditDao;
+import com.sqlaudit.storage.impl.jdbc.h2.H2CredentialDao;
 import com.sqlaudit.storage.impl.jdbc.h2.H2ExecLockDao;
+import com.sqlaudit.storage.impl.jdbc.h2.H2FlowRuleDao;
+import com.sqlaudit.storage.impl.jdbc.h2.H2InstanceDao;
+import com.sqlaudit.storage.impl.jdbc.h2.H2RoleDao;
 import com.sqlaudit.storage.impl.jdbc.h2.H2RollbackDao;
+import com.sqlaudit.storage.impl.jdbc.h2.H2RuleDao;
 import com.sqlaudit.storage.impl.jdbc.h2.H2TicketDao;
 import com.sqlaudit.storage.impl.jdbc.h2.H2TicketUnitDao;
+import com.sqlaudit.storage.impl.jdbc.h2.H2UserDao;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
@@ -56,5 +68,35 @@ public class H2ProfileConfig {
     @Bean
     public H2ExecLockDao execLockDao(JdbcTemplate jdbcTemplate) {
         return new H2ExecLockDao(jdbcTemplate);
+    }
+
+    @Bean
+    public UserDao userDao(JdbcTemplate jdbcTemplate) {
+        return new H2UserDao(jdbcTemplate);
+    }
+
+    @Bean
+    public RoleDao roleDao(JdbcTemplate jdbcTemplate) {
+        return new H2RoleDao(jdbcTemplate);
+    }
+
+    @Bean
+    public InstanceDao instanceDao(JdbcTemplate jdbcTemplate) {
+        return new H2InstanceDao(jdbcTemplate);
+    }
+
+    @Bean
+    public RuleDao ruleDao(JdbcTemplate jdbcTemplate) {
+        return new H2RuleDao(jdbcTemplate);
+    }
+
+    @Bean
+    public FlowRuleDao flowRuleDao(JdbcTemplate jdbcTemplate) {
+        return new H2FlowRuleDao(jdbcTemplate);
+    }
+
+    @Bean
+    public CredentialDao credentialDao(JdbcTemplate jdbcTemplate) {
+        return new H2CredentialDao(jdbcTemplate);
     }
 }

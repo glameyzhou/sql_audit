@@ -38,7 +38,7 @@ public class TicketController {
     /** 提交预览：解析 → 规则 → 回滚清单 → 风险（无副作用，§3.1 提交页第一步）。 */
     @PostMapping("/preview")
     public TicketSubmissionService.PreviewResult preview(@RequestBody PreviewRequest req) {
-        return submission.preview(req.sql(), Dialect.valueOf(req.dialect()));
+        return submission.preview(req.sql(), Dialect.valueOf(req.dialect()), req.instanceIds());
     }
 
     /** 建单并提交审核（ERROR 命中 → 400 ERROR_RULE_BLOCKED，不建单）。 */
@@ -75,7 +75,7 @@ public class TicketController {
 
     // ---------------- DTO ----------------
 
-    public record PreviewRequest(String sql, String dialect) {
+    public record PreviewRequest(String sql, String dialect, List<Long> instanceIds) {
     }
 
     public record SubmitRequest(String title, long creatorId, List<Long> instanceIds,

@@ -12,6 +12,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Predicate;
 
 /**
  * Worker 主循环（设计文档 §3.3：轮询 + 租约 + 心跳；§2.2：worker 是唯一连生产库的进程）。
@@ -19,7 +20,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <p>循环骨架（每 {@code pollInterval} 一轮）：</p>
  * <ol>
  *   <li>{@link LeaseReaper#reap}：本轮回收（安全回 pending / 转 needs_confirm / 清过期锁）；</li>
- *   <li>{@code listClaimable} 取候选（limit 10），逐个 {@link UnitExecutionEngine#execute}
+ *   <li>{@code listClaimable} 取候选（limit 10），逐个过 {@code ticketCanExecute} 过滤
+ *       （§3.5 前置门禁：未过审批 / 需二次确认未确认的工单直接跳过，不抢占租约、
+ *       不动状态——堵上「未过审批的单子被直接执行」）；</li>
+ *   <li>过滤后的 unit 逐个 {@link UnitExecutionEngine#execute}
  *       竞争执行（claimUnit 硬条件保证多 worker 安全）；</li>
  *   <li>长任务心跳：执行线程内每 {@code heartbeatInterval} 续租（引擎执行是同步调用，
  *       W2 接真生产库后由 ProductionGateway 实现在事务内回调续租——DDL 可能跑几十分钟，
@@ -46,24 +50,53 @@ public class WorkerLoop {
     private final UnitExecutionEngine engine;
     private final LeaseReaper reaper;
     private final String workerId;
+    /** §3.5 前置门禁：工单是否已到可执行态（审批通过且完成必要的二次确认）。 */
+    private final Predicate<Long> ticketCanExecute;
     private final AtomicBoolean running = new AtomicBoolean(false);
+    private volatile Thread loopThread;
 
     public WorkerLoop(TicketUnitDao unitDao, UnitExecutionEngine engine,
-                      LeaseReaper reaper, String workerId) {
+                      LeaseReaper reaper, String workerId, Predicate<Long> ticketCanExecute) {
         this.unitDao = Objects.requireNonNull(unitDao);
         this.engine = Objects.requireNonNull(engine);
         this.reaper = Objects.requireNonNull(reaper);
         this.workerId = Objects.requireNonNull(workerId);
+        this.ticketCanExecute = Objects.requireNonNull(ticketCanExecute);
     }
 
-    /** 单轮执行（reap → 取候选 → 逐个竞争执行）。返回本轮执行成功的 unit 数。 */
+    /** 单轮执行（reap → 取候选 → canExecute 过滤 → 逐个竞争执行）。返回本轮执行成功的 unit 数。 */
     public int runOnce(LocalDateTime now) {
         reaper.reap(now);
 
         List<TicketUnit> candidates = unitDao.listClaimable(now, BATCH_LIMIT);
         int executed = 0;
         for (TicketUnit unit : candidates) {
-            UnitExecutionEngine.EngineResult result = engine.execute(unit, workerId, now);
+            // §3.5 前置门禁：未过审批（含需二次确认未确认）的工单跳过且不动状态，
+            // 堵上「未过审批的单子被直接执行」——审批流推进后下一轮自然恢复
+            boolean canExecute;
+            try {
+                canExecute = ticketCanExecute.test(unit.getTicketId());
+            } catch (Exception e) {
+                // 谓词异常（如孤儿 unit 的工单已删）不打断整轮：按不可执行跳过，
+                // 否则同一候选会让每一轮都在此处中断、饿死后续候选
+                log.warn("[worker-{}] canExecute 判定异常，跳过 unit={} ticket={}: {}",
+                        workerId, unit.getId(), unit.getTicketId(), e.getMessage());
+                continue;
+            }
+            if (!canExecute) {
+                log.debug("[worker-{}] 工单未到可执行态，跳过不动状态 unit={} ticket={}",
+                        workerId, unit.getId(), unit.getTicketId());
+                continue;
+            }
+            UnitExecutionEngine.EngineResult result;
+            try {
+                result = engine.execute(unit, workerId, now);
+            } catch (Exception e) {
+                // 执行期异常（如指纹门禁的 ro_meta 连接失败）不打断整轮：unit 状态
+                // 由租约回收器兜底（executing + 心跳停滞 → needs_confirm 人工核对）
+                log.error("[worker-{}] 执行异常 unit={}: {}", workerId, unit.getId(), e.getMessage());
+                continue;
+            }
             if (result.status() == UnitExecutionEngine.EngineResult.Status.SUCCESS) {
                 executed++;
             }
@@ -93,12 +126,22 @@ public class WorkerLoop {
             }
         }, "worker-loop-" + workerId);
         t.setDaemon(true);
+        this.loopThread = t;
         t.start();
         return t;
     }
 
-    /** 停止（优雅退出：当前轮跑完后结束）。 */
+    /** 停止（优雅退出：置 running=false 并中断休眠，当前轮跑完后结束）。 */
     public void stop() {
         running.set(false);
+        Thread t = loopThread;
+        if (t != null) {
+            t.interrupt();
+        }
+    }
+
+    /** 是否正在运行（观测 / 测试用）。 */
+    public boolean isRunning() {
+        return running.get();
     }
 }

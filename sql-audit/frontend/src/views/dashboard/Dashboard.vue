@@ -98,9 +98,11 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Plus, ArrowRight, Tickets, Stamp, Monitor, WarningFilled } from '@element-plus/icons-vue'
 import { api } from '../../api'
-import { CURRENT_USER, statusMeta, riskMeta } from '../../constants'
+import { statusMeta, riskMeta } from '../../constants'
+import { useSessionStore } from '../../stores/session'
 
 const router = useRouter()
+const session = useSessionStore()
 const tickets = ref([])
 const loading = ref(false)
 const error = ref(false)
@@ -143,7 +145,7 @@ async function load() {
   loading.value = true
   error.value = false
   try {
-    tickets.value = (await api.listTickets(CURRENT_USER.id)) || []
+    tickets.value = (await api.listTickets(session.user?.id)) || []
   } catch {
     error.value = true
     tickets.value = []

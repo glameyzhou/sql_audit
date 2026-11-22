@@ -137,6 +137,14 @@ public class PostgresTicketUnitDao implements TicketUnitDao {
     }
 
     @Override
+    public int updateDdlFingerprint(long id, String fingerprint) {
+        // §3.5：审批通过时采集结构指纹写入；执行前 worker 侧重算比对（R_SCHEMA_DRIFT）
+        return jdbc.update(
+                "UPDATE " + tableName + " SET ddl_fingerprint=? WHERE id=?",
+                fingerprint, id);
+    }
+
+    @Override
     public int releaseLeaseToPending(long id) {
         return jdbc.update(
                 "UPDATE " + tableName + " SET status='pending', lease_owner=NULL, lease_until=NULL, heartbeat_at=NULL "

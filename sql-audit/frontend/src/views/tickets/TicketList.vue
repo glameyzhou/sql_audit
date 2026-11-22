@@ -38,8 +38,8 @@
 
         <el-table-column label="环境" width="80">
           <template #default="{ row }">
-            <el-tag :type="(ENV[row.environment] || {}).type || 'info'" effect="plain" size="small">
-              {{ (ENV[row.environment] || {}).label || row.environment || '-' }}
+            <el-tag :type="envMeta(row.environment).type" effect="plain" size="small">
+              {{ envMeta(row.environment).label }}
             </el-tag>
           </template>
         </el-table-column>
@@ -74,7 +74,8 @@
 import { ref, onMounted } from 'vue'
 import { Plus } from '@element-plus/icons-vue'
 import { api } from '../../api'
-import { ENV, CURRENT_USER, riskMeta, statusMeta } from '../../constants'
+import { envMeta, riskMeta, statusMeta } from '../../constants'
+import { useSessionStore } from '../../stores/session'
 
 // 开发期假实例（与 Submit 保持一致，用于实例列展示）
 const INSTANCES = {
@@ -82,6 +83,7 @@ const INSTANCES = {
   2: '预发 MySQL'
 }
 
+const session = useSessionStore()
 const loading = ref(false)
 const tickets = ref([])
 
@@ -90,7 +92,7 @@ onMounted(load)
 async function load() {
   loading.value = true
   try {
-    tickets.value = await api.listTickets(CURRENT_USER.id)
+    tickets.value = await api.listTickets(session.user?.id)
   } catch {
     tickets.value = []
   } finally {

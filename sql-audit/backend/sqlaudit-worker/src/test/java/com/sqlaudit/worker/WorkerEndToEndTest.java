@@ -1,6 +1,8 @@
 package com.sqlaudit.worker;
 
 import com.sqlaudit.executor.engine.UnitExecutionEngine;
+import com.sqlaudit.executor.gate.ExecutionGate;
+import com.sqlaudit.executor.gate.GateContext;
 import com.sqlaudit.executor.reaper.LeaseReaper;
 import com.sqlaudit.parser.SqlParserService;
 import com.sqlaudit.storage.impl.memory.InMemoryExecLockDao;
@@ -24,13 +26,31 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 /**
  * Worker 端到端测试：轮询 → 抢占 → 前镜像 → DML → 对账 → 反向 SQL 落库。
- * H2 内存库模拟生产库（真 JDBC 事务语义）。
+ * H2 内存库模拟生产库（真 JDBC 事务语义）。门禁用恒 pass 的
+ * {@link ExecutionGate} + 内存 fake 上下文（不因指纹/复核失败干扰执行链路测试）。
  */
 class WorkerEndToEndTest {
 
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 11, 22, 19, 30, 0);
     private static final H2DemoGateway GATEWAY =
             new H2DemoGateway("jdbc:h2:mem:workerdemo;DB_CLOSE_DELAY=-1");
+
+    /** 恒 pass 门禁：指纹提供者返回固定串（本测试 unit 不写 ddl_fingerprint，门禁不会查）。 */
+    private static final ExecutionGate GATE =
+            new ExecutionGate((instanceId, schema, table) -> "fp-fixed");
+
+    /** 恒通过门禁上下文：无审批记录（时效门禁不生效）、恒判可回滚。 */
+    private static final GateContext GATE_CONTEXT = new GateContext() {
+        @Override
+        public LocalDateTime approvedAt(TicketUnit unit) {
+            return null;
+        }
+
+        @Override
+        public boolean rollbackStillAvailable(TicketUnit unit) {
+            return true;
+        }
+    };
 
     private final InMemoryTicketUnitDao unitDao = new InMemoryTicketUnitDao();
     private final InMemoryExecLockDao lockDao = new InMemoryExecLockDao();
@@ -41,10 +61,11 @@ class WorkerEndToEndTest {
             new GatewayBridgeImpl(GATEWAY, new SqlParserService(), demoMetadata()),
             new RollbackPersisterImpl(
                     new RollbackLifecycleService(rollbackDao, new SqlParserService()),
-                    new SqlParserService()));
+                    new SqlParserService(), demoMetadata()),
+            GATE, GATE_CONTEXT);
 
     private final WorkerLoop loop = new WorkerLoop(
-            unitDao, engine, new LeaseReaper(unitDao, lockDao), "worker-test");
+            unitDao, engine, new LeaseReaper(unitDao, lockDao), "worker-test", t -> true);
 
     @BeforeAll
     static void initDemo() {

@@ -2,13 +2,25 @@ package com.sqlaudit.server.config;
 
 import com.sqlaudit.storage.dao.ApprovalDao;
 import com.sqlaudit.storage.dao.AuditDao;
+import com.sqlaudit.storage.dao.CredentialDao;
+import com.sqlaudit.storage.dao.FlowRuleDao;
+import com.sqlaudit.storage.dao.InstanceDao;
+import com.sqlaudit.storage.dao.RoleDao;
+import com.sqlaudit.storage.dao.RuleDao;
 import com.sqlaudit.storage.dao.TicketDao;
+import com.sqlaudit.storage.dao.UserDao;
 import com.sqlaudit.storage.impl.jdbc.mysql.MySqlApprovalDao;
 import com.sqlaudit.storage.impl.jdbc.mysql.MySqlAuditDao;
+import com.sqlaudit.storage.impl.jdbc.mysql.MySqlCredentialDao;
 import com.sqlaudit.storage.impl.jdbc.mysql.MySqlExecLockDao;
+import com.sqlaudit.storage.impl.jdbc.mysql.MySqlFlowRuleDao;
+import com.sqlaudit.storage.impl.jdbc.mysql.MySqlInstanceDao;
+import com.sqlaudit.storage.impl.jdbc.mysql.MySqlRoleDao;
 import com.sqlaudit.storage.impl.jdbc.mysql.MySqlRollbackDao;
+import com.sqlaudit.storage.impl.jdbc.mysql.MySqlRuleDao;
 import com.sqlaudit.storage.impl.jdbc.mysql.MySqlTicketDao;
 import com.sqlaudit.storage.impl.jdbc.mysql.MySqlTicketUnitDao;
+import com.sqlaudit.storage.impl.jdbc.mysql.MySqlUserDao;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
@@ -58,5 +70,35 @@ public class MysqlProfileConfig {
     @Bean
     public MySqlExecLockDao execLockDao(JdbcTemplate jdbcTemplate) {
         return new MySqlExecLockDao(jdbcTemplate);
+    }
+
+    @Bean
+    public UserDao userDao(JdbcTemplate jdbcTemplate) {
+        return new MySqlUserDao(jdbcTemplate);
+    }
+
+    @Bean
+    public RoleDao roleDao(JdbcTemplate jdbcTemplate) {
+        return new MySqlRoleDao(jdbcTemplate);
+    }
+
+    @Bean
+    public InstanceDao instanceDao(JdbcTemplate jdbcTemplate) {
+        return new MySqlInstanceDao(jdbcTemplate);
+    }
+
+    @Bean
+    public RuleDao ruleDao(JdbcTemplate jdbcTemplate) {
+        return new MySqlRuleDao(jdbcTemplate);
+    }
+
+    @Bean
+    public FlowRuleDao flowRuleDao(JdbcTemplate jdbcTemplate) {
+        return new MySqlFlowRuleDao(jdbcTemplate);
+    }
+
+    @Bean
+    public CredentialDao credentialDao(JdbcTemplate jdbcTemplate) {
+        return new MySqlCredentialDao(jdbcTemplate);
     }
 }

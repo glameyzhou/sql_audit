@@ -44,12 +44,27 @@ class MysqlProfileSmokeTest {
         jdbc.execute("UPDATE t_chain_head SET last_seq=0, "
                 + "last_hash='0000000000000000000000000000000000000000000000000000000000000000' WHERE id=1");
 
+        // 自足实例（id=999，与本机种子实例互不干扰）：生产实例=本 MySQL 的 sql-audit 库，
+        // 建演示表 + RO_META/RW_EXEC 凭据（密文=开发默认密钥加密的 "password"），
+        // 供预览/门禁走真实元数据（information_schema）与 worker 真执行
+        jdbc.execute("CREATE TABLE IF NOT EXISTS t_demo "
+                + "(id INT PRIMARY KEY, a INT, b VARCHAR(32))");
+        jdbc.execute("DELETE FROM t_credential WHERE instance_id=999");
+        jdbc.execute("DELETE FROM t_instance WHERE id=999");
+        jdbc.update("INSERT INTO t_instance (id, name, dialect, environment, owner_id, host, port, "
+                + "default_schema, status, created_by) VALUES "
+                + "(999, '冒烟自足实例', 'MYSQL', 'prod', 1, '127.0.0.1', 3306, "
+                + "'sql-audit', 'active', 1)");
+        jdbc.update("INSERT INTO t_credential (instance_id, account_type, username, password_enc) VALUES "
+                + "(999, 'RO_META', 'root', 'dOsm0+qJZwen+8nK.G10Ice4C0P3XQEtcHOrlpNdex82ZrS/9'), "
+                + "(999, 'RW_EXEC', 'root', '93F1JVK1QyaqMuhb.Ov4QGjmumsGssd92I6KgHC/3dT11fntX')");
+
         // 1. 建单 + 提审（MEDIUM → LEAD 单节点）
         var created = mvc.perform(post("/api/tickets")
                         .contentType(APPLICATION_JSON)
                         .content("""
                                 {"title":"MySQL 冒烟","creatorId":100,
-                                 "instanceIds":[1],"environment":"prod",
+                                 "instanceIds":[999],"environment":"prod",
                                  "sql":"UPDATE t_demo SET a = 1 WHERE id = 1","dialect":"MYSQL"}"""))
                 .andExpect(status().isOk())
                 .andReturn();

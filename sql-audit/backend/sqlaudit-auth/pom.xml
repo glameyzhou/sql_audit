@@ -10,11 +10,20 @@
     </parent>
     <artifactId>sqlaudit-auth</artifactId>
     <name>sqlaudit-auth</name>
-    <description>登录、JWT、RBAC、凭据加解密（W1 流 B-1）</description>
+    <description>登录、JWT、RBAC、凭据加解密、审计明细加解密（W1 流 B-1）</description>
     <dependencies>
         <dependency>
             <groupId>com.sqlaudit</groupId>
             <artifactId>sqlaudit-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.sqlaudit</groupId>
+            <artifactId>sqlaudit-audit</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 </project>

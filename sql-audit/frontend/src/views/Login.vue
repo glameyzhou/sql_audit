@@ -9,10 +9,27 @@
       <h1 class="login-title">SQL 审核平台</h1>
       <p class="login-sub">POLARSTARX · INTERNAL</p>
 
-      <el-form label-position="top" class="login-form">
-        <el-form-item label="用户名"><el-input placeholder="待 W2 接入" disabled /></el-form-item>
-        <el-form-item label="密码"><el-input type="password" placeholder="待 W2 接入" disabled show-password /></el-form-item>
-        <el-button type="primary" class="w-full" disabled>登录</el-button>
+      <el-form label-position="top" class="login-form" @submit.prevent="handleLogin">
+        <el-form-item label="用户名">
+          <el-input
+            v-model="form.username"
+            placeholder="用户名"
+            autocomplete="username"
+          />
+        </el-form-item>
+        <el-form-item label="密码">
+          <el-input
+            v-model="form.password"
+            type="password"
+            placeholder="密码"
+            show-password
+            autocomplete="current-password"
+            @keyup.enter="handleLogin"
+          />
+        </el-form-item>
+        <el-button type="primary" class="w-full" :loading="loading" @click="handleLogin">
+          登录
+        </el-button>
       </el-form>
 
       <p class="login-foot">极星动力 · 以星为引，每一步变更皆有迹可循</p>
@@ -21,7 +38,35 @@
 </template>
 
 <script setup>
+import { reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import { useSessionStore } from '../stores/session'
 import logoUrl from '../assets/logo.svg'
+
+const route = useRoute()
+const router = useRouter()
+const session = useSessionStore()
+
+const form = reactive({ username: '', password: '' })
+const loading = ref(false)
+
+async function handleLogin() {
+  if (!form.username.trim() || !form.password) {
+    ElMessage.warning('请输入用户名和密码')
+    return
+  }
+  loading.value = true
+  try {
+    await session.login(form.username.trim(), form.password)
+    ElMessage.success('登录成功')
+    router.push(route.query.redirect || '/')
+  } catch {
+    // 登录失败（401 等）已由响应拦截器统一弹 ElMessage.error
+  } finally {
+    loading.value = false
+  }
+}
 </script>
 
 <style scoped>

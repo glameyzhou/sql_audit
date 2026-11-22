@@ -1,0 +1,119 @@
+package com.sqlaudit.storage.impl.jdbc.postgresql;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sqlaudit.storage.dao.RuleDao;
+import com.sqlaudit.storage.model.Rule;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+
+import java.sql.PreparedStatement;
+import java.sql.Timestamp;
+import java.sql.Types;
+import java.time.LocalDateTime;
+import java.util.List;
+
+/**
+ * rule 的 PostgreSQL 真实现（DDL §6 t_rule 表；内存版语义基准
+ * {@code InMemoryRuleDao}，SQL 逐句对照 MySQL 版 {@code MySqlRuleDao}）。
+ *
+ * <p>{@code params}（JSON）写入用 {@code setObject(idx, jsonText, Types.OTHER)} 让 PG 驱动
+ * 识别为 json。自增 id 回填用 {@code INSERT ... RETURNING id}。删除为硬删。</p>
+ */
+public class PostgresRuleDao implements RuleDao {
+
+    private static final ObjectMapper JSON = new ObjectMapper();
+
+    private final JdbcTemplate jdbc;
+
+    public PostgresRuleDao(JdbcTemplate jdbc) {
+        this.jdbc = jdbc;
+    }
+
+    private static final RowMapper<Rule> MAPPER = (rs, i) -> {
+        Rule r = new Rule();
+        r.setId(rs.getLong("id"));
+        r.setCode(rs.getString("code"));
+        r.setDialect(rs.getString("dialect"));
+        r.setStatementType(rs.getString("statement_type"));
+        r.setSeverity(rs.getString("severity"));
+        r.setEnabled(rs.getBoolean("enabled"));
+        r.setParams(readParams(rs.getString("params")));
+        r.setDescription(rs.getString("description"));
+        Timestamp created = rs.getTimestamp("created_at");
+        r.setCreatedAt(created == null ? null : created.toLocalDateTime());
+        return r;
+    };
+
+    @Override
+    public List<Rule> listAll() {
+        return jdbc.query("SELECT * FROM t_rule ORDER BY id", MAPPER);
+    }
+
+    @Override
+    public long insert(Rule rule) {
+        long id = jdbc.query(conn -> {
+            PreparedStatement ps = conn.prepareStatement(
+                    "INSERT INTO t_rule (code, dialect, statement_type, severity, enabled, params, "
+                            + "description, created_at) VALUES (?,?,?,?,?,?,?,?) RETURNING id");
+            ps.setString(1, rule.getCode());
+            ps.setString(2, rule.getDialect());
+            ps.setString(3, rule.getStatementType());
+            ps.setString(4, rule.getSeverity());
+            ps.setBoolean(5, rule.getEnabled() == null || rule.getEnabled());
+            ps.setObject(6, writeParams(rule.getParams()), Types.OTHER);
+            ps.setString(7, rule.getDescription());
+            ps.setTimestamp(8, Timestamp.valueOf(rule.getCreatedAt() != null
+                    ? rule.getCreatedAt() : LocalDateTime.now()));
+            return ps;
+        }, rs -> {
+            if (rs.next()) {
+                return rs.getLong(1);
+            }
+            throw new IllegalStateException("INSERT ... RETURNING id 未返回任何行");
+        });
+        rule.setId(id);
+        return id;
+    }
+
+    @Override
+    public int update(Rule rule) {
+        return jdbc.update(
+                "UPDATE t_rule SET code=?, dialect=?, statement_type=?, severity=?, enabled=?, "
+                        + "params=?, description=? WHERE id=?",
+                rule.getCode(),
+                rule.getDialect(),
+                rule.getStatementType(),
+                rule.getSeverity(),
+                rule.getEnabled() == null || rule.getEnabled(),
+                rule.getParams() == null ? null : writeParams(rule.getParams()),
+                rule.getDescription(),
+                rule.getId());
+    }
+
+    @Override
+    public int delete(long id) {
+        return jdbc.update("DELETE FROM t_rule WHERE id=?", id);
+    }
+
+    private static String writeParams(Object params) {
+        if (params == null) {
+            return null;
+        }
+        try {
+            return JSON.writeValueAsString(params);
+        } catch (Exception e) {
+            throw new IllegalStateException("params JSON 序列化失败", e);
+        }
+    }
+
+    private static Object readParams(String json) {
+        if (json == null || json.isEmpty()) {
+            return null;
+        }
+        try {
+            return JSON.readValue(json, Object.class);
+        } catch (Exception e) {
+            throw new IllegalStateException("params JSON 解析失败: " + json, e);
+        }
+    }
+}

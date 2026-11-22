@@ -259,11 +259,28 @@ public abstract class AbstractDruidParser implements DialectParser {
         }
 
         public void onTableSource(SQLExprTableSource x) {
-            String tableName = x.getTableName();
+            // Druid 对带引号标识符原样返回（MySQL 反引号 / PG 双引号 / ANSI 单引号），
+            // 这里剥离外围引号归一化——否则下游（指纹采集 SHOW CREATE TABLE 拼接、
+            // 漂移比对、展示）会拿到带引号的名字再次包引号，产出非法 SQL
+            String tableName = stripQuotes(x.getTableName());
             if (tableName != null && !cteNames.contains(tableName.toLowerCase())) {
-                String schema = x.getSchema();
+                String schema = stripQuotes(x.getSchema());
                 tables.add(new SqlObject(schema, tableName, "TABLE"));
             }
+        }
+
+        /** 剥离标识符外围引号（`name` / "name" / 'name' → name）；无引号原样返回。 */
+        private static String stripQuotes(String name) {
+            if (name == null || name.length() < 2) {
+                return name;
+            }
+            char first = name.charAt(0);
+            char last = name.charAt(name.length() - 1);
+            if ((first == '`' && last == '`') || (first == '"' && last == '"')
+                    || (first == '\'' && last == '\'')) {
+                return name.substring(1, name.length() - 1);
+            }
+            return name;
         }
 
         public void onFunction(String methodName) {

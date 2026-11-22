@@ -2,6 +2,7 @@ package com.sqlaudit.server.web;
 
 import com.sqlaudit.common.exception.IllegalStateTransitionException;
 import com.sqlaudit.common.exception.SqlauditException;
+import com.sqlaudit.server.auth.AuthenticationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -20,6 +21,14 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, String>> business(SqlauditException e) {
         return ResponseEntity.badRequest().body(Map.of(
                 "code", e.getCode() == null ? "BUSINESS_ERROR" : e.getCode(),
+                "message", String.valueOf(e.getMessage())));
+    }
+
+    /** 登录认证失败（用户名/密码错误、账号停用）→ 401。 */
+    @ExceptionHandler(AuthenticationException.class)
+    public ResponseEntity<Map<String, String>> unauthorized(AuthenticationException e) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of(
+                "code", "UNAUTHORIZED",
                 "message", String.valueOf(e.getMessage())));
     }
 

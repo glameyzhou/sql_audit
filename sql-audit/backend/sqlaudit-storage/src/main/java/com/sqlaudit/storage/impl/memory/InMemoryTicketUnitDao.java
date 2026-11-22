@@ -126,6 +126,17 @@ public class InMemoryTicketUnitDao implements TicketUnitDao {
     }
 
     @Override
+    public synchronized int updateDdlFingerprint(long id, String fingerprint) {
+        // §3.5：审批通过时采集结构指纹写入；执行前 worker 侧重算比对（R_SCHEMA_DRIFT）
+        TicketUnit unit = store.get(id);
+        if (unit == null) {
+            return 0;
+        }
+        unit.setDdlFingerprint(fingerprint);
+        return 1;
+    }
+
+    @Override
     public synchronized int releaseLeaseToPending(long id) {
         TicketUnit unit = store.get(id);
         if (unit == null) {

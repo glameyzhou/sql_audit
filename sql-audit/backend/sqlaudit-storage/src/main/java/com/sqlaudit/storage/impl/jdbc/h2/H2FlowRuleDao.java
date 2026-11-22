@@ -1,0 +1,119 @@
+package com.sqlaudit.storage.impl.jdbc.h2;
+
+import com.sqlaudit.storage.dao.FlowRuleDao;
+import com.sqlaudit.storage.model.FlowRule;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
+
+import java.sql.PreparedStatement;
+import java.sql.Timestamp;
+import java.sql.Types;
+import java.time.LocalDateTime;
+import java.util.List;
+
+/**
+ * flow_rule 的 H2 真实现（DDL §5 t_flow_rule 表；内存版语义基准
+ * {@code InMemoryFlowRuleDao}，SQL 逐句对照 PostgreSQL 版 {@code PostgresFlowRuleDao}）。
+ *
+ * <p>H2（MODE=PostgreSQL）不支持 {@code INSERT ... RETURNING}，自增 id 回填改用
+ * {@code GeneratedKeyHolder}（{@code new String[]{"id"}}）。删除为硬删。</p>
+ */
+public class H2FlowRuleDao implements FlowRuleDao {
+
+    private final JdbcTemplate jdbc;
+
+    public H2FlowRuleDao(JdbcTemplate jdbc) {
+        this.jdbc = jdbc;
+    }
+
+    private static final RowMapper<FlowRule> MAPPER = (rs, i) -> {
+        FlowRule f = new FlowRule();
+        f.setId(rs.getLong("id"));
+        f.setName(rs.getString("name"));
+        f.setEnvironment(rs.getString("environment"));
+        long instanceId = rs.getLong("instance_id");
+        f.setInstanceId(rs.wasNull() ? null : instanceId);
+        f.setRiskLevel(rs.getString("risk_level"));
+        f.setNonOverridable(rs.getBoolean("non_overridable"));
+        int priority = rs.getInt("priority");
+        f.setPriority(rs.wasNull() ? null : priority);
+        f.setEnabled(rs.getBoolean("enabled"));
+        long createdBy = rs.getLong("created_by");
+        f.setCreatedBy(rs.wasNull() ? null : createdBy);
+        Timestamp created = rs.getTimestamp("created_at");
+        f.setCreatedAt(created == null ? null : created.toLocalDateTime());
+        Timestamp updated = rs.getTimestamp("updated_at");
+        f.setUpdatedAt(updated == null ? null : updated.toLocalDateTime());
+        return f;
+    };
+
+    @Override
+    public List<FlowRule> listAll() {
+        return jdbc.query("SELECT * FROM t_flow_rule ORDER BY id", MAPPER);
+    }
+
+    @Override
+    public FlowRule findById(long id) {
+        List<FlowRule> result = jdbc.query("SELECT * FROM t_flow_rule WHERE id=?", MAPPER, id);
+        return result.isEmpty() ? null : result.get(0);
+    }
+
+    @Override
+    public long insert(FlowRule flowRule) {
+        KeyHolder kh = new GeneratedKeyHolder();
+        jdbc.update(conn -> {
+            PreparedStatement ps = conn.prepareStatement(
+                    "INSERT INTO t_flow_rule (name, environment, instance_id, risk_level, "
+                            + "non_overridable, priority, enabled, created_by, created_at, updated_at) "
+                            + "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    new String[]{"id"});
+            ps.setString(1, flowRule.getName());
+            ps.setString(2, flowRule.getEnvironment());
+            setNullableLong(ps, 3, flowRule.getInstanceId());
+            ps.setString(4, flowRule.getRiskLevel());
+            ps.setBoolean(5, flowRule.getNonOverridable() != null && flowRule.getNonOverridable());
+            ps.setInt(6, flowRule.getPriority() != null ? flowRule.getPriority() : 0);
+            ps.setBoolean(7, flowRule.getEnabled() == null || flowRule.getEnabled());
+            ps.setLong(8, flowRule.getCreatedBy());
+            ps.setTimestamp(9, Timestamp.valueOf(flowRule.getCreatedAt() != null
+                    ? flowRule.getCreatedAt() : LocalDateTime.now()));
+            ps.setTimestamp(10, Timestamp.valueOf(flowRule.getUpdatedAt() != null
+                    ? flowRule.getUpdatedAt() : LocalDateTime.now()));
+            return ps;
+        }, kh);
+        long id = kh.getKey().longValue();
+        flowRule.setId(id);
+        return id;
+    }
+
+    @Override
+    public int update(FlowRule flowRule) {
+        return jdbc.update(
+                "UPDATE t_flow_rule SET name=?, environment=?, instance_id=?, risk_level=?, "
+                        + "non_overridable=?, priority=?, enabled=?, updated_at=? WHERE id=?",
+                flowRule.getName(),
+                flowRule.getEnvironment(),
+                flowRule.getInstanceId(),
+                flowRule.getRiskLevel(),
+                flowRule.getNonOverridable() != null && flowRule.getNonOverridable(),
+                flowRule.getPriority() != null ? flowRule.getPriority() : 0,
+                flowRule.getEnabled() == null || flowRule.getEnabled(),
+                Timestamp.valueOf(LocalDateTime.now()),
+                flowRule.getId());
+    }
+
+    @Override
+    public int delete(long id) {
+        return jdbc.update("DELETE FROM t_flow_rule WHERE id=?", id);
+    }
+
+    private static void setNullableLong(PreparedStatement ps, int index, Long value) throws java.sql.SQLException {
+        if (value == null) {
+            ps.setNull(index, Types.BIGINT);
+        } else {
+            ps.setLong(index, value);
+        }
+    }
+}

@@ -33,6 +33,16 @@
             <groupId>com.sqlaudit</groupId>
             <artifactId>sqlaudit-rollback</artifactId>
         </dependency>
+        <!-- 执行前门禁（§3.5）：WorkerLoop 的 ticketCanExecute 过滤直接依赖审批流引擎的 canExecute -->
+        <dependency>
+            <groupId>com.sqlaudit</groupId>
+            <artifactId>sqlaudit-workflow</artifactId>
+        </dependency>
+        <!-- WorkerGateContext 直接 import RuleEngine / TableMetadataProvider（回滚能力复核） -->
+        <dependency>
+            <groupId>com.sqlaudit</groupId>
+            <artifactId>sqlaudit-rule</artifactId>
+        </dependency>
         <!-- worker 内嵌运行（可选独立进程） -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -54,5 +64,29 @@
             <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- JdbcProductionGatewayIT 对本地 Docker MySQL 的集成测试（无库时 Assumptions 跳过） -->
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <!-- surefire 默认只匹配 *Test，补上 *IT（生产库端到端集成测试；
+                 MySQL 不可用时测试类内用 Assumptions 优雅跳过，不会红） -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <includes>
+                        <include>**/*Test.java</include>
+                        <include>**/*Tests.java</include>
+                        <include>**/*IT.java</include>
+                    </includes>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>

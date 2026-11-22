@@ -66,6 +66,18 @@
               <span class="cell-dim">{{ formatTime(row.createdAt) }}</span>
             </template>
           </el-table-column>
+          <el-table-column v-if="canExecute" label="操作" width="140" align="center" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                v-if="isExecutable(row.status)"
+                link
+                type="danger"
+                size="small"
+                :loading="executingId === row.id"
+                @click="execute(row)"
+              >执行回滚</el-button>
+            </template>
+          </el-table-column>
         </el-table>
         <el-empty v-else-if="!loading" description="暂无回滚记录" />
       </div>
@@ -74,21 +86,34 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { Plus } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { coverageMeta } from '../../constants'
 import { api } from '../../api'
+import { useSessionStore } from '../../stores/session'
+
+const session = useSessionStore()
+/** 执行回滚需 ADMIN/DBA（真实鉴权以后端为准，此处仅控制可见性） */
+const canExecute = computed(() => session.roles.includes('ADMIN') || session.roles.includes('DBA'))
 
 // 回滚 SQL 生命周期（对齐后端 RollbackStatus 小写 dbValue）
 const RB_STATUS = {
   generated: { label: '待校验', type: 'info' },
   verified: { label: '已校验', type: 'success' },
   applied: { label: '已执行', type: 'primary' },
+  failed: { label: '执行失败', type: 'danger' },
+  partial: { label: '部分执行', type: 'warning' },
   expired: { label: '已过期', type: 'info' },
   not_available: { label: '不可回滚', type: 'danger' }
 }
 function rbStatusMeta(s) {
   return RB_STATUS[s] || { label: s || '-', type: 'info' }
+}
+
+/** 仅 generated / verified 可执行回滚 */
+function isExecutable(status) {
+  return status === 'generated' || status === 'verified'
 }
 
 function formatTime(v) {
@@ -101,6 +126,7 @@ function formatTime(v) {
 
 const loading = ref(false)
 const rows = ref([])
+const executingId = ref(null)
 
 async function load() {
   loading.value = true
@@ -110,6 +136,32 @@ async function load() {
     /* 拦截器已提示错误 */
   } finally {
     loading.value = false
+  }
+}
+
+async function execute(row) {
+  try {
+    await ElMessageBox.confirm(
+      `确认执行回滚 #${row.id}？反向语句将真正应用到生产库，此操作不可撤销。`,
+      '执行回滚',
+      { type: 'warning', confirmButtonText: '执行', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  executingId.value = row.id
+  try {
+    const result = await api.executeRollback(row.id)
+    if (result.status === 'applied') {
+      ElMessage.success(`回滚 #${row.id} 已执行，应用 ${result.applied} 条`)
+    } else {
+      ElMessage.warning(`回滚 #${row.id} 状态 ${result.status}，已应用 ${result.applied} 条`)
+    }
+    await load()
+  } catch {
+    /* 拦截器已提示错误 */
+  } finally {
+    executingId.value = null
   }
 }
 

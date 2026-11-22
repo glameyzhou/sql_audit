@@ -8,6 +8,7 @@ import com.sqlaudit.common.model.ParsedStatement;
 import com.sqlaudit.executor.gateway.ProductionGateway;
 import com.sqlaudit.parser.SqlParserService;
 import com.sqlaudit.rollback.preimage.PreimagePlanner;
+import com.sqlaudit.worker.gateway.JdbcTableMetadataProvider.InstanceContext;
 import com.sqlaudit.rule.TableMetadataProvider;
 import com.sqlaudit.storage.model.TicketUnit;
 
@@ -45,6 +46,9 @@ public class GatewayBridgeImpl implements com.sqlaudit.executor.engine.UnitExecu
 
     @Override
     public ProductionGateway.ExecutionResult execute(TicketUnit unit) {
+        // 元数据路由：前镜像规划按 unit 实例取真实表结构
+        InstanceContext.set(unit.getInstanceId());
+        try {
         String sql = new String(unit.getStatement(), StandardCharsets.UTF_8);
         Dialect dialect = dialectOf(unit);
         List<ParsedStatement> parsed = parser.parse(sql, dialect);
@@ -59,14 +63,20 @@ public class GatewayBridgeImpl implements com.sqlaudit.executor.engine.UnitExecu
             return ProductionGateway.ExecutionResult.executionError("前镜像构造失败（无主键元数据等），拒绝执行");
         }
         return gateway.executeInTransaction(request);
+        } finally {
+            InstanceContext.set(null);
+        }
     }
 
     private ProductionGateway.ExecutionRequest buildRequest(TicketUnit unit, ParsedStatement ps,
                                                             Dialect dialect) {
-        // INSERT：无前镜像（主键由 gateway 取）
+        // INSERT：无前镜像（主键由 gateway 按方言取）；pk 列名透传给 gateway 供 PG RETURNING 改写
         if (ps.getStatementType() == StatementType.INSERT) {
+            TableMetadataProvider.TableMetadata tm = metadata.getTable(
+                    unit.getSchemaName(), unit.getObjectName());
+            List<String> pk = tm != null ? tm.primaryKeyColumns() : List.of();
             return new ProductionGateway.ExecutionRequest(
-                    ps.getOriginalSql(), null, null, List.of(), unit.getInstanceId());
+                    ps.getOriginalSql(), null, null, pk, unit.getInstanceId());
         }
 
         // UPDATE / DELETE：现场构造前镜像 SELECT（§5.3）

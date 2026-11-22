@@ -40,15 +40,41 @@ export const ROLLBACK_COVERAGE = {
   SHADOW: { label: '影子表', type: 'info' }
 }
 
-/** 环境 */
+/** 环境（三档：dev/test/prod；原「预发 staging」统一改名 test，旧数据兼容见各视图 envMeta） */
 export const ENV = {
-  prod: { label: '生产', type: 'danger' },
-  staging: { label: '预发', type: 'warning' }
+  dev: { label: '开发', type: 'info' },
+  test: { label: '测试', type: 'warning' },
+  prod: { label: '生产', type: 'danger' }
+}
+
+/** 角色中文映射（后端 user.roles 数组元素） */
+export const ROLE_LABELS = {
+  DEV: '开发',
+  LEAD: '主管',
+  DBA: 'DBA',
+  ADMIN: '管理员'
+}
+
+/** session 持久化键（session store 写入，api 拦截器读取） */
+export const STORAGE_KEYS = {
+  token: 'sa_token',
+  user: 'sa_user',
+  env: 'sa_env'
 }
 
 /**
- * 开发期当前用户占位（W2 接登录/JWT 后从 session store 取，替换此常量）。
- * 审批决策的 approverId 用 200（模拟主管，非本人可过防自审）。
+ * 环境元信息（带 legacy 兼容：历史数据 environment 可能为 'staging'，统一按「测试」展示）。
+ * 三档之外的未知值返回兜底 info。
+ */
+export function envMeta(env) {
+  if (env === 'staging') return ENV.test
+  return ENV[env] || { label: env || '-', type: 'info' }
+}
+
+/**
+ * @deprecated 开发期当前用户占位，已由 session store 的 user 取代。
+ * 登录/JWT 接入后请勿再引用此常量，改用 useSessionStore().user。
+ * 审批决策的 approverId 仍用 200（模拟主管，真实审批人需后端角色解析）。
  */
 export const CURRENT_USER = { id: 100, name: '文曜', role: 'DEV' }
 

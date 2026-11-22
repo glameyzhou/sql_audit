@@ -67,6 +67,20 @@ public interface TicketUnitDao {
     /** 工单详情：某工单的全部执行单元，按 unit_order 稳定排序。 */
     List<TicketUnit> listByTicket(long ticketId);
 
+    /**
+     * 更新表结构指纹（设计文档 §3.5）：审批通过时由 server 侧采集
+     * {@code SHA256(SHOW CREATE TABLE)} 写入 {@code ddl_fingerprint}，执行前由
+     * worker 侧重算比对（{@code R_SCHEMA_DRIFT} 门禁）。
+     *
+     * <p>语义 = {@code UPDATE t_ticket_unit SET ddl_fingerprint=? WHERE id=?}，
+     * 返回影响行数（0 = unit 不存在）。DDL unit 审批时点对象尚不存在、表不存在等
+     * 场景指纹留空，执行期 drift 门禁自动跳过。</p>
+     *
+     * @param id          unit id
+     * @param fingerprint 结构指纹（SHA-256 hex；可为 null 表示清空/跳过）
+     */
+    int updateDdlFingerprint(long id, String fingerprint);
+
     /** 执行监控：按执行单元状态列表（executing/success/failed/needs_confirm 等），按 id 排序。 */
     List<TicketUnit> listByStatus(String status);
 

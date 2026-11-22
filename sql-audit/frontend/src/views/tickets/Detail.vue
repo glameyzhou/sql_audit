@@ -69,8 +69,8 @@
           <div class="kv"><span class="k">工单号</span><span class="v mono">TK-{{ ticket.id }}</span></div>
           <div class="kv"><span class="k">创建人</span><span class="v">{{ creatorName }}</span></div>
           <div class="kv"><span class="k">环境</span><span class="v">
-            <el-tag :type="(ENV[ticket.environment] || {}).type || 'info'" effect="plain" size="small">
-              {{ (ENV[ticket.environment] || {}).label || ticket.environment || '-' }}
+            <el-tag :type="envMeta(ticket.environment).type" effect="plain" size="small">
+              {{ envMeta(ticket.environment).label }}
             </el-tag>
           </span></div>
           <div class="kv"><span class="k">创建时间</span><span class="v">{{ formatTime(ticket.createdAt) }}</span></div>
@@ -102,10 +102,12 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Loading } from '@element-plus/icons-vue'
 import { api } from '../../api'
-import { ENV, CURRENT_USER, statusMeta, riskMeta, coverageMeta } from '../../constants'
+import { envMeta, statusMeta, riskMeta, coverageMeta } from '../../constants'
+import { useSessionStore } from '../../stores/session'
 
 const route = useRoute()
 const router = useRouter()
+const session = useSessionStore()
 
 // 开发期假实例（与 Submit / 列表保持一致）
 const INSTANCES = {
@@ -154,7 +156,8 @@ const readonlyHintType = computed(() => {
 
 const creatorName = computed(() => {
   const c = ticket.value?.creatorId
-  return c === CURRENT_USER.id ? CURRENT_USER.name : c != null ? `用户 ${c}` : '-'
+  const me = session.user
+  return c === me?.id ? (me?.displayName || me?.name || `用户 ${c}`) : c != null ? `用户 ${c}` : '-'
 })
 
 const rollbackUnits = computed(() => {
@@ -205,7 +208,7 @@ async function handleCancel() {
   }
   acting.value = true
   try {
-    await api.cancelTicket(ticket.value.id, CURRENT_USER.id)
+    await api.cancelTicket(ticket.value.id, session.user?.id)
     ElMessage.success('工单已取消')
     await load()
   } catch {

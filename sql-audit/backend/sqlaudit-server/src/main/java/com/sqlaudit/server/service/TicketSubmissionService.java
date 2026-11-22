@@ -1,6 +1,7 @@
 package com.sqlaudit.server.service;
 
 import com.sqlaudit.common.enums.Dialect;
+import com.sqlaudit.worker.gateway.JdbcTableMetadataProvider.InstanceContext;
 import com.sqlaudit.common.enums.RiskLevel;
 import com.sqlaudit.common.enums.StatementType;
 import com.sqlaudit.common.model.ParsedStatement;
@@ -90,9 +91,15 @@ public class TicketSubmissionService {
             String rollbackSummary) {
     }
 
-    /** 提交预览（无副作用）。 */
-    public PreviewResult preview(String sql, Dialect dialect) {
-        return doPreview(sql, dialect);
+    /** 提交预览（无副作用；instanceIds 用于元数据路由，单默认实例语义）。 */
+    public PreviewResult preview(String sql, Dialect dialect, List<Long> instanceIds) {
+        InstanceContext.set(instanceIds == null || instanceIds.isEmpty()
+                ? null : instanceIds.get(0));
+        try {
+            return doPreview(sql, dialect);
+        } finally {
+            InstanceContext.set(null);
+        }
     }
 
     /**
@@ -102,6 +109,19 @@ public class TicketSubmissionService {
      */
     public long submit(String title, long creatorId, List<Long> instanceIds, String environment,
                        String sql, Dialect dialect) {
+        // 元数据路由上下文（单默认实例语义，见 defaultInstanceId）：
+        // 预览判定与建单审计都在同一实例上下文内取真实表元数据
+        InstanceContext.set(instanceIds == null || instanceIds.isEmpty()
+                ? null : instanceIds.get(0));
+        try {
+            return doSubmit(title, creatorId, instanceIds, environment, sql, dialect);
+        } finally {
+            InstanceContext.set(null);
+        }
+    }
+
+    private long doSubmit(String title, long creatorId, List<Long> instanceIds, String environment,
+                          String sql, Dialect dialect) {
         PreviewResult preview = doPreview(sql, dialect);
 
         // ERROR 阻断在入口拒绝（§4.3）——不产生 draft，前端拿到 400 + 命中明细

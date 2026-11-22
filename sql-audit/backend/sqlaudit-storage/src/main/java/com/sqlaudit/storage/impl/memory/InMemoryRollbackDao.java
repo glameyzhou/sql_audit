@@ -110,6 +110,13 @@ public class InMemoryRollbackDao implements RollbackDao {
         RollbackSql rollbackSql = rollbackStore.get(id);
         return rollbackSql == null ? null : copy(rollbackSql);
     }
+
+    @Override
+    public synchronized RollbackSql findById(long id) {
+        RollbackSql rollbackSql = rollbackStore.get(id);
+        return rollbackSql == null ? null : copy(rollbackSql);
+    }
+
     @Override
     public synchronized List<RollbackSql> listAll() {
         List<RollbackSql> result = new ArrayList<>(rollbackStore.values());

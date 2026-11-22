@@ -78,6 +78,15 @@ public final class MetadataRules {
                 if (meta == null || !meta.isAvailable()) {
                     return List.of(); // 权限类规则元数据缺失时放行给后续层（见类 javadoc）
                 }
+                // CREATE 族语句的对象此刻本就不存在（白名单管的是既有对象的读写），
+                // 跳过——新建对象由表名规范 / 审批链把关，执行期还有漂移门禁
+                Object src = ctx.statement().getSourceStatement();
+                if (src instanceof com.alibaba.druid.sql.ast.statement.SQLCreateTableStatement
+                        || src instanceof com.alibaba.druid.sql.ast.statement.SQLCreateIndexStatement
+                        || src instanceof com.alibaba.druid.sql.ast.statement.SQLCreateDatabaseStatement
+                        || src instanceof com.alibaba.druid.sql.ast.statement.SQLCreateViewStatement) {
+                    return List.of();
+                }
                 List<com.sqlaudit.common.model.RuleHit> hits = new ArrayList<>();
                 ctx.statement().getObjects().forEach(obj -> {
                     if (obj.getName() == null) {

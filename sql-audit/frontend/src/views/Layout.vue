@@ -27,7 +27,7 @@
         </template>
       </nav>
       <div class="side-foot">
-        <div class="kv"><span class="k">环境</span><span class="v">prod</span></div>
+        <div class="kv"><span class="k">环境</span><span class="v">{{ currentEnvMeta.label }}</span></div>
         <div class="kv"><span class="k">通道</span><span class="v ok">唯一出口已生效</span></div>
       </div>
     </aside>
@@ -39,7 +39,36 @@
         </button>
         <div class="crumb">极星动力 / <b>{{ $route.meta.title || '' }}</b></div>
         <div class="grow" />
-        <span class="user">当前用户（W2 接登录）</span>
+        <!-- 全局环境切换（醒目：dev 灰 / test 黄 / prod 红，颜色取 ENV 映射） -->
+        <div class="env-area">
+          <span class="env-label">环境</span>
+          <el-dropdown trigger="click" @command="onEnvChange">
+            <el-tag :type="currentEnvMeta.type" effect="dark" size="large" class="env-tag">
+              {{ currentEnvMeta.label }}
+              <el-icon class="env-caret"><ArrowDown /></el-icon>
+            </el-tag>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item
+                  v-for="(meta, key) in ENV"
+                  :key="key"
+                  :command="key"
+                  :disabled="key === session.env"
+                >
+                  <el-tag :type="meta.type" effect="light" size="small" class="env-option-tag">
+                    {{ meta.label }}
+                  </el-tag>
+                  <span v-if="key === session.env" class="env-check">✓ 当前</span>
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
+        <div class="user-area">
+          <span class="user-name">{{ session.displayName || '未登录' }}</span>
+          <span class="user-role">{{ roleLabel }}</span>
+          <el-button link size="small" @click="logout">退出登录</el-button>
+        </div>
       </header>
       <main class="content">
         <router-view />
@@ -49,9 +78,12 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import { useRoute } from 'vue-router'
-import { Fold, Expand, Odometer, Plus, Document, Checked, Monitor, RefreshLeft, Search, List, Setting } from '@element-plus/icons-vue'
+import { ref, computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { Fold, Expand, Odometer, Plus, Document, Checked, Monitor, RefreshLeft, Search, List, Setting, ArrowDown } from '@element-plus/icons-vue'
+import { ElMessageBox } from 'element-plus'
+import { useSessionStore } from '../stores/session'
+import { ROLE_LABELS, ENV } from '../constants'
 import logoUrl from '../assets/logo.svg'
 
 // 菜单分组与 router/index.js 的具名路由一一对应（对齐原型 navItems）
@@ -76,7 +108,39 @@ const navGroups = [
 ]
 
 const route = useRoute()
+const router = useRouter()
+const session = useSessionStore()
 const collapsed = ref(false)
+
+// 真实角色（后端 user.roles 数组 → 中文），多角色以顿号连接
+const roleLabel = computed(
+  () => session.roles.map((r) => ROLE_LABELS[r] || r).join('、') || '未知角色'
+)
+
+// 当前全局环境的展示元信息（ENV 三档：dev 灰 / test 黄 / prod 红）
+const currentEnvMeta = computed(() => ENV[session.env] || ENV.test)
+
+/** 顶栏环境切换：点击选项后写入 session（state + localStorage），全局即时生效 */
+async function onEnvChange(key) {
+  // 切到生产二次确认（商业平台安全习惯：生产操作醒目防误触），离开生产不拦
+  if (key === 'prod' && session.env !== 'prod') {
+    try {
+      await ElMessageBox.confirm(
+        '后续提交变更 / 查询将作用于【生产】环境，请确认您清楚本次操作对象。',
+        '切换到生产环境',
+        { confirmButtonText: '确认切换', cancelButtonText: '取消', type: 'warning' }
+      )
+    } catch {
+      return
+    }
+  }
+  session.setEnv(key)
+}
+
+function logout() {
+  session.logout()
+  router.push('/login')
+}
 
 function isActive(path) {
   if (path === '/tickets') {
@@ -175,7 +239,18 @@ function isActive(path) {
 .crumb { font-size: 12px; color: var(--sa-text-3); white-space: nowrap; }
 .crumb b { color: var(--sa-text); font-weight: 600; }
 .grow { flex: 1; }
-.user { color: var(--sa-text-2); font-size: 12px; }
+.env-area { display: flex; align-items: center; gap: 6px; }
+.env-label { font-size: 11px; color: var(--sa-text-3); font-weight: 600; }
+.env-tag { cursor: pointer; font-weight: 700; letter-spacing: 1px; }
+.env-tag .env-caret { margin-left: 2px; font-size: 12px; }
+.env-option-tag { margin-right: 6px; }
+.env-check { font-size: 11px; color: var(--sa-text-3); }
+.user-area { display: flex; align-items: center; gap: 8px; }
+.user-name { color: var(--sa-text); font-size: 12px; font-weight: 600; }
+.user-role {
+  font-size: 11px; color: var(--sa-brand-2); background: var(--sa-brand-soft);
+  padding: 2px 8px; border-radius: 6px; font-weight: 600;
+}
 
 .icon-btn {
   width: 32px;

@@ -1,6 +1,8 @@
 package com.sqlaudit.executor;
 
 import com.sqlaudit.executor.engine.UnitExecutionEngine;
+import com.sqlaudit.executor.gate.ExecutionGate;
+import com.sqlaudit.executor.gate.GateContext;
 import com.sqlaudit.executor.gateway.ProductionGateway;
 import com.sqlaudit.storage.impl.memory.InMemoryExecLockDao;
 import com.sqlaudit.storage.impl.memory.InMemoryTicketUnitDao;
@@ -34,25 +36,49 @@ class UnitExecutionEngineTest {
     private ProductionGateway.ExecutionResult nextResult =
             ProductionGateway.ExecutionResult.success(List.of(Map.of("id", 1, "a", 10)), 1, null);
 
+    /** 恒过门禁：fingerprint 不在 unit 上时 provider 不会被调用（返回任意稳定串即可）。 */
+    private final ExecutionGate gate = new ExecutionGate((instanceId, schema, table) -> "stable");
+    /** 恒过上下文：无审批记录、回滚能力在。 */
+    private final GateContext gateContext = new GateContext() {
+        @Override
+        public LocalDateTime approvedAt(TicketUnit unit) {
+            return null;
+        }
+
+        @Override
+        public boolean rollbackStillAvailable(TicketUnit unit) {
+            return true;
+        }
+    };
+
     private final UnitExecutionEngine engine = new UnitExecutionEngine(
             unitDao, lockDao, null,
             unit -> {
                 gatewayCalls.incrementAndGet();
                 return nextResult;
             },
-            (unit, result) -> true);
+            (unit, result) -> true,
+            gate, gateContext);
 
     /** 插入 pending unit，返回落库后的真实 id。 */
     private long newPendingUnit() {
+        return insertUnit(null, null, null);
+    }
+
+    /** 插入带表定位与结构指纹的 pending unit（触发门禁指纹比对用）。 */
+    private long insertUnit(String schema, String objectName, String ddlFingerprint) {
         TicketUnit u = new TicketUnit();
         u.setTicketId(1L);
         u.setInstanceId(7L);
+        u.setSchemaName(schema);
+        u.setObjectName(objectName);
         u.setUnitOrder(1);
         u.setStatement("UPDATE t SET a=1 WHERE id=1".getBytes());
         u.setStatementHash("hash");
         u.setStatementType("UPDATE");
         u.setStatus("pending");
         u.setIntentWritten(false);
+        u.setDdlFingerprint(ddlFingerprint);
         return unitDao.insert(u);
     }
 
@@ -167,7 +193,8 @@ class UnitExecutionEngineTest {
                     return ProductionGateway.ExecutionResult.success(
                             List.of(Map.of("id", 1, "a", 10)), 1, null);
                 },
-                (u, result) -> false); // 落库失败
+                (u, result) -> false, // 落库失败
+                gate, gateContext);
 
         UnitExecutionEngine.EngineResult r = engine.execute(unitDao.findById(id), WORKER, NOW);
 
@@ -188,5 +215,93 @@ class UnitExecutionEngineTest {
         UnitExecutionEngine.EngineResult r2 =
                 engine.execute(unitDao.findById(nextId), WORKER, NOW.plusSeconds(1));
         assertEquals(UnitExecutionEngine.EngineResult.Status.FAILED, r2.status());
+    }
+
+    // ---------------- §3.5 执行前门禁 ----------------
+
+    @Test
+    void gateFailure_schemaDrift_blocksExecution_confirmsFailed() {
+        // 审核后表结构变了：provider 重算指纹与 unit.ddlFingerprint 不一致 → R_SCHEMA_DRIFT
+        long id = insertUnit("db1", "t", "fp-old");
+        final UnitExecutionEngine engine = new UnitExecutionEngine(
+                unitDao, lockDao, null,
+                u -> {
+                    gatewayCalls.incrementAndGet();
+                    return nextResult;
+                },
+                (u, result) -> true,
+                new ExecutionGate((instanceId, schema, table) -> "fp-new"),
+                gateContext);
+
+        UnitExecutionEngine.EngineResult r = engine.execute(unitDao.findById(id), WORKER, NOW);
+
+        assertEquals(UnitExecutionEngine.EngineResult.Status.GATED, r.status());
+        assertTrue(r.message().contains("R_SCHEMA_DRIFT"));
+        assertEquals(0, gatewayCalls.get(), "门禁不过绝不连生产库");
+        TicketUnit after = unitDao.findById(id);
+        assertEquals("failed", after.getStatus());
+        assertTrue(after.getErrorMessage().contains("R_SCHEMA_DRIFT"));
+    }
+
+    @Test
+    void gateFailure_approvalTtl_callsOnGateFailure() {
+        // 审批超 24h：GateContext 返回过期 approvedAt → APPROVAL_TTL，onGateFailure 补偿被调用
+        long id = newPendingUnit();
+        final AtomicInteger gateFailures = new AtomicInteger();
+        GateContext ttlContext = new GateContext() {
+            @Override
+            public LocalDateTime approvedAt(TicketUnit unit) {
+                return NOW.minusHours(25);
+            }
+
+            @Override
+            public boolean rollbackStillAvailable(TicketUnit unit) {
+                return true;
+            }
+
+            @Override
+            public void onGateFailure(TicketUnit unit, ExecutionGate.GateResult result) {
+                gateFailures.incrementAndGet();
+            }
+        };
+        final UnitExecutionEngine engine = new UnitExecutionEngine(
+                unitDao, lockDao, null,
+                u -> {
+                    gatewayCalls.incrementAndGet();
+                    return nextResult;
+                },
+                (u, result) -> true,
+                gate, ttlContext);
+
+        UnitExecutionEngine.EngineResult r = engine.execute(unitDao.findById(id), WORKER, NOW);
+
+        assertEquals(UnitExecutionEngine.EngineResult.Status.GATED, r.status());
+        assertTrue(r.message().contains("APPROVAL_TTL"));
+        assertEquals(1, gateFailures.get(), "TTL 超时的补偿动作（置 expired 等）必须被调用");
+        assertEquals(0, gatewayCalls.get());
+        assertEquals("failed", unitDao.findById(id).getStatus());
+    }
+
+    @Test
+    void gatePasses_normalExecutionUnaffected() {
+        // 指纹一致 + 无审批记录（不触发时效）+ 回滚能力在 → 门禁放行，执行路径不变
+        long id = insertUnit("db1", "t", "fp-same");
+        final UnitExecutionEngine engine = new UnitExecutionEngine(
+                unitDao, lockDao, null,
+                u -> {
+                    gatewayCalls.incrementAndGet();
+                    return ProductionGateway.ExecutionResult.success(
+                            List.of(Map.of("id", 1, "a", 10)), 1, null);
+                },
+                (u, result) -> true,
+                new ExecutionGate((instanceId, schema, table) -> "fp-same"),
+                gateContext);
+
+        UnitExecutionEngine.EngineResult r = engine.execute(unitDao.findById(id), WORKER, NOW);
+
+        assertEquals(UnitExecutionEngine.EngineResult.Status.SUCCESS, r.status());
+        assertEquals(1, r.affectedRows());
+        assertEquals("success", unitDao.findById(id).getStatus());
+        assertEquals(1, gatewayCalls.get());
     }
 }

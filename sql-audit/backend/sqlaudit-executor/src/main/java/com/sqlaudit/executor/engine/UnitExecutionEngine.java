@@ -1,5 +1,7 @@
 package com.sqlaudit.executor.engine;
 
+import com.sqlaudit.executor.gate.ExecutionGate;
+import com.sqlaudit.executor.gate.GateContext;
 import com.sqlaudit.storage.dao.ExecLockDao;
 import com.sqlaudit.storage.dao.RollbackDao;
 import com.sqlaudit.storage.dao.TicketUnitDao;
@@ -21,6 +23,9 @@ import java.util.Objects;
  *       拿不到 → 释放租约退回 pending 等下一轮；</li>
  *   <li><strong>预写 intent</strong>：status='executing' + intent_written=1 同事务写入
  *       ——<strong>事务提交后才允许连生产库</strong>（SQL 可能已到生产库的标记）；</li>
+ *   <li><strong>§3.5 执行前门禁</strong>：writeIntent 提交后、连生产库之前，复核审批时效 /
+ *       结构漂移 / 回滚能力（并发互斥已由 exec_lock 保证）；不过 → onGateFailure 补偿 +
+ *       confirmFailed 置 failed + 返回 GATED，<strong>绝不连生产库</strong>；</li>
  *   <li><strong>执行</strong>：ProductionGateway 单事务（前镜像 → DML → 对账 → COMMIT）；</li>
  *   <li><strong>幂等确认</strong>：confirmSuccess 条件 UPDATE（status='executing' 且
  *       executed_at IS NULL），影响行数 0 = 已有人确认过，直接返回成功（不重复执行）。</li>
@@ -47,17 +52,23 @@ public class UnitExecutionEngine {
     private final RollbackDao rollbackDao;
     private final ProductionGatewayBridge gatewayBridge;
     private final RollbackPersister rollbackPersister;
+    private final ExecutionGate gate;
+    private final GateContext gateContext;
 
     public UnitExecutionEngine(TicketUnitDao ticketUnitDao,
                                ExecLockDao execLockDao,
                                RollbackDao rollbackDao,
                                ProductionGatewayBridge gatewayBridge,
-                               RollbackPersister rollbackPersister) {
+                               RollbackPersister rollbackPersister,
+                               ExecutionGate gate,
+                               GateContext gateContext) {
         this.ticketUnitDao = ticketUnitDao;
         this.execLockDao = execLockDao;
         this.rollbackDao = rollbackDao;
         this.gatewayBridge = gatewayBridge;
         this.rollbackPersister = rollbackPersister;
+        this.gate = gate;
+        this.gateContext = gateContext;
     }
 
     /**
@@ -95,6 +106,16 @@ public class UnitExecutionEngine {
             if (intent != 1) {
                 // 状态不满足（如已被 reaper 转 needs_confirm）——放弃，不连生产库
                 return EngineResult.intentRejected();
+            }
+
+            // 3.5 执行前门禁：审批时效 / 结构漂移 / 回滚能力复核（并发互斥已由 exec_lock 保证）
+            ExecutionGate.GateResult gateResult = gate.check(unit,
+                    gateContext.approvedAt(unit), gateContext.rollbackStillAvailable(unit), now);
+            if (!gateResult.isPassed()) {
+                gateContext.onGateFailure(unit, gateResult);   // 补偿动作（如 TTL 超时置工单 expired）
+                ticketUnitDao.confirmFailed(unit.getId(),
+                        gateResult.failedGate() + ": " + gateResult.reason(), now);
+                return EngineResult.gated(gateResult.failedGate(), gateResult.reason());
             }
 
             // 4. 生产库单事务执行（前镜像 → DML → 对账）
@@ -147,6 +168,8 @@ public class UnitExecutionEngine {
             LOCK_BUSY,
             /** intent 预写被拒（状态已流转） */
             INTENT_REJECTED,
+            /** 执行前门禁拦截（审批时效 / 结构漂移 / 回滚能力，§3.5） */
+            GATED,
             /** 执行成功 */
             SUCCESS,
             /** 执行失败（可安全重跑） */
@@ -165,6 +188,10 @@ public class UnitExecutionEngine {
 
         static EngineResult intentRejected() {
             return new EngineResult(Status.INTENT_REJECTED, 0, null);
+        }
+
+        static EngineResult gated(String gate, String reason) {
+            return new EngineResult(Status.GATED, 0, gate + ": " + reason);
         }
 
         static EngineResult success(long affectedRows) {

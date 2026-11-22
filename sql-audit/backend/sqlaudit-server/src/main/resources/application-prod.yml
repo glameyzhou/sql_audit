@@ -1,0 +1,8 @@
+# 生产环境（仅环境相关，方言另选）：严格日志（只记 WARN/ERROR）。
+# 组合启动：SPRING_PROFILES_ACTIVE=prod,postgres
+# 连接必须经环境变量注入（严禁把生产凭据写进仓库）：
+#   SQLAUDIT_PG_URL / SQLAUDIT_PG_USER / SQLAUDIT_PG_PASSWORD
+logging:
+  level:
+    com.sqlaudit: WARN      # 生产只留关键告警，审计明细走 t_audit_log 落库
+    org.springframework: WARN

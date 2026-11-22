@@ -38,6 +38,9 @@ public interface RollbackDao {
 
     RollbackSql findByUnitId(long unitId);
 
+    /** 按主键查回滚主记录（回滚执行前校验用；未找到返回 {@code null}）。 */
+    RollbackSql findById(long id);
+
     /** 回滚管理：全部回滚主记录，按 id 倒序（最新在前）。 */
     List<RollbackSql> listAll();
 }

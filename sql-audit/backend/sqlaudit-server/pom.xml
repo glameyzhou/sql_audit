@@ -38,11 +38,21 @@
         </dependency>
         <dependency>
             <groupId>com.sqlaudit</groupId>
+            <artifactId>sqlaudit-executor</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.sqlaudit</groupId>
             <artifactId>sqlaudit-query</artifactId>
         </dependency>
         <dependency>
             <groupId>com.sqlaudit</groupId>
             <artifactId>sqlaudit-storage</artifactId>
+        </dependency>
+        <!-- worker 并入 server 单进程：@Import(WorkerConfig) 把执行循环装配进本上下文 -->
+        <dependency>
+            <groupId>com.sqlaudit</groupId>
+            <artifactId>sqlaudit-worker</artifactId>
+            <version>${project.version}</version>
         </dependency>
 
         <!-- Web 容器与 REST -->
@@ -78,11 +88,20 @@
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-mysql</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
         <!-- 查询通道演示用 H2（生产替换为生产库只读副本连接池，见 ConnectionProvider javadoc） -->
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
             <scope>runtime</scope>
+        </dependency>
+        <!-- 本地账号密码 bcrypt 哈希（版本走 Spring Boot BOM） -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-crypto</artifactId>
         </dependency>
 
         <dependency>

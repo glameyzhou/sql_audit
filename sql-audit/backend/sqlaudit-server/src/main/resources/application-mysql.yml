@@ -1,5 +1,19 @@
-# MySQL Profile 装配（生产/联调）：JDBC 真 DAO + Flyway。
-# memory profile（默认，无库可跑）见 ServerBeansConfig。
+# MySQL 方言（在家 dev）：datasource + Flyway + MySql* DAO（MysqlProfileConfig @Profile("mysql")）。
+# 连接经环境变量覆盖：SQLAUDIT_DB_URL / SQLAUDIT_DB_USER / SQLAUDIT_DB_PASSWORD
 spring:
+  datasource:
+    url: ${SQLAUDIT_DB_URL:jdbc:mysql://127.0.0.1:3306/sql-audit?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+    username: ${SQLAUDIT_DB_USER:root}
+    password: ${SQLAUDIT_DB_PASSWORD:password}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 5000
+      # 审计写入点（lockChainHead FOR UPDATE）依赖连接存活；MySQL 8 空闲断连默认 8h，保守 3h
+      max-lifetime: 10800000
+      pool-name: sqlaudit-pool
+
   flyway:
     enabled: true
+    locations: classpath:db/migration/mysql
+    baseline-on-migrate: true

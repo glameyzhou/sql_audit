@@ -24,18 +24,25 @@
             collapse-tags
             collapse-tags-tooltip
             placeholder="选择目标实例"
+            :loading="instancesLoading"
             style="width: 100%"
           >
-            <el-option v-for="ins in INSTANCES" :key="ins.id" :label="ins.name" :value="ins.id" />
+            <el-option v-for="ins in filteredInstances" :key="ins.id" :label="ins.name" :value="ins.id">
+              <span>{{ ins.name }}</span>
+              <span class="option-env">{{ envMeta(ins.environment).label }}</span>
+            </el-option>
+            <template #empty>
+              <span>暂无实例，请先在系统配置→实例管理新增</span>
+            </template>
           </el-select>
+          <div v-if="envFallback" class="form-tip warn">
+            当前环境「{{ envInfo.label }}」下暂无实例，已展示全部实例
+          </div>
         </el-form-item>
 
         <el-form-item label="环境" required>
-          <el-radio-group v-model="form.environment">
-            <el-radio-button v-for="(meta, key) in ENV" :key="key" :value="key">
-              {{ meta.label }}
-            </el-radio-button>
-          </el-radio-group>
+          <el-tag :type="envInfo.type" effect="dark" size="large">{{ envInfo.label }}</el-tag>
+          <span class="env-readonly-tip">环境为全局状态，可在顶栏「环境」切换</span>
         </el-form-item>
 
         <el-form-item label="SQL 语句" required>
@@ -113,27 +120,60 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
-import { ENV, CURRENT_USER, riskMeta, coverageMeta } from '../../constants'
+import { ENV, envMeta, riskMeta, coverageMeta } from '../../constants'
+import { useSessionStore } from '../../stores/session'
 
 const router = useRouter()
+const session = useSessionStore()
 
-// 开发期假实例（对齐 dev 期约定：id 1/2）
-const INSTANCES = [
-  { id: 1, name: '生产 MySQL' },
-  { id: 2, name: '预发 MySQL' }
-]
+// 实例列表：来自后端（按当前登录用户过滤）
+const userInstances = ref([])
+const instancesLoading = ref(false)
 
-// 两个假实例均为 MySQL，方言固定；W2 接真实实例元数据后由实例派生
-const DIALECT = 'mysql'
+async function loadUserInstances() {
+  instancesLoading.value = true
+  try {
+    userInstances.value = (await api.listUserInstances()) || []
+  } catch {
+    // 错误已由拦截器统一弹 message
+  } finally {
+    instancesLoading.value = false
+  }
+}
+onMounted(loadUserInstances)
+
+// 当前全局环境（只读展示，切换入口在顶栏「环境」）
+const envInfo = computed(() => ENV[session.env] || ENV.test)
+
+// 按全局环境过滤实例；当前环境无匹配时回退展示全部
+const filteredInstances = computed(() => {
+  const list = userInstances.value || []
+  const matched = list.filter((i) => i.environment === session.env)
+  return matched.length ? matched : list
+})
+const envFallback = computed(() => {
+  const list = userInstances.value || []
+  return list.length > 0 && !list.some((i) => i.environment === session.env)
+})
+watch(envFallback, (fallback) => {
+  if (fallback) {
+    ElMessage.warning(`当前环境「${envInfo.value.label}」下暂无实例，已展示全部实例`)
+  }
+})
+
+// 方言由所选实例派生（多选时取第一个，无元数据回退 MYSQL）
+const selectedDialect = computed(() => {
+  const first = userInstances.value.find((i) => form.value.instanceIds.includes(i.id))
+  return first?.dialect || 'MYSQL'
+})
 
 const form = ref({
   title: '',
   instanceIds: [],
-  environment: 'prod',
   sql: ''
 })
 
@@ -147,14 +187,14 @@ const canSubmit = computed(
   () =>
     form.value.title.trim().length > 0 &&
     form.value.instanceIds.length > 0 &&
-    !!form.value.environment &&
+    !!session.env &&
     form.value.sql.trim().length > 0 &&
     !errorBlocked.value
 )
 
-// SQL 变更后作废旧预检结果，避免误用过期 errorBlocked 拦截提交
+// SQL / 目标实例变更后作废旧预检结果，避免误用过期 errorBlocked 拦截提交
 watch(
-  () => form.value.sql,
+  () => [form.value.sql, form.value.instanceIds],
   () => {
     if (preview.value) preview.value = null
   }
@@ -164,7 +204,7 @@ async function handlePreview() {
   if (!canPreview.value) return
   previewing.value = true
   try {
-    preview.value = await api.preview(form.value.sql, DIALECT)
+    preview.value = await api.preview(form.value.sql, selectedDialect.value, form.value.instanceIds)
   } catch {
     // 错误已由拦截器统一弹 message
   } finally {
@@ -182,11 +222,11 @@ async function handleSubmit() {
   try {
     const { ticketId } = await api.submitTicket({
       title: form.value.title.trim(),
-      creatorId: CURRENT_USER.id,
+      creatorId: session.user?.id,
       instanceIds: form.value.instanceIds,
-      environment: form.value.environment,
+      environment: session.env,
       sql: form.value.sql,
-      dialect: DIALECT
+      dialect: selectedDialect.value
     })
     ElMessage.success('工单创建成功')
     router.push(`/tickets/${ticketId}`)
@@ -219,6 +259,9 @@ function severityClass(severity) {
 .card + .card { margin-top: 18px; }
 
 .form-tip { font-size: 11.5px; color: var(--sa-text-3); line-height: 1.5; margin-top: 6px; }
+.form-tip.warn { color: var(--sa-warning); }
+.option-env { float: right; font-size: 11px; color: var(--sa-text-3); margin-left: 12px; }
+.env-readonly-tip { font-size: 11.5px; color: var(--sa-text-3); margin-left: 10px; }
 .sql-input :deep(.el-textarea__inner) { font-family: var(--sa-font-mono); font-size: 12px; line-height: 1.6; }
 
 .hint.danger { font-size: 12px; color: var(--sa-danger); margin-left: 4px; }
