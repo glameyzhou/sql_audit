@@ -1,0 +1,17 @@
+# PostgreSQL 平台库（公司生产库）。激活：SPRING_PROFILES_ACTIVE=postgres
+spring:
+  datasource:
+    url: ${SQLAUDIT_PG_URL:jdbc:postgresql://127.0.0.1:5432/sql-audit}
+    username: ${SQLAUDIT_PG_USER:postgres}
+    password: ${SQLAUDIT_PG_PASSWORD:postgres}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 5000
+      pool-name: sqlaudit-pg-pool
+
+  flyway:
+    enabled: true
+    # PG 方言迁移（23 表 + 创世块 + 4 角色种子）
+    locations: classpath:db/migration/postgresql
+    baseline-on-migrate: true

@@ -1,0 +1,5 @@
+# MySQL Profile 装配（生产/联调）：JDBC 真 DAO + Flyway。
+# memory profile（默认，无库可跑）见 ServerBeansConfig。
+spring:
+  flyway:
+    enabled: true

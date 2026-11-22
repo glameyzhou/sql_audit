@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.sqlaudit</groupId>
+        <artifactId>sqlaudit</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>sqlaudit-rollback</artifactId>
+    <name>sqlaudit-rollback</name>
+    <description>前镜像、反向 SQL、有效期与依赖检测（W1 流 A-3）</description>
+    <dependencies>
+        <dependency>
+            <groupId>com.sqlaudit</groupId>
+            <artifactId>sqlaudit-parser</artifactId>
+        </dependency>
+        <!-- 能力评估复用 rule 的 TableMetadataProvider 与规则命中（依赖图：parser→rule→rollback） -->
+        <dependency>
+            <groupId>com.sqlaudit</groupId>
+            <artifactId>sqlaudit-rule</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.sqlaudit</groupId>
+            <artifactId>sqlaudit-storage</artifactId>
+        </dependency>
+        <!-- 反向 SQL 构造直接操作 Druid AST -->
+        <dependency>
+            <groupId>com.alibaba</groupId>
+            <artifactId>druid</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

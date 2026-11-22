@@ -1,0 +1,202 @@
+package com.sqlaudit.server.config;
+
+import com.sqlaudit.audit.AuditWriter;
+import com.sqlaudit.audit.ChainVerifier;
+import com.sqlaudit.audit.NoopDetailCipher;
+import com.sqlaudit.parser.SqlParserService;
+import com.sqlaudit.query.channel.ConnectionProvider;
+import com.sqlaudit.query.channel.QueryChannel;
+import com.sqlaudit.query.channel.QueryOptions;
+import com.sqlaudit.rollback.capability.RollbackCapabilityAssessor;
+import com.sqlaudit.rule.TableMetadataProvider;
+import com.sqlaudit.rule.engine.RuleEngine;
+import com.sqlaudit.rule.risk.ApprovalRouter;
+import com.sqlaudit.rule.risk.FlowConfig;
+import com.sqlaudit.storage.impl.memory.InMemoryApprovalDao;
+import com.sqlaudit.storage.impl.memory.InMemoryAuditDao;
+import com.sqlaudit.storage.impl.memory.InMemoryTicketDao;
+import com.sqlaudit.storage.impl.memory.InMemoryTicketUnitDao;
+import com.sqlaudit.storage.dao.ApprovalDao;
+import com.sqlaudit.storage.dao.AuditDao;
+import com.sqlaudit.storage.dao.TicketDao;
+import com.sqlaudit.storage.dao.TicketUnitDao;
+import com.sqlaudit.workflow.ApprovalFlowEngine;
+import com.sqlaudit.workflow.TicketService;
+import com.sqlaudit.workflow.TicketStateMachine;
+import com.sqlaudit.workflow.TicketUnitWriter;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.time.ZoneId;
+import java.util.List;
+
+/**
+ * W2 公共装配配置：解析 / 规则 / 回滚 / 审计 / 工单审批流 / 查询通道——
+ * 这些业务 bean 在 memory 与 mysql 两个 profile 下完全一致。
+ *
+ * <p>存储 DAO 按 profile 分离：memory（默认）见 {@link MemoryStorageConfig}，
+ * mysql 见 {@link MysqlProfileConfig}。业务层依赖 DAO 接口，存储切换零感知。</p>
+ */
+@Configuration
+public class ServerBeansConfig {
+
+    // ---------------- 解析 / 规则 / 回滚 ----------------
+
+    @Bean
+    public SqlParserService sqlParserService() {
+        return new SqlParserService();
+    }
+
+    /**
+     * 元数据 dev stub：任何表都视为「有主键 id、在白名单、无生成列/掩码列」。
+     * <p><strong>仅用于联调</strong>——生产实现按 information_schema 实时查询；
+     * stub 会让 R_NO_PK / R_OBJECT_NOT_ALLOWED 恒不命中，不能用于真实审核。</p>
+     */
+    @Bean
+    public TableMetadataProvider tableMetadataProvider() {
+        return new TableMetadataProvider() {
+            @Override
+            public boolean isAvailable() {
+                return true;
+            }
+
+            @Override
+            public TableMetadata getTable(String schema, String name) {
+                if (name == null) {
+                    return null;
+                }
+                return new TableMetadata(true, List.of("id"), java.util.Set.of(),
+                        List.of("id", "a", "b"), java.util.Set.of(), true);
+            }
+        };
+    }
+
+    @Bean
+    public RuleEngine ruleEngine(TableMetadataProvider metadata) {
+        return new RuleEngine(metadata);
+    }
+
+    @Bean
+    public RollbackCapabilityAssessor rollbackCapabilityAssessor() {
+        return new RollbackCapabilityAssessor();
+    }
+
+    // ---------------- 审计（§7 hash 链） ----------------
+
+    @Bean
+    public ZoneId platformZone() {
+        return ZoneId.of("Asia/Shanghai");
+    }
+
+    @Bean
+    public AuditWriter auditWriter(AuditDao auditDao, ZoneId zone) {
+        // detail 加密：W2 接 AES-GCM 实现（auth 模块）
+        return new AuditWriter(auditDao, new NoopDetailCipher(), zone);
+    }
+
+    @Bean
+    public ChainVerifier chainVerifier(AuditDao auditDao, ZoneId zone) {
+        return new ChainVerifier(auditDao, new NoopDetailCipher(), zone);
+    }
+
+    // ---------------- 工单与审批流 ----------------
+
+    @Bean
+    public TicketStateMachine ticketStateMachine(TicketDao ticketDao, AuditWriter auditWriter, ZoneId zone) {
+        // 状态迁移全量进审计链（§7.2 事件表：state_change）
+        return new TicketStateMachine(ticketDao, (ticketId, from, to, actor) -> {
+            com.sqlaudit.common.model.AuditEvent event = com.sqlaudit.common.model.AuditEvent.builder()
+                    .actorId(parseActor(actor))
+                    .actorName(actor)
+                    .actorRole("SYSTEM")
+                    .action("ticket.state_change")
+                    .targetType("ticket")
+                    .targetId(String.valueOf(ticketId))
+                    .detailPlaintext("{\"from\":\"" + from + "\",\"to\":\"" + to + "\",\"actor\":\"" + actor + "\"}")
+                    .result("SUCCESS")
+                    .traceId("ticket-" + ticketId)
+                    .createdAt(java.time.OffsetDateTime.now(zone))
+                    .build();
+            auditWriter.append(event);
+        });
+    }
+
+    private static long parseActor(String actor) {
+        try {
+            return Long.parseLong(actor);
+        } catch (NumberFormatException e) {
+            return 0; // SYSTEM / approval-ttl-checker 等非人类 actor
+        }
+    }
+
+    @Bean
+    public ApprovalFlowEngine approvalFlowEngine(ApprovalDao approvalDao, TicketDao ticketDao,
+                                                  TicketStateMachine stateMachine) {
+        return new ApprovalFlowEngine(approvalDao, ticketDao, stateMachine);
+    }
+
+    @Bean
+    public FlowConfig flowConfig() {
+        return new FlowConfig();
+    }
+
+    @Bean
+    public ApprovalRouter approvalRouter(FlowConfig flowConfig) {
+        return new ApprovalRouter(flowConfig);
+    }
+
+    @Bean
+    public TicketService ticketService(TicketDao ticketDao, TicketUnitDao ticketUnitDao,
+                                       TicketStateMachine stateMachine, ApprovalFlowEngine approvalEngine,
+                                       ApprovalRouter approvalRouter) {
+        TicketUnitWriter unitWriter = ticketUnitDao::insert;
+        return new TicketService(ticketDao, unitWriter, stateMachine, approvalEngine, approvalRouter);
+    }
+
+    // ---------------- 查询通道（H2 演示连接） ----------------
+
+    /**
+     * H2 演示连接：所有 instanceId 路由到同一个内存库（建了 demo 表）。
+     * <p>生产实现按 instanceId 路由到对应只读副本连接池（ro_data）。</p>
+     */
+    @Bean
+    public ConnectionProvider connectionProvider() {
+        return new ConnectionProvider() {
+            private volatile boolean initialized;
+
+            @Override
+            public Connection getConnection(long instanceId) {
+                try {
+                    Connection conn = DriverManager.getConnection(
+                            "jdbc:h2:mem:querydemo;DB_CLOSE_DELAY=-1", "sa", "");
+                    if (!initialized) {
+                        initDemo(conn);
+                        initialized = true;
+                    }
+                    return conn;
+                } catch (SQLException e) {
+                    throw new IllegalStateException("H2 演示连接不可用", e);
+                }
+            }
+
+            private void initDemo(Connection conn) throws SQLException {
+                try (var st = conn.createStatement()) {
+                    st.execute("CREATE TABLE IF NOT EXISTS t_user (id INT PRIMARY KEY, name VARCHAR(64))");
+                    st.execute("MERGE INTO t_user (id, name) KEY (id) VALUES (1, '张三')");
+                    for (int i = 2; i <= 20; i++) {
+                        st.execute("MERGE INTO t_user (id, name) KEY (id) VALUES (" + i + ", 'user" + i + "')");
+                    }
+                }
+            }
+        };
+    }
+
+    @Bean
+    public QueryChannel queryChannel(ConnectionProvider connectionProvider) {
+        return new QueryChannel(connectionProvider, new QueryOptions(1000, 10));
+    }
+}

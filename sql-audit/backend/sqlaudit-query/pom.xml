@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.sqlaudit</groupId>
+        <artifactId>sqlaudit</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>sqlaudit-query</artifactId>
+    <name>sqlaudit-query</name>
+    <description>查询通道、限流、掩码（W1 流 C-1，依赖 parser 只读判定）</description>
+    <dependencies>
+        <dependency>
+            <groupId>com.sqlaudit</groupId>
+            <artifactId>sqlaudit-parser</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- H2 内存库：查询通道三层保护的集成测试（版本走 Spring Boot BOM） -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.sqlaudit</groupId>
+        <artifactId>sqlaudit</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>sqlaudit-rule</artifactId>
+    <name>sqlaudit-rule</name>
+    <description>规则引擎、风险分级、影响面评估（W1 流 A-2）</description>
+    <dependencies>
+        <dependency>
+            <groupId>com.sqlaudit</groupId>
+            <artifactId>sqlaudit-parser</artifactId>
+        </dependency>
+        <!-- 规则判定直接操作 Druid AST（UPDATE/DELETE 的 LIMIT/JOIN/SET 表达式检查） -->
+        <dependency>
+            <groupId>com.alibaba</groupId>
+            <artifactId>druid</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

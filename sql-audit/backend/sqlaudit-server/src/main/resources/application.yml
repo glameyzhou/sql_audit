@@ -1,0 +1,26 @@
+# 平台库连接（开发：本机 Docker MySQL；生产经环境变量覆盖）
+spring:
+  datasource:
+    url: ${SQLAUDIT_DB_URL:jdbc:mysql://127.0.0.1:3306/sql-audit?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+    username: ${SQLAUDIT_DB_USER:root}
+    password: ${SQLAUDIT_DB_PASSWORD:password}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 5000
+      # 审计写入点（lockChainHead FOR UPDATE）依赖连接存活；MySQL 8 空闲断连默认 8h，保守 3h
+      max-lifetime: 10800000
+      pool-name: sqlaudit-pool
+
+  flyway:
+    enabled: true
+    # DDL 在 storage 模块 classpath:db/migration（V1__init.sql 23 表）
+    locations: classpath:db/migration/mysql
+    baseline-on-migrate: true
+
+server:
+  port: 8080
+
+logging:
+  level:
+    com.sqlaudit: INFO

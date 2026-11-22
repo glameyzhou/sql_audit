@@ -1,0 +1,27 @@
+/* ============================================================
+   全局基础样式 · 引入设计 token（对齐 UI 原型 light 主题）
+   tokens.css 必须在 element-plus/dist/index.css 之后加载
+   （main.js 中的 import 顺序已保证）。
+   ============================================================ */
+@import './tokens.css';
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body, #app { height: 100%; }
+
+body {
+  font-family: var(--sa-font-sans);
+  background: var(--sa-bg);
+  color: var(--sa-text);
+  font-size: 13px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--sa-brand-2); text-decoration: none; }
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb { background: var(--sa-border-2); border-radius: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* 等宽工具类：SQL 语句 / 工单号 / trace id */
+.mono { font-family: var(--sa-font-mono); font-size: 12px; }

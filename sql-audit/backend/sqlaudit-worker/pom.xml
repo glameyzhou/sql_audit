@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.sqlaudit</groupId>
+        <artifactId>sqlaudit</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>sqlaudit-worker</artifactId>
+    <name>sqlaudit-worker</name>
+    <description>executor + query 运行进程（W2 集成；开启任务轮询）</description>
+    <dependencies>
+        <dependency>
+            <groupId>com.sqlaudit</groupId>
+            <artifactId>sqlaudit-executor</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.sqlaudit</groupId>
+            <artifactId>sqlaudit-query</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.sqlaudit</groupId>
+            <artifactId>sqlaudit-storage</artifactId>
+        </dependency>
+        <!-- GatewayBridge 现场构造前镜像（parser + rollback 的 PreimagePlanner） -->
+        <dependency>
+            <groupId>com.sqlaudit</groupId>
+            <artifactId>sqlaudit-parser</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.sqlaudit</groupId>
+            <artifactId>sqlaudit-rollback</artifactId>
+        </dependency>
+        <!-- worker 内嵌运行（可选独立进程） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter</artifactId>
+        </dependency>
+        <!-- 日志门面：实现由宿主提供（server 内嵌=Log4j2；独立进程引 log4j-slf4j2-impl） -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

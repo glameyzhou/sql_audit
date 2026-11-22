@@ -1,0 +1,1175 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SQL 审核平台 · 交互设计稿 | 极星动力</title>
+<style>
+:root{
+  --bg:#F4F6FA; --surface:#FFFFFF; --surface2:#F8FAFD; --surface3:#EEF2F8;
+  --border:#E2E8F2; --border2:#CBD5E5;
+  --text:#14213D; --text2:#5A6B88; --text3:#8A99B2;
+  --brand:#17315E; --brand2:#0FA8B7; --brand-soft:#E6F6F8;
+  --ok:#15A06A; --ok-soft:#E6F6EE; --warn:#D9860B; --warn-soft:#FDF3E0;
+  --danger:#DC3C47; --danger-soft:#FDECEE; --info:#3568D4; --info-soft:#EAF1FD;
+  --purple:#7651C8; --purple-soft:#F0EBFB;
+  --shadow:0 1px 2px rgba(20,33,61,.05),0 8px 24px rgba(20,33,61,.06);
+  --shadow-lg:0 12px 48px rgba(20,33,61,.16);
+  --radius:10px; --radius-sm:7px;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+}
+[data-theme="dark"]{
+  --bg:#0A1120; --surface:#111B2E; --surface2:#16223A; --surface3:#1C2A44;
+  --border:#243352; --border2:#35476B;
+  --text:#E8EFFA; --text2:#95A7C2; --text3:#6B7E9C;
+  --brand:#6E9BFF; --brand2:#35D6CE; --brand-soft:#123043;
+  --ok:#3FCF8E; --ok-soft:#12362C; --warn:#F0B44A; --warn-soft:#3A2C14;
+  --danger:#F46B75; --danger-soft:#3A1A22; --info:#7AA5FF; --info-soft:#16294C;
+  --purple:#A98AF0; --purple-soft:#261F42;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.25);
+  --shadow-lg:0 12px 48px rgba(0,0,0,.5);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:13px;line-height:1.55;-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit}
+button{cursor:pointer}
+a{color:var(--brand2);text-decoration:none}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:6px}
+::-webkit-scrollbar-track{background:transparent}
+.mono{font-family:var(--mono);font-size:12px}
+.muted{color:var(--text2)} .dim{color:var(--text3)}
+.nowrap{white-space:nowrap}
+.flex{display:flex} .between{display:flex;justify-content:space-between;align-items:center}
+.center{display:flex;align-items:center} .wrap{flex-wrap:wrap}
+.gap4{gap:4px}.gap6{gap:6px}.gap8{gap:8px}.gap12{gap:12px}.gap16{gap:16px}.gap20{gap:20px}.gap24{gap:24px}
+.col{display:flex;flex-direction:column}
+.grow{flex:1;min-width:0}
+
+/* ---------- shell ---------- */
+.app{display:flex;height:100vh;overflow:hidden}
+.sidebar{width:228px;flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;transition:width .18s ease}
+.sidebar.collapsed{width:64px}
+.brand{height:60px;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid var(--border);flex:none;overflow:hidden}
+.brand-mark{width:30px;height:30px;flex:none;border-radius:8px;background:linear-gradient(135deg,var(--brand),var(--brand2));display:grid;place-items:center;box-shadow:0 3px 10px rgba(15,168,183,.28)}
+.brand-mark svg{width:17px;height:17px}
+.brand-txt{white-space:nowrap;overflow:hidden}
+.brand-name{font-weight:700;font-size:13.5px;letter-spacing:.2px}
+.brand-sub{font-size:10.5px;color:var(--text3);letter-spacing:.5px}
+.nav{flex:1;overflow-y:auto;padding:10px 8px 16px}
+.nav-group{font-size:10px;color:var(--text3);letter-spacing:1.2px;font-weight:600;padding:14px 10px 6px;white-space:nowrap}
+.nav-item{display:flex;align-items:center;gap:10px;height:36px;padding:0 10px;border-radius:var(--radius-sm);color:var(--text2);cursor:pointer;white-space:nowrap;position:relative;margin-bottom:2px;transition:background .12s,color .12s}
+.nav-item:hover{background:var(--surface3);color:var(--text)}
+.nav-item.active{background:var(--brand-soft);color:var(--brand);font-weight:600}
+[data-theme="dark"] .nav-item.active{color:var(--brand2)}
+.nav-item.active::before{content:"";position:absolute;left:-8px;top:8px;bottom:8px;width:3px;border-radius:0 3px 3px 0;background:var(--brand2)}
+.nav-item svg{width:16px;height:16px;flex:none}
+.nav-badge{margin-left:auto;background:var(--danger);color:#fff;font-size:10px;font-weight:700;min-width:17px;height:17px;border-radius:9px;display:grid;place-items:center;padding:0 4px}
+.nav-badge.soft{background:var(--surface3);color:var(--text2)}
+.side-foot{padding:10px;border-top:1px solid var(--border);flex:none}
+.side-foot .kv{font-size:11px;color:var(--text3)}
+
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.topbar{height:56px;flex:none;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;padding:0 20px}
+.crumb{font-size:12px;color:var(--text3);white-space:nowrap}
+.crumb b{color:var(--text);font-weight:600}
+.icon-btn{width:32px;height:32px;border-radius:var(--radius-sm);border:1px solid transparent;background:transparent;color:var(--text2);display:grid;place-items:center;position:relative}
+.icon-btn:hover{background:var(--surface3);color:var(--text)}
+.icon-btn svg{width:16px;height:16px}
+.icon-btn .dot{position:absolute;right:6px;top:6px;width:6px;height:6px;border-radius:50%;background:var(--danger);border:1.5px solid var(--surface)}
+.searchbox{display:flex;align-items:center;gap:8px;height:32px;padding:0 10px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text3);min-width:190px;cursor:pointer}
+.searchbox:hover{border-color:var(--border2)}
+.searchbox svg{width:14px;height:14px}
+.kbd{font-family:var(--mono);font-size:10px;border:1px solid var(--border2);border-radius:4px;padding:1px 5px;color:var(--text3);background:var(--surface)}
+.seg{display:flex;background:var(--surface3);border-radius:var(--radius-sm);padding:2px;gap:2px}
+.seg button{border:0;background:transparent;color:var(--text2);padding:4px 10px;border-radius:5px;font-size:11.5px;font-weight:600}
+.seg button.on{background:var(--surface);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.avatar{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;display:grid;place-items:center;font-size:11px;font-weight:700;flex:none}
+.content{flex:1;overflow-y:auto;padding:22px 24px 40px}
+.page-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;gap:16px}
+.page-title{font-size:19px;font-weight:700;letter-spacing:-.2px}
+.page-desc{font-size:12px;color:var(--text2);margin-top:3px}
+
+/* ---------- atoms ---------- */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow)}
+.card-h{display:flex;justify-content:space-between;align-items:center;padding:13px 16px;border-bottom:1px solid var(--border);gap:12px}
+.card-t{font-weight:650;font-size:13px}
+.card-sub{font-size:11px;color:var(--text3);margin-top:2px}
+.card-b{padding:16px}
+.card-b.tight{padding:0}
+.btn{height:32px;padding:0 13px;border-radius:var(--radius-sm);border:1px solid var(--border2);background:var(--surface);font-weight:600;font-size:12px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;transition:.12s}
+.btn:hover{border-color:var(--brand2);color:var(--brand2)}
+.btn svg{width:14px;height:14px}
+.btn-primary{background:var(--brand);border-color:var(--brand);color:#fff}
+.btn-primary:hover{background:var(--brand2);border-color:var(--brand2);color:#fff}
+[data-theme="dark"] .btn-primary{background:var(--brand);border-color:var(--brand);color:#08101F}
+.btn-accent{background:var(--brand2);border-color:var(--brand2);color:#fff}
+.btn-accent:hover{opacity:.88;color:#fff}
+.btn-danger{background:var(--danger);border-color:var(--danger);color:#fff}
+.btn-danger:hover{opacity:.88;color:#fff}
+.btn-ghost{border-color:transparent;background:transparent;color:var(--text2)}
+.btn-ghost:hover{background:var(--surface3)}
+.btn-sm{height:26px;padding:0 9px;font-size:11px}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.badge{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 7px;border-radius:5px;font-size:10.5px;font-weight:700;white-space:nowrap;letter-spacing:.1px}
+.b-ok{background:var(--ok-soft);color:var(--ok)} .b-warn{background:var(--warn-soft);color:var(--warn)}
+.b-danger{background:var(--danger-soft);color:var(--danger)} .b-info{background:var(--info-soft);color:var(--info)}
+.b-brand{background:var(--brand-soft);color:var(--brand2)} .b-purple{background:var(--purple-soft);color:var(--purple)}
+.b-neutral{background:var(--surface3);color:var(--text2)}
+.dot-s{width:6px;height:6px;border-radius:50%;display:inline-block;flex:none}
+.tag{font-family:var(--mono);font-size:10.5px;padding:2px 6px;border-radius:4px;background:var(--surface3);color:var(--text2);white-space:nowrap}
+.stat{display:flex;flex-direction:column;gap:2px;padding:14px 16px}
+.stat .lbl{font-size:11px;color:var(--text2);display:flex;align-items:center;gap:6px}
+.stat .val{font-size:24px;font-weight:700;letter-spacing:-.5px;line-height:1.25;font-variant-numeric:tabular-nums}
+.stat .foot{font-size:10.5px;color:var(--text3)}
+.grid{display:grid;gap:14px}
+.g4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.split{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:14px}
+.split-r{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.35fr);gap:14px}
+@media(max-width:1180px){.g4{grid-template-columns:repeat(2,1fr)}.split,.split-r{grid-template-columns:1fr}.g3{grid-template-columns:repeat(2,1fr)}}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;font-weight:600;color:var(--text3);font-size:10.5px;letter-spacing:.5px;padding:9px 12px;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:last-child td{border-bottom:0}
+tbody tr.clickable{cursor:pointer}
+tbody tr.clickable:hover{background:var(--surface2)}
+.row-title{font-weight:600;color:var(--text)}
+.row-sub{font-size:10.5px;color:var(--text3);margin-top:1px}
+.field{display:flex;flex-direction:column;gap:5px}
+.field label{font-size:11px;font-weight:600;color:var(--text2)}
+.input,.select,.textarea{width:100%;border:1px solid var(--border2);background:var(--surface);border-radius:var(--radius-sm);padding:7px 10px;outline:none;font-size:12px}
+.input:focus,.select:focus,.textarea:focus{border-color:var(--brand2);box-shadow:0 0 0 3px var(--brand-soft)}
+.textarea{resize:vertical;min-height:80px;line-height:1.6}
+.sql-editor{font-family:var(--mono);font-size:12.5px;line-height:1.7;min-height:210px;background:var(--surface2);tab-size:2}
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);padding:0 16px;overflow-x:auto}
+.tabs button{border:0;background:transparent;padding:10px 12px;font-size:12px;color:var(--text2);font-weight:600;border-bottom:2px solid transparent;white-space:nowrap}
+.tabs button.on{color:var(--brand2);border-bottom-color:var(--brand2)}
+.notice{display:flex;gap:10px;padding:11px 13px;border-radius:var(--radius-sm);font-size:11.5px;line-height:1.6}
+.notice svg{width:15px;height:15px;flex:none;margin-top:2px}
+.n-info{background:var(--info-soft);color:var(--info)} .n-warn{background:var(--warn-soft);color:var(--warn)}
+.n-danger{background:var(--danger-soft);color:var(--danger)} .n-ok{background:var(--ok-soft);color:var(--ok)}
+.n-neutral{background:var(--surface3);color:var(--text2)}
+.kv{display:flex;justify-content:space-between;gap:12px;font-size:11.5px;padding:6px 0;border-bottom:1px dashed var(--border)}
+.kv:last-child{border-bottom:0}
+.kv .k{color:var(--text3);white-space:nowrap} .kv .v{font-weight:600;text-align:right}
+.progress{height:6px;border-radius:4px;background:var(--surface3);overflow:hidden}
+.progress > i{display:block;height:100%;border-radius:4px;background:var(--brand2);transition:width .4s ease}
+.bar-row{display:flex;align-items:center;gap:10px;margin-bottom:9px}
+.bar-row .nm{width:80px;font-size:11px;color:var(--text2);flex:none}
+.bar-row .bar{flex:1;height:8px;border-radius:5px;background:var(--surface3);overflow:hidden}
+.bar-row .bar i{display:block;height:100%;border-radius:5px}
+.bar-row .num{width:34px;text-align:right;font-size:11px;font-weight:700;font-variant-numeric:tabular-nums}
+.stepbar{display:flex;align-items:center;gap:0;overflow-x:auto;padding:4px 0}
+.step{display:flex;align-items:center;gap:7px;flex:none;font-size:10.5px;color:var(--text3)}
+.step .cir{width:20px;height:20px;border-radius:50%;background:var(--surface3);display:grid;place-items:center;font-size:10px;font-weight:700;color:var(--text3);flex:none}
+.step.done .cir{background:var(--ok-soft);color:var(--ok)} .step.done{color:var(--ok)}
+.step.cur .cir{background:var(--brand2);color:#fff;box-shadow:0 0 0 4px var(--brand-soft)} .step.cur{color:var(--brand2);font-weight:700}
+.step-line{width:22px;height:1px;background:var(--border2);flex:none;margin:0 6px}
+.timeline{position:relative;padding-left:20px}
+.timeline::before{content:"";position:absolute;left:6px;top:4px;bottom:4px;width:1px;background:var(--border)}
+.tl-item{position:relative;padding:0 0 14px 0}
+.tl-item::before{content:"";position:absolute;left:-17px;top:5px;width:8px;height:8px;border-radius:50%;background:var(--surface);border:2px solid var(--border2)}
+.tl-item.hi::before{border-color:var(--brand2);background:var(--brand2)}
+.tl-t{font-size:11.5px;font-weight:600} .tl-m{font-size:10.5px;color:var(--text3);margin-top:1px}
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:38px 16px;color:var(--text3);text-align:center}
+.empty svg{width:34px;height:34px;opacity:.5}
+.chip{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:20px;background:var(--surface3);font-size:11px;color:var(--text2);cursor:pointer;border:1px solid transparent}
+.chip:hover{border-color:var(--border2)} .chip.on{background:var(--brand-soft);color:var(--brand2);border-color:var(--brand2);font-weight:600}
+.switch{width:32px;height:18px;border-radius:10px;background:var(--border2);position:relative;border:0;flex:none;transition:.15s}
+.switch::after{content:"";position:absolute;left:2px;top:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:.15s}
+.switch.on{background:var(--brand2)} .switch.on::after{left:16px}
+.checkline{display:flex;align-items:flex-start;gap:8px;padding:7px 0;font-size:11.5px;border-bottom:1px dashed var(--border)}
+.checkline:last-child{border-bottom:0}
+.checkline .ic{width:15px;height:15px;flex:none;margin-top:1px}
+.unit-card{border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;background:var(--surface2);margin-bottom:9px}
+.unit-card.running{border-color:var(--brand2);box-shadow:0 0 0 3px var(--brand-soft)}
+.unit-card.confirm{border-color:var(--warn);box-shadow:0 0 0 3px var(--warn-soft)}
+.result-table{font-family:var(--mono);font-size:11.5px}
+.result-table td{padding:7px 12px}
+.mask{color:var(--purple);font-weight:600;letter-spacing:1px}
+.sql-line{font-family:var(--mono);font-size:11.5px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px 11px;white-space:pre-wrap;word-break:break-all;line-height:1.6}
+.hl-kw{color:var(--purple);font-weight:700} .hl-str{color:var(--ok)} .hl-danger{color:var(--danger);font-weight:700}
+.divider{height:1px;background:var(--border);margin:14px 0}
+.section-t{font-size:11px;font-weight:700;color:var(--text3);letter-spacing:.8px;margin:16px 0 9px}
+
+/* ---------- query workbench / admin ---------- */
+:root{--mysql:#3B82F6;--pg:#6366F1;--iot:#0FA8B7}
+[data-theme="dark"]{--mysql:#7AA5FF;--pg:#A5B4FC;--iot:#35D6CE}
+.query-layout{display:grid;grid-template-columns:236px 280px minmax(0,1fr);gap:14px;align-items:start}
+@media(max-width:1280px){.query-layout{grid-template-columns:210px minmax(0,1fr)}.query-mid{display:none}}
+.db-item{display:flex;gap:9px;padding:10px;border-radius:var(--radius-sm);cursor:pointer;border:1px solid transparent;margin-bottom:5px}
+.db-item:hover{background:var(--surface2)}
+.db-item.on{background:var(--brand-soft);border-color:var(--brand2)}
+.db-item .ty{width:4px;align-self:stretch;border-radius:3px;flex:none}
+.db-item .nm{font-weight:650;font-size:12px}
+.db-item .meta{font-size:10px;color:var(--text3);margin-top:2px}
+.type-badge{display:inline-flex;align-items:center;height:17px;padding:0 6px;border-radius:4px;font-size:9.5px;font-weight:800;letter-spacing:.3px;white-space:nowrap}
+.t-MySQL{background:rgba(59,130,246,.13);color:var(--mysql)}
+.t-PostgreSQL{background:rgba(99,102,241,.13);color:var(--pg)}
+.t-IoTDB{background:rgba(15,168,183,.13);color:var(--iot)}
+.tree-item{display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:5px;cursor:pointer;font-size:11.5px}
+.tree-item:hover{background:var(--surface2)}
+.tree-item.on{background:var(--brand-soft);color:var(--brand2);font-weight:600}
+.tree-item svg{width:12px;height:12px;flex:none}
+.editor-wrap{position:relative}
+.hint-pop{position:absolute;left:12px;top:38px;z-index:20;background:var(--surface);border:1px solid var(--border2);border-radius:var(--radius-sm);box-shadow:var(--shadow-lg);min-width:190px;max-height:190px;overflow:auto}
+.hint-pop .hi-item{padding:6px 10px;font-family:var(--mono);font-size:11.5px;cursor:pointer;display:flex;justify-content:space-between;gap:12px}
+.hint-pop .hi-item:hover{background:var(--brand-soft)}
+.hint-pop .hi-item .k{color:var(--text3);font-size:10px}
+.lint-bar{display:flex;align-items:center;gap:8px;padding:7px 11px;border-radius:var(--radius-sm);font-size:11px;margin-top:8px;line-height:1.5}
+.lint-ok{background:var(--ok-soft);color:var(--ok)} .lint-warn{background:var(--warn-soft);color:var(--warn)} .lint-err{background:var(--danger-soft);color:var(--danger)}
+.perm-cell{display:inline-flex;align-items:center;gap:4px;font-weight:700;font-size:11px;white-space:nowrap}
+.perm-y{color:var(--ok)} .perm-n{color:var(--text3)}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.form-grid .full{grid-column:1/-1}
+.scope-card{border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;background:var(--surface2)}
+.scope-card .lvl{font-size:10px;font-weight:800;letter-spacing:1px;color:var(--text3)}
+.flow-node{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:16px;background:var(--brand-soft);color:var(--brand2);font-size:11px;font-weight:600;white-space:nowrap}
+.flow-arrow{color:var(--text3);font-size:11px}
+.inherit{font-size:10px;color:var(--text3);font-style:italic}
+.check-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.check-opt{display:flex;align-items:center;gap:8px;padding:9px 11px;border:1px solid var(--border2);border-radius:var(--radius-sm);cursor:pointer;font-size:12px}
+.check-opt.on{border-color:var(--brand2);background:var(--brand-soft);color:var(--brand2);font-weight:600}
+
+/* ---------- overlays ---------- */
+.mask-layer{position:fixed;inset:0;background:rgba(10,18,35,.42);z-index:50;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(2px)}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-lg);width:min(560px,100%);max-height:86vh;overflow:auto}
+.modal-h{padding:16px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.modal-t{font-size:14px;font-weight:700}
+.modal-b{padding:18px}
+.modal-f{padding:13px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
+.drawer-wrap{position:fixed;inset:0;z-index:45;display:flex;justify-content:flex-end}
+.drawer-bg{position:absolute;inset:0;background:rgba(10,18,35,.35)}
+.drawer{position:relative;width:min(600px,94vw);height:100%;background:var(--surface);border-left:1px solid var(--border);box-shadow:var(--shadow-lg);display:flex;flex-direction:column;animation:slideIn .22s ease}
+@keyframes slideIn{from{transform:translateX(30px);opacity:.6}to{transform:none;opacity:1}}
+.drawer-h{padding:15px 18px;border-bottom:1px solid var(--border);flex:none}
+.drawer-b{flex:1;overflow:auto;padding:18px}
+.drawer-f{padding:12px 18px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;flex:none}
+#toast-root{position:fixed;right:20px;bottom:20px;z-index:80;display:flex;flex-direction:column;gap:8px;align-items:flex-end}
+.toast{background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--brand2);border-radius:var(--radius-sm);box-shadow:var(--shadow-lg);padding:10px 14px;min-width:240px;max-width:380px;font-size:12px;animation:toastIn .2s ease}
+.toast.ok{border-left-color:var(--ok)} .toast.warn{border-left-color:var(--warn)} .toast.err{border-left-color:var(--danger)}
+.toast b{display:block;margin-bottom:2px}
+@keyframes toastIn{from{transform:translateY(8px);opacity:0}to{transform:none;opacity:1}}
+.cmd{display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:var(--radius-sm);cursor:pointer;font-size:12px}
+.cmd:hover{background:var(--surface2)}
+.fade{animation:fadeIn .22s ease}@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.pulse{animation:pulse 1.4s infinite}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+.footer-note{text-align:center;color:var(--text3);font-size:10.5px;padding:26px 0 6px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="modal-root"></div>
+<div id="drawer-root"></div>
+<div id="toast-root"></div>
+
+<script>
+/* ============================================================
+   SQL 审核平台 · 交互设计稿
+   极星动力 / 内部工具 / 重功能 · 重交互 · 重体验
+   单文件原型，无外部依赖
+   ============================================================ */
+const ICONS = {
+  star:'<path d="M12 2l2.1 6.5L21 10l-5.5 4.2L17.4 21 12 17.3 6.6 21l1.9-6.8L3 10l6.9-1.5L12 2z"/>',
+  grid:'<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  file:'<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h6"/>',
+  check:'<path d="M20 6L9 17l-5-5"/>',
+  play:'<path d="M6 4l14 8-14 8V4z"/>',
+  db:'<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>',
+  shield:'<path d="M12 2l8 3v6c0 5-3.4 9-8 11-4.6-2-8-6-8-11V5l8-3z"/><path d="M9 12l2 2 4-4"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  search:'<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
+  bell:'<path d="M18 8a6 6 0 00-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>',
+  sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  moon:'<path d="M20 14.5A8.5 8.5 0 019.5 4 8.5 8.5 0 1020 14.5z"/>',
+  chev:'<path d="M9 18l6-6-6-6"/>',
+  down:'<path d="M6 9l6 6 6-6"/>',
+  alert:'<path d="M12 3L2 20h20L12 3zM12 9v5M12 17.5v.5"/>',
+  key:'<circle cx="8" cy="15" r="4"/><path d="M10.8 12.2L20 3l2 2-3 3 2 2-3 3-2-2-2.2 2.2"/>',
+  users:'<circle cx="9" cy="8" r="3.2"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6M16 5.2a3.2 3.2 0 010 6M17 14.3c2.6.6 4.5 2.7 4.5 5.7"/>',
+  settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 00.3 1.8l.1.1-2 3.4-.1-.1a1.6 1.6 0 00-1.8-.3 1.6 1.6 0 00-1 1.5V22h-4v-.1a1.6 1.6 0 00-1-1.5 1.6 1.6 0 00-1.8.3l-.1.1-2-3.4.1-.1a1.6 1.6 0 00.3-1.8 1.6 1.6 0 00-1.5-1H4v-4h.1a1.6 1.6 0 001.5-1 1.6 1.6 0 00-.3-1.8l-.1-.1 2-3.4.1.1a1.6 1.6 0 001.8.3 1.6 1.6 0 001-1.5V2h4v.1a1.6 1.6 0 001 1.5 1.6 1.6 0 001.8-.3l.1-.1 2 3.4-.1.1a1.6 1.6 0 00-.3 1.8 1.6 1.6 0 001.5 1H20v4h-.1a1.6 1.6 0 00-1.5 1z"/>',
+  terminal:'<rect x="2.5" y="4" width="19" height="16" rx="2"/><path d="M6 9l3 3-3 3M12 15h5"/>',
+  undo:'<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 010 12h-3"/>',
+  list:'<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+  activity:'<path d="M3 12h4l3-8 4 16 3-8h4"/>',
+  lock:'<rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/>',
+  link:'<path d="M10 13a5 5 0 007.5.5l2-2a5 5 0 00-7-7l-1.2 1.2"/><path d="M14 11a5 5 0 00-7.5-.5l-2 2a5 5 0 007 7l1.2-1.2"/>',
+  x:'<path d="M18 6L6 18M6 6l12 12"/>',
+  menu:'<path d="M3 6h18M3 12h18M3 18h18"/>',
+  filter:'<path d="M3 5h18l-7 8v6l-4 2v-8L3 5z"/>',
+  copy:'<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 00-2-2H6a2 2 0 00-2 2v8a2 2 0 002 2h2"/>',
+  eye:'<path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6z"/><circle cx="12" cy="12" r="2.5"/>',
+  bolt:'<path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/>',
+  info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.01"/>',
+  edit:'<path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/>',
+  table:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 10v10"/>'
+};
+function ic(n,s){return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"'+(s?' style="width:'+s+'px;height:'+s+'px"':'')+'>'+(ICONS[n]||ICONS.info)+'</svg>';}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+/* ---------------- state ---------------- */
+const S = {
+  theme: localStorage.getItem('sa-theme')||'light',
+  env:'prod', role:'dba', view:'overview', sideCollapsed:false,
+  modal:null, drawerTicket:null, toastSeq:0,
+  submit:{instance:'prod-order-mysql',dialect:'MYSQL',sql:'UPDATE orders SET status = 2, updated_at = NOW()\nWHERE created_at < \'2026-01-01\' AND status = 1;\n\nINSERT INTO order_archive (id, status)\nSELECT id, status FROM orders WHERE created_at < \'2025-06-01\';',phase:'idle'},
+  approvalDone:{}, execution:{ticketId:'TK-1042',units:[],running:false,step:0,confirmPending:false},
+  rollback:{built:false,ticketId:'TK-1042'},
+  query:{instance:'prod-order-mysql',sql:'SELECT id, user_id, phone, amount, created_at\nFROM orders\nWHERE created_at >= \'2026-11-01\'\nORDER BY created_at DESC\nLIMIT 100;',phase:'idle',blocked:false},
+  auditFilter:'ALL', adminTab:'instances', searchOpen:false
+};
+
+const INSTANCES = [
+  {id:'prod-order-mysql',name:'订单主库',dialect:'MySQL 8.0',env:'prod',owner:'陈默',accounts:'ro_meta / ro_data / rw_exec',cred:'AES-GCM · 2027-02-18 到期'},
+  {id:'prod-user-pg',name:'用户中心',dialect:'PostgreSQL 15',env:'prod',owner:'林岚',accounts:'ro_meta / ro_data / rw_exec',cred:'AES-GCM · 2027-01-30 到期'},
+  {id:'prod-iot-iotdb',name:'车联网时序库',dialect:'IoTDB 1.3',env:'prod',owner:'周野',accounts:'ro_meta / ro_data',cred:'AES-GCM · 2027-03-05 到期'},
+  {id:'staging-mysql',name:'预发环境',dialect:'MySQL 8.0',env:'staging',owner:'陈默',accounts:'ro_meta / rw_exec',cred:'AES-GCM · 2027-02-18 到期'}
+];
+const TICKETS = [
+  {id:'TK-1042',title:'归档 2025 年前历史订单',creator:'许昭',inst:'订单主库',dialect:'MySQL',risk:'HIGH',status:'approved',rollback:'PARTIAL',units:3,time:'11-22 09:14',desc:'清理 orders 历史数据并归档到 order_archive'},
+  {id:'TK-1041',title:'用户表新增 last_login_channel 列',creator:'林岚',inst:'用户中心',dialect:'PG',risk:'MEDIUM',status:'executing',rollback:'FULL',units:1,time:'11-22 08:47',desc:'ADD COLUMN，反向 DDL 已生成'},
+  {id:'TK-1040',title:'订单索引优化 idx_order_status',creator:'许昭',inst:'订单主库',dialect:'MySQL',risk:'LOW',status:'succeeded',rollback:'FULL',units:2,time:'11-21 20:03',desc:'CREATE INDEX，反向 DROP INDEX'},
+  {id:'TK-1039',title:'修正 IoTDB 车速时间序列 TTL',creator:'周野',inst:'车联网时序库',dialect:'IoTDB',risk:'HIGH',status:'needs_confirm',rollback:'SNAPSHOT',units:1,time:'11-21 18:32',desc:'执行状态未确认，等待人工核对'},
+  {id:'TK-1038',title:'清理废弃字典表 dict_v1',creator:'许昭',inst:'订单主库',dialect:'MySQL',risk:'CRITICAL',status:'pending_approval',rollback:'SHADOW',units:1,time:'11-21 16:10',desc:'DROP TABLE，强制 RENAME 影子表'},
+  {id:'TK-1037',title:'批量补录渠道编码',creator:'林岚',inst:'用户中心',dialect:'PG',risk:'HIGH',status:'rejected',rollback:'NONE',units:4,time:'11-21 14:22',desc:'无 WHERE 的批量 UPDATE，被规则拦截'},
+  {id:'TK-1036',title:'会员等级表补充 grade_desc 列',creator:'林岚',inst:'用户中心',dialect:'PG',risk:'MEDIUM',status:'pending_approval',rollback:'FULL',units:1,time:'11-21 11:02',desc:'ADD COLUMN，反向 DROP COLUMN 可生成'},
+  {id:'TK-1035',title:'支付日志分区表清理 2024 分区',creator:'周野',inst:'订单主库',dialect:'MySQL',risk:'HIGH',status:'pending_approval',rollback:'SHADOW',units:2,time:'11-21 09:48',desc:'DROP PARTITION，走影子表 + 快照'}
+];
+const RISK = {LOW:['b-ok','低危'],MEDIUM:['b-info','中危'],HIGH:['b-warn','高危'],CRITICAL:['b-danger','严重']};
+const ST = {
+  draft:['b-neutral','草稿'],submitted:['b-neutral','已提交'],auditing:['b-info','审核中'],
+  pending_approval:['b-warn','待审批'],approved:['b-brand','已批准'],rejected:['b-danger','已驳回'],
+  scheduled:['b-purple','待执行'],executing:['b-info','执行中'],succeeded:['b-ok','已成功'],
+  partially_succeeded:['b-warn','部分成功'],needs_confirm:['b-danger','待人工确认'],
+  failed:['b-danger','失败'],closed:['b-neutral','已关闭'],expired:['b-neutral','已过期']
+};
+const RB = {FULL:['b-ok','可回滚'],PARTIAL:['b-warn','部分可回滚'],NONE:['b-danger','不可回滚'],SHADOW:['b-purple','影子表'],SNAPSHOT:['b-purple','快照']};
+const AUDIT_EVENTS = [
+  {t:'14:02:31',actor:'许昭',role:'开发',action:'QUERY_EXEC',target:'prod-order-mysql',result:'SUCCESS',ip:'10.24.8.61',trace:'a91c…3f2'},
+  {t:'13:58:07',actor:'陈默',role:'DBA',action:'UNIT_EXEC',target:'TK-1041 / unit#1',result:'SUCCESS',ip:'10.24.8.12',trace:'b70d…91a'},
+  {t:'13:57:44',actor:'陈默',role:'DBA',action:'TICKET_APPROVE',target:'TK-1041',result:'SUCCESS',ip:'10.24.8.12',trace:'b70d…91a'},
+  {t:'13:55:19',actor:'系统',role:'worker-02',action:'INTENT_WRITE',target:'TK-1041 / unit#1',result:'SUCCESS',ip:'10.24.9.4',trace:'b70d…91a'},
+  {t:'13:41:02',actor:'林岚',role:'开发',action:'TICKET_SUBMIT',target:'TK-1041',result:'SUCCESS',ip:'10.24.8.33',trace:'c22e…7bd'},
+  {t:'13:38:56',actor:'许昭',role:'开发',action:'EXPORT_REQUEST',target:'query_log / 11月',result:'PENDING',ip:'10.24.8.61',trace:'d18f…2c0'},
+  {t:'13:22:10',actor:'管理员',role:'管理员',action:'CRED_VIEW',target:'prod-user-pg',result:'SUCCESS',ip:'10.24.8.2',trace:'e05a…4b7'},
+  {t:'13:11:48',actor:'系统',role:'worker-01',action:'NEEDS_CONFIRM',target:'TK-1039 / unit#1',result:'WARN',ip:'10.24.9.3',trace:'f931…8ce'},
+  {t:'12:47:33',actor:'周野',role:'开发',action:'ROLLBACK_APPLY',target:'TK-1035 / rb#2',result:'SUCCESS',ip:'10.24.8.47',trace:'0b2c…a19'},
+  {t:'12:40:15',actor:'陈默',role:'DBA',action:'RULE_UPDATE',target:'R_AFFECT_TOO_MANY',result:'SUCCESS',ip:'10.24.8.12',trace:'1cd4…e52'},
+  {t:'11:58:02',actor:'林岚',role:'开发',action:'LOGIN',target:'企微 OAuth',result:'SUCCESS',ip:'10.24.8.33',trace:'2ef7…903'},
+  {t:'11:52:41',actor:'许昭',role:'开发',action:'QUERY_EXEC',target:'prod-user-pg',result:'DENIED',ip:'10.24.8.61',trace:'3a10…c7d'}
+];
+const RULES = [
+  {code:'R_NO_WHERE',dialect:'ALL',type:'DML',level:'ERROR',on:true,param:'—',desc:'UPDATE/DELETE 无 WHERE'},
+  {code:'R_NO_PK',dialect:'ALL',type:'DML',level:'ERROR',on:true,param:'—',desc:'目标表无主键（无法生成回滚）'},
+  {code:'R_AFFECT_TOO_MANY',dialect:'ALL',type:'DML',level:'ERROR',on:true,param:'100000',desc:'影响行数超阈值，强制 DBA 节点'},
+  {code:'R_DDL_DESTRUCTIVE',dialect:'ALL',type:'DDL',level:'ERROR',on:true,param:'—',desc:'DROP/TRUNCATE 走影子表流程'},
+  {code:'R_NONDETERMINISTIC_SET',dialect:'ALL',type:'DML',level:'ERROR',on:true,param:'—',desc:'SET 含函数/表达式，前镜像失效'},
+  {code:'R_PARSE_FAILED',dialect:'ALL',type:'ALL',level:'ERROR',on:true,param:'—',desc:'解析失败一律高危人工审'},
+  {code:'R_ROLLBACK_UNAVAILABLE',dialect:'ALL',type:'ALL',level:'ERROR',on:true,param:'reject',desc:'无法生成回滚 SQL 时阻断'},
+  {code:'R_FULL_TABLE_SCAN',dialect:'ALL',type:'SELECT',level:'WARN',on:true,param:'—',desc:'WHERE 列无可用索引'}
+];
+
+/* ---- 数据库 / 表结构 / 权限 / 审批流 数据模型 ---- */
+const DBS=[
+  {id:'db_order',name:'订单主库',type:'MySQL',ver:'8.0',env:'prod',host:'10.30.1.12:3306',owner:'陈默',tables:86,canQuery:true,canChange:true,desc:'订单 / 支付 / 归档',cred:'AES-GCM · 2027-02-18'},
+  {id:'db_user',name:'用户中心',type:'PostgreSQL',ver:'15',env:'prod',host:'10.30.2.8:5432',owner:'林岚',tables:42,canQuery:true,canChange:false,desc:'账号 / 会员 / 权限',cred:'AES-GCM · 2027-01-30'},
+  {id:'db_iot',name:'车联网时序库',type:'IoTDB',ver:'1.3',env:'prod',host:'10.30.3.5:6667',owner:'周野',tables:12,canQuery:true,canChange:false,desc:'车速 / 电量 / 位置时序',cred:'AES-GCM · 2027-03-05'},
+  {id:'db_stage',name:'预发环境',type:'MySQL',ver:'8.0',env:'staging',host:'10.31.1.20:3306',owner:'陈默',tables:64,canQuery:true,canChange:true,desc:'联调与回归',cred:'AES-GCM · 2027-02-18'},
+  {id:'db_finance',name:'财务结算库',type:'PostgreSQL',ver:'15',env:'prod',host:'10.30.4.9:5432',owner:'王屹',tables:28,canQuery:false,canChange:false,desc:'未授权 · 需申请',cred:'AES-GCM · 2027-04-11'}
+];
+const TABLES={
+  db_order:[
+    {name:'orders',rows:'12,480,332',cols:[['id','bigint','PK 自增'],['user_id','varchar(32)','用户 ID'],['phone','varchar(20)','掩码列'],['amount','decimal(10,2)','订单金额'],['status','tinyint','0 待支付 1 已支付 2 归档'],['created_at','datetime','创建时间']],preview:[['10241873','u_88213','138****6621','1280.00','1','2026-11-22 13:58:02'],['10241872','u_10499','139****0043','399.00','1','2026-11-22 13:55:41'],['10241871','u_77102','186****7190','2050.00','1','2026-11-22 13:51:19'],['10241870','u_30918','150****3382','88.00','0','2026-11-22 13:47:06'],['10241869','u_66247','133****9015','660.00','1','2026-11-22 13:42:55']]},
+    {name:'order_archive',rows:'3,102,884',cols:[['id','bigint','PK'],['status','tinyint','归档状态'],['archived_at','datetime','归档时间']],preview:[['90211','2','2026-11-20 02:00:11'],['90210','2','2026-11-20 02:00:10']]},
+    {name:'payment_log',rows:'48,220,114',cols:[['id','bigint','PK'],['order_id','bigint','订单'],['channel','varchar(16)','支付渠道'],['created_at','datetime','时间']],preview:[['77120','10241873','wechat','2026-11-22 13:58:05']]}
+  ],
+  db_user:[
+    {name:'users',rows:'882,104',cols:[['id','bigint','PK'],['username','varchar(64)','登录名'],['email','varchar(128)','掩码列'],['last_login_channel','varchar(16)','新增列'],['created_at','timestamptz','创建时间']],preview:[['10499','lin lan','l***@polarstarx.com','app','2026-11-21 09:12:00'],['10498','xu zhao','x***@polarstarx.com','wecom','2026-11-21 08:40:11']]},
+    {name:'role_grant',rows:'1,204',cols:[['id','bigint','PK'],['user_id','bigint','用户'],['role','varchar(32)','角色']],preview:[['501','10499','developer']]}
+  ],
+  db_iot:[
+    {name:'root.vehicle.speed',rows:'时序序列',cols:[['time','timestamp','时间戳'],['speed','double','车速 km/h'],['device_id','text','设备']],preview:[['2026-11-22T13:58:02','42.5','VCU-8821'],['2026-11-22T13:58:01','42.1','VCU-8821']]},
+    {name:'root.vehicle.battery',rows:'时序序列',cols:[['time','timestamp','时间戳'],['soc','float','电量 %']],preview:[['2026-11-22T13:58:02','78.4']]}
+  ],
+  db_stage:[{name:'orders',rows:'12,400',cols:[['id','bigint','PK'],['status','tinyint','状态']],preview:[['1001','1']]}],
+  db_finance:[]
+};
+const USERS=[{name:'许昭',role:'开发'},{name:'林岚',role:'开发'},{name:'周野',role:'开发'},{name:'陈默',role:'DBA'},{name:'王屹',role:'主管'}];
+const PERMS=[
+  {user:'许昭',db:'db_order',query:true,change:true,approve:false,admin:false,expire:'2027-02-28',by:'管理员'},
+  {user:'许昭',db:'db_user',query:true,change:false,approve:false,admin:false,expire:'2027-02-28',by:'管理员'},
+  {user:'林岚',db:'db_user',query:true,change:true,approve:false,admin:false,expire:'2027-01-31',by:'管理员'},
+  {user:'周野',db:'db_iot',query:true,change:false,approve:false,admin:false,expire:'2026-12-31',by:'管理员'},
+  {user:'陈默',db:'*',query:true,change:true,approve:true,admin:false,expire:'长期',by:'系统'},
+  {user:'王屹',db:'*',query:false,change:false,approve:true,admin:false,expire:'长期',by:'系统'}
+];
+const FLOW_GLOBAL=[
+  {cond:'LOW',env:'staging',chain:['自动通过'],mode:'留痕',over:true},
+  {cond:'MEDIUM',env:'prod',chain:['主管'],mode:'OR 或签',over:true},
+  {cond:'HIGH',env:'prod',chain:['主管','DBA'],mode:'AND 会签',over:true},
+  {cond:'CRITICAL',env:'any',chain:['主管','DBA','管理员'],mode:'AND 会签',over:false},
+  {cond:'DDL 破坏性',env:'any',chain:['主管','DBA','管理员','执行前二次确认'],mode:'AND 会签',over:false}
+];
+const FLOW_DB={
+  db_order:[{cond:'HIGH',env:'prod',chain:['主管','DBA','实例 Owner'],mode:'AND 会签',over:true,note:'核心交易库加严'}],
+  db_iot:[{cond:'DROP / TTL',env:'any',chain:['DBA','实例 Owner','快照确认'],mode:'AND 会签',over:false,note:'IoTDB 无自动回滚，强制快照'}],
+  db_user:[],db_stage:[],db_finance:[]
+};
+const SQL_KW=['SELECT','FROM','WHERE','ORDER BY','GROUP BY','LIMIT','JOIN','LEFT JOIN','ON','AND','OR','DESC','ASC','COUNT(*)','DISTINCT'];
+Object.assign(S,{role:'admin',flowScope:'global',flowDb:'db_order',flowPreviewRisk:'HIGH',dbFilter:'ALL'});
+Object.assign(S.query,{db:'db_order',table:'orders',hint:[]});
+
+/* ---------------- helpers ---------------- */
+function typeBadge(t){return '<span class="type-badge t-'+t+'">'+t+'</span>';}
+function typeColor(t){return t==='MySQL'?'var(--mysql)':t==='PostgreSQL'?'var(--pg)':'var(--iot)';}
+function dbName(id){const d=DBS.find(x=>x.id===id);return d?d.name:id;}
+function chainHtml(c){return c.map((n,i)=>(i?'<span class="flow-arrow"> → </span>':'')+'<span class="flow-node">'+esc(n)+'</span>').join('');}
+function badge(map,key){const v=map[key]||['b-neutral',key];return '<span class="badge '+v[0]+'">'+v[1]+'</span>';}
+function toast(title,msg,kind){const id=++S.toastSeq;const el=document.createElement('div');el.className='toast '+(kind||'');el.innerHTML='<b>'+esc(title)+'</b><span class="muted">'+esc(msg||'')+'</span>';document.getElementById('toast-root').appendChild(el);setTimeout(()=>{el.style.opacity='0';el.style.transform='translateY(6px)';el.style.transition='.25s';setTimeout(()=>el.remove(),260);},3600);}
+function openModal(cfg){S.modal=cfg;paintModal();}
+function closeModal(){S.modal=null;paintModal();}
+function paintModal(){
+  const r=document.getElementById('modal-root');
+  if(!S.modal){r.innerHTML='';return;}
+  const m=S.modal;
+  r.innerHTML='<div class="mask-layer" data-close="1"><div class="modal"><div class="modal-h"><div class="modal-t">'+m.title+'</div><button class="icon-btn" data-close="1">'+ic('x')+'</button></div><div class="modal-b">'+(m.body||'')+'</div><div class="modal-f">'+(m.actions||'<button class="btn" data-close="1">关闭</button>')+'</div></div></div>';
+}
+function openDrawer(id){S.drawerTicket=id;paintDrawer();}
+function closeDrawer(){S.drawerTicket=null;paintDrawer();}
+function statCard(lbl,val,foot,color,icon){
+  return '<div class="card stat"><div class="lbl">'+ic(icon,13)+esc(lbl)+'</div><div class="val" style="color:'+(color||'var(--text)')+'">'+val+'</div><div class="foot">'+esc(foot||'')+'</div></div>';
+}
+function cardHead(t,sub,right){return '<div class="card-h"><div><div class="card-t">'+t+'</div>'+(sub?'<div class="card-sub">'+sub+'</div>':'')+'</div>'+(right||'')+'</div>';}
+
+/* ---------------- views ---------------- */
+function vOverview(){
+  const recent=TICKETS.slice(0,5).map(t=>'<tr class="clickable" data-ticket="'+t.id+'"><td><div class="row-title mono">'+t.id+'</div><div class="row-sub">'+esc(t.title)+'</div></td><td>'+esc(t.creator)+'</td><td>'+esc(t.inst)+'</td><td>'+badge(RISK,t.risk)+'</td><td>'+badge(ST,t.status)+'</td><td>'+badge(RB,t.rollback)+'</td><td class="dim nowrap">'+t.time+'</td></tr>').join('');
+  const risks=[['严重 CRITICAL',1,'var(--danger)'],['高危 HIGH',6,'var(--warn)'],['中危 MEDIUM',14,'var(--info)'],['低危 LOW',23,'var(--ok)']];
+  return pageHead('工作台','极星动力 · SQL 审核平台｜今天 2026-11-22，所有变更与查询均经平台留痕',
+    '<button class="btn" data-go="audit">'+ic('list',14)+'查看审计</button><button class="btn btn-primary" data-go="submit">'+ic('plus',14)+'提交变更</button>')+
+  '<div class="grid g4" style="margin-bottom:14px">'+
+    statCard('待我审批',String(pendingCount()),'其中 1 条为 CRITICAL','var(--warn)','check')+
+    statCard('执行中 / 待确认',String(TICKETS.filter(t=>['executing','needs_confirm'].includes(t.status)).length),confirmCount()+' 条 needs_confirm 需人工核对','var(--info)','activity')+
+    statCard('可回滚工单','12','本周生成率 91.7%','var(--ok)','undo')+
+    statCard('今日查询','1,284','100% 留痕 · 0 次越权','var(--brand2)','terminal')+
+  '</div>'+
+  '<div class="split" style="margin-bottom:14px">'+
+    '<div class="card"><div class="card-h"><div><div class="card-t">风险分布</div><div class="card-sub">本周提交的变更工单（44 单）</div></div><span class="tag">取最严审批链</span></div><div class="card-b">'+
+      risks.map(r=>'<div class="bar-row"><div class="nm">'+r[0]+'</div><div class="bar"><i style="width:'+(r[1]/24*100)+'%;background:'+r[2]+'"></i></div><div class="num">'+r[1]+'</div></div>').join('')+
+      '<div class="divider"></div><div class="notice n-info">'+ic('info',15)+'<div>路由算法取<b>所有命中规则中审批链最严的一条</b>；CRITICAL 规则带 non_overridable，配置错误也不会把高危降级。</div></div>'+
+    '</div></div>'+
+    '<div class="card"><div class="card-h"><div><div class="card-t">队列健康</div><div class="card-sub">worker 租约 / 心跳 / 幂等</div></div><span class="badge b-ok">正常</span></div><div class="card-b">'+
+      '<div class="kv"><span class="k">活跃 worker</span><span class="v">3 个（worker-01/02/03）</span></div>'+
+      '<div class="kv"><span class="k">租约过期 unit</span><span class="v">0</span></div>'+
+      '<div class="kv"><span class="k">needs_confirm</span><span class="v" style="color:var(--danger)">1（TK-1039）</span></div>'+
+      '<div class="kv"><span class="k">今日 intent 预写</span><span class="v">37 / 37 确认</span></div>'+
+      '<div class="divider"></div><div class="notice n-warn">'+ic('alert',15)+'<div><b>TK-1039</b> 的 unit#1 执行状态未确认，已冻结自动重试，等待人工核对。</div></div>'+
+    '</div></div>'+
+  '</div>'+
+  '<div class="split">'+
+    '<div class="card"><div class="card-h"><div><div class="card-t">最近工单</div><div class="card-sub">点击任意行查看完整链路</div></div><button class="btn btn-sm btn-ghost" data-go="tickets">全部 '+ic('chev',12)+'</button></div><div class="card-b tight"><table><thead><tr><th>工单</th><th>提交人</th><th>实例</th><th>风险</th><th>状态</th><th>回滚</th><th>时间</th></tr></thead><tbody>'+recent+'</tbody></table></div></div>'+
+    '<div class="card"><div class="card-h"><div><div class="card-t">告警与提醒</div><div class="card-sub">企微通道 · 最近 24 小时</div></div></div><div class="card-b">'+
+      '<div class="notice n-danger" style="margin-bottom:9px">'+ic('alert',15)+'<div><b>P0 · 人工确认</b><br>TK-1039 / IoTDB TTL 变更，执行结果未确认，禁止自动重试。</div></div>'+
+      '<div class="notice n-warn" style="margin-bottom:9px">'+ic('key',15)+'<div><b>凭据轮换</b><br>prod-user-pg 执行账号凭据 14 天后到期。</div></div>'+
+      '<div class="notice n-ok" style="margin-bottom:9px">'+ic('link',15)+'<div><b>hash 链完整</b><br>今日链头已外置 WORM 对象存储，seq 连续无断点。</div></div>'+
+      '<div class="notice n-neutral">'+ic('clock',15)+'<div><b>低峰窗口</b><br>TK-1042 建议 02:00–04:00 执行，影响 2,418 行。</div></div>'+
+      '<div class="divider"></div><div class="grid g3" style="gap:8px">'+
+        '<button class="btn btn-sm" data-go="submit">'+ic('plus',13)+'提交变更</button>'+
+        '<button class="btn btn-sm" data-go="query">'+ic('terminal',13)+'线上查询</button>'+
+        '<button class="btn btn-sm" data-go="rollback">'+ic('undo',13)+'回滚演练</button>'+
+      '</div>'+
+    '</div></div>'+
+  '</div>'+
+  footerNote();
+}
+function pageHead(t,d,right){return '<div class="page-head"><div><div class="page-title">'+t+'</div><div class="page-desc">'+d+'</div></div><div class="flex gap8 wrap">'+(right||'')+'</div></div>';}
+function footerNote(){return '<div class="footer-note">SQL 审核平台 · 交互设计稿 v1 ｜ 极星动力 · 以星为引，每一步变更皆有迹可循 ｜ 本稿为原型演示，数据均为示例</div>';}
+
+function vSubmit(){
+  const s=S.submit;
+  const instOpts=DBS.filter(d=>d.canChange).map(d=>'<option value="'+d.id+'"'+(s.instance===d.id?' selected':'')+'>'+esc(d.name)+' · '+d.type+' · '+d.env+'</option>').join('');
+  let result='';
+  if(s.phase==='idle'){
+    result='<div class="empty">'+ic('shield',34)+'<div><b>尚未预审</b></div><div class="muted" style="max-width:280px">填写 SQL 后点击「解析并预审」，平台会给出规则命中、影响面评估和<b>回滚能力清单</b>。</div></div>';
+  } else if(s.phase==='running'){
+    result='<div class="empty">'+ic('activity',34)+'<div class="pulse"><b>正在解析…</b></div><div class="muted">AST 归一化 → 规则检查 → 只读副本 COUNT(*) → 回滚能力判定</div></div>';
+  } else {
+    result=''+
+    '<div class="flex between" style="margin-bottom:12px"><div class="flex gap8 center">'+badge(RISK,'HIGH')+'<span class="muted">命中 2 条 ERROR · 2 条 WARN</span></div><span class="tag">parseConfidence 0.98</span></div>'+
+    '<div class="grid g2" style="margin-bottom:12px">'+
+      '<div class="notice n-info">'+ic('activity',15)+'<div>影响行数 <b>2,418</b>（只读副本 COUNT(*)，2.1s · 异步评估完成）<br>EXPLAIN rows 仅作提示，不作为分级依据</div></div>'+
+      '<div class="notice n-warn">'+ic('clock',15)+'<div>命中 R_LOW_PEAK_WINDOW<br>建议执行窗口 02:00–04:00</div></div>'+
+    '</div>'+
+    '<div class="section-t">规则命中</div>'+
+    '<table><thead><tr><th>规则</th><th>级别</th><th>说明</th></tr></thead><tbody>'+
+      '<tr><td class="mono">R_NONDETERMINISTIC_SET</td><td><span class="badge b-danger">ERROR</span></td><td>SET 含 NOW()，前镜像不可靠 → 该单元标不可回滚</td></tr>'+
+      '<tr><td class="mono">R_ROLLBACK_UNAVAILABLE</td><td><span class="badge b-danger">ERROR</span></td><td>INSERT … SELECT 无法定位新行主键（MySQL 无 DML RETURNING）</td></tr>'+
+      '<tr><td class="mono">R_FULL_TABLE_SCAN</td><td><span class="badge b-warn">WARN</span></td><td>created_at 无可用索引</td></tr>'+
+      '<tr><td class="mono">R_LOW_PEAK_WINDOW</td><td><span class="badge b-warn">WARN</span></td><td>影响 2,418 行，超低峰建议阈值（1,000）未达阻断阈值（10 万）</td></tr>'+
+    '</tbody></table>'+
+    '<div class="section-t">回滚能力清单 · 准入门槛</div>'+
+    '<div class="notice n-danger" style="margin-bottom:9px">'+ic('alert',15)+'<div><b>本单存在不可回滚单元，按策略 R_ROLLBACK_UNAVAILABLE 阻断提交。</b><br>可选择：拆分工单 / 改用影子表 / 申请规则豁免（需审批并留痕）。</div></div>'+
+    '<table><thead><tr><th>#</th><th>语句</th><th>回滚能力</th><th>手段 / 原因</th></tr></thead><tbody>'+
+      '<tr><td class="mono">1</td><td class="mono">UPDATE orders …</td><td><span class="badge b-danger">不可回滚</span></td><td class="dim">SET 含 NOW()，前镜像失效（去掉 updated_at=NOW() 后可回滚）</td></tr>'+
+      '<tr><td class="mono">2</td><td class="mono">INSERT … SELECT …</td><td><span class="badge b-danger">不可回滚</span></td><td class="dim">批量插入无法定位主键 → 转 binlog 闪回</td></tr>'+
+    '</tbody></table>'+
+    '<div class="notice n-warn" style="margin-top:9px">'+ic('info',15)+'<div><b>本工单不是一个事务。</b>2 条语句 = 2 个 unit，unit#1 成功 unit#2 失败是可能结果；需要原子性请自行拆分或保证语句幂等可重入。</div></div>'+
+    '<div class="divider"></div>'+
+    '<div class="flex gap8 wrap"><button class="btn btn-primary" data-act="submit-ticket">'+ic('check',14)+'提交审批</button><button class="btn" data-act="split-ticket">'+ic('copy',14)+'拆分为可回滚工单</button><button class="btn btn-ghost" data-act="save-draft">保存草稿</button></div>'+
+    '<div class="notice n-neutral" style="margin-top:12px">'+ic('info',15)+'<div>审批通过只进入 <b>approved（待执行）</b>，不会立即在生产库执行；执行需显式动作或低峰窗口触发。</div></div>';
+  }
+  return pageHead('提交变更','审核 → 风险分级 → 回滚能力准入 → 审批。解析失败一律高危，绝不降级放行',
+    '<button class="btn" data-act="load-sample">'+ic('file',14)+'载入示例</button>')+
+  '<div class="split">'+
+    '<div class="card"><div class="card-h"><div><div class="card-t">SQL 编辑器</div><div class="card-sub">单条语句 = 一个 unit = 一次执行</div></div><span class="tag">Ctrl/⌘ + Enter 预审</span></div><div class="card-b">'+
+      '<div class="grid g3" style="margin-bottom:12px">'+
+        '<div class="field"><label>目标实例</label><select class="select" data-bind="submit.instance">'+instOpts+'</select></div>'+
+        '<div class="field"><label>方言</label><select class="select" data-bind="submit.dialect"><option>MYSQL</option><option>PG</option><option>IOTDB</option></select></div>'+
+        '<div class="field"><label>环境</label><select class="select"><option>prod</option><option>staging</option></select></div>'+
+      '</div>'+
+      '<textarea class="textarea sql-editor" data-bind="submit.sql" spellcheck="false">'+esc(s.sql)+'</textarea>'+
+      '<div class="flex between" style="margin-top:10px"><div class="flex gap6 wrap">'+
+        '<button class="chip" data-act="sample-update">单条 UPDATE</button><button class="chip" data-act="sample-insert">批量 INSERT</button><button class="chip" data-act="sample-ddl">破坏性 DDL</button><button class="chip" data-act="sample-danger">只读判定失败</button>'+
+      '</div><button class="btn btn-accent" data-act="precheck">'+ic('bolt',14)+'解析并预审</button></div>'+
+    '</div></div>'+
+    '<div class="card"><div class="card-h"><div><div class="card-t">预审结果</div><div class="card-sub">提交前先回答：这一单能不能回滚</div></div><span class="badge b-neutral" id="precheck-state">'+(s.phase==='done'?'已完成':'待运行')+'</span></div><div class="card-b" id="precheck-body">'+result+'</div></div>'+
+  '</div>'+footerNote();
+}
+
+function vTickets(){
+  const rows=TICKETS.map(t=>'<tr class="clickable" data-ticket="'+t.id+'"><td><div class="row-title mono">'+t.id+'</div><div class="row-sub">'+esc(t.title)+'</div></td><td>'+esc(t.creator)+'</td><td>'+esc(t.inst)+'<div class="row-sub">'+t.dialect+'</div></td><td>'+badge(RISK,t.risk)+'</td><td>'+badge(ST,t.status)+'</td><td>'+badge(RB,t.rollback)+'</td><td>'+t.units+'</td><td class="dim nowrap">'+t.time+'</td></tr>').join('');
+  return pageHead('工单中心','状态机：draft → submitted → auditing → approved → scheduled → executing → succeeded / needs_confirm',
+    '<button class="btn" data-act="filter-demo">'+ic('filter',14)+'筛选</button><button class="btn btn-primary" data-go="submit">'+ic('plus',14)+'新建工单</button>')+
+  '<div class="card"><div class="card-h"><div><div class="card-t">全部工单</div><div class="card-sub">点击行打开详情抽屉，查看 unit 拆分、审批链与操作时间线</div></div><div class="flex gap6 wrap">'+
+    '<span class="chip on">全部 '+TICKETS.length+'</span><span class="chip">待审批 '+pendingCount()+'</span><span class="chip">执行中 '+TICKETS.filter(t=>t.status==='executing').length+'</span><span class="chip">待确认 '+confirmCount()+'</span><span class="chip">已成功 '+TICKETS.filter(t=>t.status==='succeeded').length+'</span>'+
+  '</div></div><div class="card-b tight"><table><thead><tr><th>工单 / 标题</th><th>提交人</th><th>实例</th><th>风险</th><th>状态</th><th>回滚</th><th>unit</th><th>提交时间</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>'+
+  '<div class="grid g3" style="margin-top:14px">'+
+    '<div class="card"><div class="card-b"><div class="section-t" style="margin-top:0">状态机要点</div><div class="checkline">'+ic('check',15)+'<div><b>approved ≠ 执行</b><br><span class="dim">执行需显式动作，责任边界清晰</span></div></div><div class="checkline">'+ic('check',15)+'<div><b>needs_confirm 冻结重试</b><br><span class="dim">SQL 可能已生效，人工核对后才定态</span></div></div><div class="checkline">'+ic('check',15)+'<div><b>部分成功可续跑</b><br><span class="dim">只跑 failed / pending，已成功的跳过</span></div></div></div></div>'+
+    '<div class="card"><div class="card-b"><div class="section-t" style="margin-top:0">回滚能力分布</div><div class="bar-row"><div class="nm">可回滚</div><div class="bar"><i style="width:50%;background:var(--ok)"></i></div><div class="num">3</div></div><div class="bar-row"><div class="nm">部分可回滚</div><div class="bar"><i style="width:17%;background:var(--warn)"></i></div><div class="num">1</div></div><div class="bar-row"><div class="nm">影子表/快照</div><div class="bar"><i style="width:33%;background:var(--purple)"></i></div><div class="num">2</div></div></div></div>'+
+    '<div class="card"><div class="card-b"><div class="section-t" style="margin-top:0">快捷跳转</div><div class="flex gap8 wrap"><button class="btn btn-sm" data-go="approvals">审批中心</button><button class="btn btn-sm" data-go="execution">执行监控</button><button class="btn btn-sm" data-go="rollback">回滚管理</button></div><div class="notice n-neutral" style="margin-top:12px">'+ic('info',15)+'<div>工单详情抽屉里可以直接「去执行」或「申请回滚」。</div></div></div></div>'+
+  '</div>'+footerNote();
+}
+
+function vApprovals(){
+  const pending=TICKETS.filter(t=>['pending_approval','auditing'].includes(t.status)&&!S.approvalDone[t.id]);
+  const cards=pending.length?pending.map(t=>'<div class="card" style="margin-bottom:12px"><div class="card-b">'+
+    '<div class="flex between" style="margin-bottom:10px"><div class="flex gap8 center"><span class="mono row-title">'+t.id+'</span>'+badge(RISK,t.risk)+badge(RB,t.rollback)+'</div><span class="dim">'+t.time+'</span></div>'+
+    '<div style="font-size:14px;font-weight:650;margin-bottom:4px">'+esc(t.title)+'</div>'+
+    '<div class="muted" style="margin-bottom:12px">'+esc(t.desc)+' ｜ '+esc(t.inst)+' ｜ 提交人 '+esc(t.creator)+'</div>'+
+    '<div class="grid g3" style="margin-bottom:12px">'+
+      '<div class="notice n-info">'+ic('list',15)+'<div>规则命中 <b>2 条</b><br>含 1 条 ERROR</div></div>'+
+      '<div class="notice n-warn">'+ic('undo',15)+'<div>回滚能力 <b>'+RB[t.rollback][1]+'</b><br>'+(t.rollback==='SHADOW'?'强制 RENAME 影子表':'按 unit 生成反向 SQL')+'</div></div>'+
+      '<div class="notice n-neutral">'+ic('users',15)+'<div>审批链 <b>'+(t.risk==='CRITICAL'?'主管+DBA+管理员':'主管+DBA')+'</b><br>会签 / 防自审已启用</div></div>'+
+    '</div>'+
+    '<div class="flex gap8 wrap"><button class="btn btn-primary" data-act="approve" data-id="'+t.id+'">'+ic('check',14)+'通过</button><button class="btn" data-act="reject" data-id="'+t.id+'">驳回</button><button class="btn btn-ghost" data-act="transfer" data-id="'+t.id+'">转交</button><button class="btn btn-ghost" data-go="tickets" data-ticket="'+t.id+'">查看详情 '+ic('chev',12)+'</button></div>'+
+  '</div></div>').join(''):'<div class="card"><div class="empty">'+ic('check',34)+'<div><b>待办已清空</b></div><div class="muted">今天审批完 3 单，干得不错。</div></div></div>';
+  return pageHead('审批中心','防自审 · 会签/或签 · 实例 Owner · 超时企微提醒 · 路由取最严链',
+    '<span class="badge b-warn">待我审批 '+pending.length+'</span>')+
+  '<div class="notice n-info" style="margin-bottom:14px">'+ic('shield',15)+'<div><b>提交人不得审批自己的工单</b>（硬校验）。当前角色：'+roleName(S.role)+'。通过后工单进入 <b>approved（待执行）</b>，平台不会自动执行。</div></div>'+
+  '<div class="split-r"><div>'+cards+
+    '<div class="card"><div class="card-h"><div class="card-t">已审批</div></div><div class="card-b tight"><table><thead><tr><th>工单</th><th>结果</th><th>审批人</th><th>时间</th></tr></thead><tbody>'+
+    '<tr><td class="mono">TK-1042</td><td><span class="badge b-ok">通过</span></td><td>陈默</td><td class="dim">11-22 10:31</td></tr>'+
+    '<tr><td class="mono">TK-1037</td><td><span class="badge b-danger">驳回</span></td><td>陈默</td><td class="dim">11-21 14:40</td></tr>'+
+    '<tr><td class="mono">TK-1036</td><td><span class="badge b-ok">通过</span></td><td>陈默</td><td class="dim">11-21 11:08</td></tr>'+
+    '</tbody></table></div></div>'+
+  '</div><div>'+
+    '<div class="card" style="margin-bottom:14px"><div class="card-h"><div class="card-t">审批流配置</div><div class="card-sub">flow_rule → flow_node</div></div><div class="card-b">'+
+      '<div class="kv"><span class="k">LOW / staging</span><span class="v">自动通过（留痕）</span></div>'+
+      '<div class="kv"><span class="k">MEDIUM / prod</span><span class="v">主管 1 人</span></div>'+
+      '<div class="kv"><span class="k">HIGH / prod</span><span class="v">主管 + DBA</span></div>'+
+      '<div class="kv"><span class="k">CRITICAL</span><span class="v" style="color:var(--danger)">主管 + DBA + 管理员</span></div>'+
+      '<div class="divider"></div><div class="notice n-warn">'+ic('alert',15)+'<div>高危规则 <span class="mono">non_overridable=1</span>，任何配置都不能把 CRITICAL 降到低危链。</div></div>'+
+    '</div></div>'+
+    '<div class="card"><div class="card-h"><div class="card-t">二次确认</div></div><div class="card-b"><div class="checkline">'+ic('key',15)+'<div>执行前由<b>审批人之外</b>的角色二次确认</div></div><div class="checkline">'+ic('db',15)+'<div>执行账号 <span class="mono">rw_exec</span> 默认不授 DROP</div></div><div class="checkline">'+ic('clock',15)+'<div>超时未执行自动 expired，需重新审批</div></div></div></div>'+
+  '</div></div>'+footerNote();
+}
+
+function vExecution(){
+  const e=S.execution;
+  const units=e.units.length?e.units:[
+    {i:1,inst:'prod-order-mysql',schema:'order_db',sql:'UPDATE orders SET status=2 WHERE …',st:'pending',lease:'—',intent:false,exec:false},
+    {i:2,inst:'prod-order-mysql',schema:'order_db',sql:'INSERT INTO order_archive …',st:'pending',lease:'—',intent:false,exec:false},
+    {i:3,inst:'prod-user-pg',schema:'user_db',sql:'ALTER TABLE users ADD COLUMN …',st:'pending',lease:'—',intent:false,exec:false}
+  ];
+  const umap={pending:['b-neutral','pending'],leased:['b-info','leased'],executing:['b-brand','executing'],success:['b-ok','success'],needs_confirm:['b-danger','needs_confirm']};
+  const cards=units.map(u=>'<div class="unit-card '+(u.st==='executing'?'running':u.st==='needs_confirm'?'confirm':'')+'">'+
+    '<div class="flex between" style="margin-bottom:8px"><div class="flex gap8 center"><span class="tag">unit #'+u.i+'</span>'+badge(umap,u.st)+'<span class="dim mono">'+esc(u.inst)+' / '+esc(u.schema)+'</span></div><span class="dim">'+(u.st==='executing'?'<span class="pulse">执行中…</span>':'')+'</span></div>'+
+    '<div class="sql-line">'+esc(u.sql)+'</div>'+
+    '<div class="grid g4" style="margin-top:9px;gap:6px">'+
+      '<div class="kv"><span class="k">lease_owner</span><span class="v mono">'+esc(u.lease)+'</span></div>'+
+      '<div class="kv"><span class="k">intent</span><span class="v">'+(u.intent?'<span style="color:var(--ok)">已预写</span>':'<span class="dim">未写</span>')+'</span></div>'+
+      '<div class="kv"><span class="k">executed_at</span><span class="v mono">'+(u.exec?'13:58:07':'—')+'</span></div>'+
+      '<div class="kv"><span class="k">幂等键</span><span class="v mono">unit_id</span></div>'+
+    '</div></div>').join('');
+  const done=units.filter(u=>['success','needs_confirm'].includes(u.st)).length;
+  return pageHead('执行监控','租约 + 心跳 + 预写 intent + unit_id 幂等确认；异常进 needs_confirm，绝不自动重跑',
+    '<button class="btn" data-act="reset-exec">'+ic('undo',14)+'重置</button><button class="btn btn-primary" data-act="start-exec" '+(e.running?'disabled':'')+'>'+ic('play',14)+(e.running?'执行中…':'开始执行')+'</button>')+
+  '<div class="split">'+
+    '<div class="card"><div class="card-h"><div><div class="card-t">TK-1042 · 执行单元</div><div class="card-sub">进度 '+done+' / '+units.length+' ｜ worker-02 持有租约</div></div><span class="tag">'+(e.running?'<span class="pulse">运行中</span>':'就绪')+'</span></div><div class="card-b">'+
+      '<div class="progress" style="margin-bottom:14px"><i style="width:'+(done/units.length*100)+'%"></i></div>'+cards+
+    '</div></div>'+
+    '<div>'+
+      '<div class="card" style="margin-bottom:14px"><div class="card-h"><div class="card-t">幂等协议</div><div class="card-sub">生产库 SQL 与平台库状态无法原子化</div></div><div class="card-b">'+
+        '<div class="checkline">'+ic('check',15)+'<div><b>① 抢占租约</b><br><span class="dim">lease_owner / lease_until / heartbeat_at，intent_written=0 为硬条件，影响行数 1 才算抢到</span></div></div>'+
+        '<div class="checkline">'+ic('check',15)+'<div><b>② 取 exec_lock</b><br><span class="dim">同实例同时只跑一个 unit，防并发工单交叉污染前镜像</span></div></div>'+
+        '<div class="checkline">'+ic('check',15)+'<div><b>③ 执行前门禁</b><br><span class="dim">DDL 指纹比对（结构漂移）+ 回滚能力复核 + 审批时效</span></div></div>'+
+        '<div class="checkline">'+ic('check',15)+'<div><b>④ 预写 intent</b><br><span class="dim">状态 + 回滚 SQL 骨架同事务落库，提交后才连生产库</span></div></div>'+
+        '<div class="checkline">'+ic('check',15)+'<div><b>⑤ 单事务执行（RR 隔离）</b><br><span class="dim">FOR UPDATE 前镜像 → DML → affected_rows 对账 → COMMIT</span></div></div>'+
+        '<div class="checkline">'+ic('check',15)+'<div><b>⑥ 幂等确认 / 人工兜底</b><br><span class="dim">条件 UPDATE 确认；intent 已写未确认 → needs_confirm，禁止重跑</span></div></div>'+
+      '</div></div>'+
+      '<div class="card" style="margin-bottom:14px"><div class="card-h"><div class="card-t">执行期门禁状态</div><div class="card-sub">TK-1042 · 实时</div></div><div class="card-b">'+
+        '<div class="kv"><span class="k">exec_lock</span><span class="v mono">inst:prod-order-mysql（worker-02 持有）</span></div>'+
+        '<div class="kv"><span class="k">隔离级别</span><span class="v">REPEATABLE READ <span class="dim">（会话断言通过）</span></span></div>'+
+        '<div class="kv"><span class="k">DDL 指纹</span><span class="v" style="color:var(--ok)">一致，无结构漂移</span></div>'+
+        '<div class="kv"><span class="k">前镜像 / affected</span><span class="v mono">2418 / 2418 <span style="color:var(--ok)">对账通过</span></span></div>'+
+        '<div class="kv"><span class="k">锁等待 / 从库延迟</span><span class="v mono">0.3s / 1.2s</span></div>'+
+      '</div></div>'+
+      '<div class="card"><div class="card-h"><div class="card-t">故障注入验收</div><div class="card-sub">P1 必过 · 4 个用例</div></div><div class="card-b">'+
+        '<div class="checkline">'+ic('bolt',15)+'<div><b>双执行</b> · COMMIT 后 kill worker<br><span class="dim">→ needs_confirm，生产库未执行第二次</span></div></div>'+
+        '<div class="checkline">'+ic('bolt',15)+'<div><b>幻行</b> · 取完前镜像后并发 INSERT 命中行<br><span class="dim">→ RR 隔离下对账成立或事务整体回滚</span></div></div>'+
+        '<div class="checkline">'+ic('bolt',15)+'<div><b>结构漂移</b> · 审批后手工 ALTER 改列类型<br><span class="dim">→ R_SCHEMA_DRIFT 拦截，退回重审</span></div></div>'+
+        '<div class="checkline">'+ic('bolt',15)+'<div><b>并发工单</b> · 两单同时改同一张表<br><span class="dim">→ exec_lock 串行，后者等待</span></div></div>'+
+        '<div class="divider"></div><button class="btn btn-sm" data-act="inject-fault">'+ic('bolt',13)+'运行「双执行」用例</button></div></div>'+
+    '</div>'+
+  '</div>'+footerNote();
+}
+
+function vRollback(){
+  const r=S.rollback;
+  const cols=[{i:3,sql:'ALTER TABLE users DROP COLUMN last_login_channel',dep:'通过',ok:true},{i:2,sql:'DELETE FROM order_archive WHERE id IN (…)',dep:'通过',ok:true},{i:1,sql:'UPDATE orders SET status=<旧值> WHERE id=…',dep:'不一致',ok:false}];
+  const plan=r.built?'<div class="section-t">倒序执行计划 · TK-1042</div>'+cols.map((c,k)=>'<div class="unit-card" style="border-left:3px solid '+(c.ok?'var(--ok)':'var(--danger)')+'">'+
+      '<div class="flex between"><div class="flex gap8 center"><span class="tag">step '+(k+1)+'</span><span class="mono">原 unit #'+c.i+' → 反向</span></div><span class="badge '+(c.ok?'b-ok':'b-danger')+'">依赖检测 '+c.dep+'</span></div>'+
+      '<div class="sql-line" style="margin-top:8px">'+esc(c.sql)+'</div>'+
+      (c.ok?'':'<div class="notice n-danger" style="margin-top:8px">'+ic('alert',15)+'<div>前镜像 hash 与当前行不一致：该行已被后续工单修改，<b>拒绝执行回滚</b>并告警（避免覆盖别人的写入）。</div></div>')+
+    '</div>').join('')+
+    '<div class="flex gap8 wrap" style="margin-top:10px"><button class="btn btn-primary" data-act="rollback-apply" '+(cols.some(c=>!c.ok)?'disabled':'')+'>'+ic('undo',14)+'申请回滚（需审批）</button><button class="btn" data-act="rollback-reset">重新生成</button></div>':
+    '<div class="empty">'+ic('undo',34)+'<div><b>尚未生成回滚计划</b></div><div class="muted" style="max-width:300px">选择已成功的工单生成计划，平台会做有效期校验、前镜像 hash 依赖检测，并按 unit 倒序编排。</div><button class="btn btn-primary" style="margin-top:8px" data-act="build-rollback">'+ic('bolt',14)+'生成回滚计划</button></div>';
+  return pageHead('回滚管理','回滚不是事后安慰剂：有效期 · 依赖检测 · 倒序 · 独立审批 · 幂等',
+    '<span class="badge b-brand">覆盖率 91.7%</span>')+
+  '<div class="grid g4" style="margin-bottom:14px">'+
+    statCard('generated','18','待校验 / 待使用','var(--info)','undo')+
+    statCard('verified','12','语法自检 + 影子库对账','var(--ok)','check')+
+    statCard('expired','4','默认有效期 24h','var(--text3)','clock')+
+    statCard('not_available','2','执行前已明确拦截','var(--danger)','alert')+
+  '</div>'+
+  '<div class="split">'+'<div class="card"><div class="card-h"><div><div class="card-t">回滚执行计划</div><div class="card-sub">基于前镜像 hash 的依赖检测是硬性前置</div></div></div><div class="card-b">'+plan+'</div></div>'+
+  '<div>'+
+    '<div class="card" style="margin-bottom:14px"><div class="card-h"><div class="card-t">回滚 SQL 生命周期</div></div><div class="card-b">'+
+      '<div class="stepbar"><div class="step done"><span class="cir">1</span>generated</div><div class="step-line"></div><div class="step done"><span class="cir">2</span>verified</div><div class="step-line"></div><div class="step cur"><span class="cir">3</span>applied</div><div class="step-line"></div><div class="step"><span class="cir">4</span>expired</div></div>'+
+      '<div class="divider"></div>'+
+      '<div class="kv"><span class="k">有效期</span><span class="v">24h，过期自动 expired</span></div>'+
+      '<div class="kv"><span class="k">依赖检测</span><span class="v">前镜像 hash 比对</span></div>'+
+      '<div class="kv"><span class="k">执行顺序</span><span class="v">unit_order 倒序</span></div>'+
+      '<div class="kv"><span class="k">审批</span><span class="v">独立 rollback_ticket</span></div>'+
+      '<div class="kv"><span class="k">幂等</span><span class="v">复用租约 + intent 协议</span></div>'+
+    '</div></div>'+
+    '<div class="card"><div class="card-h"><div class="card-t">能力边界（诚实披露）</div></div><div class="card-b">'+
+      '<div class="checkline">'+ic('check',15)+'<div>MySQL / PG 单表 DML：前镜像 → 反向 SQL</div></div>'+
+      '<div class="checkline">'+ic('x',15)+'<div>无主键表、批量 INSERT、函数 SET：<b>不生成</b></div></div>'+
+      '<div class="checkline">'+ic('check',15)+'<div>破坏性 DDL：RENAME 影子表（禁用 CTAS）</div></div>'+
+      '<div class="checkline">'+ic('x',15)+'<div>IoTDB：不承诺自动回滚，走快照 SOP</div></div>'+
+    '</div></div>'+
+  '</div></div>'+footerNote();
+}
+
+/* 原型用正则做演示；真实实现必须走 AST（见设计文档 §4.2）。
+   这里先剥掉字符串字面量与注释，否则 `WHERE remark='update'` 或表名 update_log 会误判为写操作。 */
+function stripLiterals(s){
+  return s.replace(/'(?:[^']|'')*'/g,"''")      // 单引号字符串
+          .replace(/"(?:[^"]|"")*"/g,'""')      // 双引号标识符/字符串
+          .replace(/`[^`]*`/g,'``')             // MySQL 反引号标识符
+          .replace(/--[^\n]*/g,' ')             // 行注释
+          .replace(/\/\*[\s\S]*?\*\//g,' ');    // 块注释
+}
+function lintSql(sql){
+  const raw=(sql||'').trim();
+  if(!raw) return {lv:'warn',msg:'编辑器为空，输入 SELECT 语句开始查询'};
+  if((raw.match(/'/g)||[]).length%2) return {lv:'err',msg:'语法错误：字符串引号未闭合'};
+  const s=stripLiterals(raw);
+  if(/(^|[\s(;])(insert|update|delete|drop|alter|truncate|create|grant|call|lock)[\s(]/i.test(' '+s+' ')||/explain\s+analyze|for\s+update|for\s+share|into\s+outfile|into\s+dumpfile|lock\s+in\s+share/i.test(s))
+    return {lv:'err',msg:'只读判定不通过：检测到写操作或危险子句，执行将降级为审核工单'};
+  if(!/^(select|with|show|explain)\b/i.test(s)) return {lv:'err',msg:'无法识别为只读语句（解析失败一律高危，不放行）'};
+  if(!/limit\s+\d+/i.test(s)) return {lv:'warn',msg:'未写 LIMIT：执行时按 AST 注入 LIMIT 1000（不做字符串拼接）'};
+  return {lv:'ok',msg:'语法校验通过 · 只读白名单内 · 超时 10s · 结果掩码已启用'};
+}
+function vQuery(){
+  const q=S.query;
+  const myDbs=DBS.filter(d=>d.canQuery);
+  const cur=DBS.find(d=>d.id===q.db)||myDbs[0];
+  const tables=TABLES[cur.id]||[];
+  const t=tables.find(x=>x.name===q.table)||tables[0];
+  const lint=lintSql(q.sql);
+  const hints=q.hint||[];
+  const dbList=DBS.map(d=>{
+    const locked=!d.canQuery;
+    return '<div class="db-item '+(d.id===q.db?'on':'')+'" '+(locked?'data-act="db-locked"':'data-act="db-select"')+' data-v="'+d.id+'" style="'+(locked?'opacity:.55':'')+'">'+
+      '<div class="ty" style="background:'+typeColor(d.type)+'"></div>'+
+      '<div class="grow"><div class="flex between center"><span class="nm">'+esc(d.name)+'</span>'+typeBadge(d.type)+'</div>'+
+      '<div class="meta">'+d.env+' · '+(d.type==='IoTDB'?'时序序列':d.tables+' 张表')+(locked?' · 未授权':'')+'</div></div>'+(locked?ic('lock',13):'')+'</div>';
+  }).join('');
+  const tree=tables.map(x=>'<div class="tree-item '+(t&&x.name===t.name?'on':'')+'" data-act="db-table" data-v="'+x.name+'">'+ic('table',12)+'<span class="mono">'+x.name+'</span><span class="grow"></span><span class="dim" style="font-size:10px">'+x.rows+'</span></div>').join('')||'<div class="empty" style="padding:20px">暂无元数据</div>';
+  const struct=t?'<table><thead><tr><th>列</th><th>类型</th><th>说明</th></tr></thead><tbody>'+t.cols.map(c=>'<tr><td class="mono">'+c[0]+'</td><td class="mono dim">'+c[1]+'</td><td class="dim">'+c[2]+'</td></tr>').join('')+'</tbody></table>':'';
+  const maskCell=(tb,r)=>'<tr>'+r.map((v,i)=>'<td class="'+(tb.cols[i]&&/掩码/.test(tb.cols[i][2])?'mask':'')+'">'+esc(v)+'</td>').join('')+'</tr>';
+  const preview=t?'<table class="result-table"><thead><tr>'+t.cols.map(c=>'<th>'+c[0]+'</th>').join('')+'</tr></thead><tbody>'+t.preview.map(r=>maskCell(t,r)).join('')+'</tbody></table>':'';
+  let out='';
+  if(q.phase==='idle') out='<div class="empty">'+ic('terminal',34)+'<div><b>查询结果</b></div><div class="muted" style="max-width:300px">点「执行查询」或按 ⌘Enter。也可在中间栏选表，直接看结构与最后几行。</div></div>';
+  else if(q.phase==='running') out='<div class="empty">'+ic('activity',34)+'<div class="pulse"><b>执行中…</b></div><div class="muted">只读判定 → 强制 LIMIT → statement_timeout → 流式读取</div></div>';
+  else if(q.blocked){
+    out='<div class="notice n-danger">'+ic('alert',15)+'<div><b>只读判定不通过，已拦截并降级为审核工单</b><br>命中危险子句：<span class="mono">EXPLAIN ANALYZE</span>（真实执行 DML）、<span class="mono">FOR UPDATE</span>（加行锁）、<span class="mono">INTO OUTFILE</span>（写文件）。</div></div>'+
+    '<div class="section-t">AST 白名单排除清单</div>'+
+    '<table><thead><tr><th>子句 / 形态</th><th>原因</th></tr></thead><tbody>'+
+    '<tr><td class="mono">EXPLAIN ANALYZE</td><td class="dim">PG 会真实执行 DML；MySQL 8.0.18+ 也会真实执行语句</td></tr>'+
+    '<tr><td class="mono">FOR UPDATE / FOR SHARE</td><td class="dim">加行锁，影响线上</td></tr>'+
+    '<tr><td class="mono">SELECT … INTO OUTFILE</td><td class="dim">写文件 / 会话状态</td></tr>'+
+    '<tr><td class="mono">数据修改 CTE / 存储函数</td><td class="dim">实际写表或函数内写表</td></tr>'+
+    '<tr><td class="mono">解析置信度 &lt; 阈值</td><td class="dim">无法证明只读 → 一律高危人工审</td></tr>'+
+    '</tbody></table><div class="notice n-neutral" style="margin-top:12px">'+ic('info',15)+'<div>只读判定基于 AST 白名单逐项排除，<b>不用正则</b>；解析失败绝不降级放行。</div></div>';
+  } else {
+    out='<div class="grid g4" style="margin-bottom:12px">'+
+      '<div class="notice n-ok">'+ic('shield',15)+'<div>只读判定 <b>通过</b><br>AST 白名单</div></div>'+
+      '<div class="notice n-info">'+ic('filter',15)+'<div><b>LIMIT</b> 已生效<br>白名单外无 LIMIT 直接拒绝</div></div>'+
+      '<div class="notice n-info">'+ic('clock',15)+'<div>超时 <b>10s</b><br>'+cur.type+' 方言适配</div></div>'+
+      '<div class="notice n-neutral">'+ic('db',15)+'<div>账号 <b>ro_data</b><br>仅 SELECT，连接池隔离</div></div>'+
+    '</div>'+
+    '<div class="flex between" style="margin-bottom:8px"><div class="flex gap8 center"><span class="badge b-ok">SUCCESS</span><span class="muted">'+esc(t?t.name:'orders')+' · 返回 '+(t?t.preview.length:5)+' 行 · 128ms · 未截断</span></div><button class="btn btn-sm" data-act="export-query">'+ic('file',13)+'导出 CSV</button></div>'+
+    '<div style="border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden">'+preview+'</div>'+
+    '<div class="notice n-neutral" style="margin-top:12px">'+ic('lock',15)+'<div><b>掩码列已按 masking_rule 打码</b>；导出需审批 + 水印（操作人 / 时间 / trace_id），结果集不落库，query_log 只存 SQL 全文（加密）与行数、耗时。</div></div>';
+  }
+  return pageHead('线上 SQL 查询','只显示已授权实例 · 表结构 / 数据预览 / 语法校验 / 智能提示 · 查询 100% 留痕',
+    '<button class="btn" data-act="query-danger">'+ic('alert',14)+'试一条被拦截的</button><button class="btn" data-go="admin" data-tab="perms">'+ic('key',14)+'申请权限</button><button class="btn btn-primary" data-act="query-run">'+ic('play',14)+'执行查询</button>')+
+  '<div class="card" style="margin-bottom:14px"><div class="card-b" style="padding:12px 16px"><div class="flex between wrap gap12">'+
+    '<div class="flex gap12 center">'+typeBadge(cur.type)+'<div><div class="row-title">'+esc(cur.name)+' <span class="tag">'+cur.type+' '+cur.ver+'</span></div><div class="row-sub mono">'+cur.host+' · Owner '+esc(cur.owner)+' · '+esc(cur.desc)+'</div></div></div>'+
+    '<div class="flex gap12 center"><span class="perm-cell perm-y">'+ic('check',12)+'SQL 查询</span><span class="perm-cell '+(cur.canChange?'perm-y':'perm-n')+'">'+ic(cur.canChange?'check':'lock',12)+'SQL 变更'+(cur.canChange?'':'（未授权）')+'</span><span class="tag">我的权限</span></div>'+
+  '</div></div></div>'+
+  '<div class="query-layout">'+
+    '<div class="card"><div class="card-h"><div><div class="card-t">我的数据库</div><div class="card-sub">'+myDbs.length+' / '+DBS.length+' 已授权</div></div></div><div class="card-b" style="padding:8px">'+dbList+
+      '<div class="notice n-neutral" style="margin-top:8px">'+ic('info',15)+'<div>灰色实例未授权，点击可发起权限申请。</div></div></div></div>'+
+    '<div class="card query-mid"><div class="card-h"><div><div class="card-t">表结构</div><div class="card-sub">'+esc(cur.name)+' · '+(cur.type==='IoTDB'?'时间序列':'数据表')+'</div></div></div><div class="card-b" style="padding:8px;max-height:150px;overflow:auto">'+tree+'</div>'+
+      (t?'<div class="card-h" style="border-top:1px solid var(--border)"><div><div class="card-t mono">'+t.name+'</div><div class="card-sub">字段与最后几行预览</div></div><button class="btn btn-sm" data-act="db-fill-select" data-v="'+t.name+'">'+ic('plus',12)+'生成 SELECT</button></div><div class="card-b tight" style="max-height:200px;overflow:auto">'+struct+'</div><div class="card-h" style="border-top:1px solid var(--border)"><div class="card-sub">最后 '+t.preview.length+' 行（只读快照）</div></div><div class="card-b tight" style="overflow:auto">'+preview+'</div>':'')+
+    '</div>'+
+    '<div class="card"><div class="card-h"><div><div class="card-t">SQL 工作台</div><div class="card-sub">语法校验 + 关键字 / 表名提示</div></div><span class="tag">⌘Enter 执行</span></div><div class="card-b">'+
+      '<div class="editor-wrap"><textarea class="textarea sql-editor" style="min-height:150px" data-bind="query.sql" data-sql="1" spellcheck="false" placeholder="SELECT …（输入 SE 试试提示）">'+esc(q.sql)+'</textarea>'+
+      '<div id="hint-pop">'+(hints.length?'<div class="hint-pop">'+hints.map(h=>'<div class="hi-item" data-act="hint-pick" data-v="'+esc(h)+'"><span>'+esc(h)+'</span><span class="k">'+(/^[A-Z]/.test(h)?'关键字':'表名')+'</span></div>').join('')+'</div>':'')+'</div>'+
+      '<div class="lint-bar lint-'+lint.lv+'" id="lint-bar">'+ic(lint.lv==='ok'?'check':lint.lv==='warn'?'alert':'x',13)+'<span>'+lint.msg+'</span></div>'+
+      '<div class="flex gap6 wrap" style="margin-top:10px"><button class="chip" data-act="q-sample-ok">正常查询</button><button class="chip" data-act="q-sample-nolimit">无 LIMIT 大查询</button><button class="chip" data-act="q-sample-danger">EXPLAIN ANALYZE</button><button class="chip" data-act="q-sample-write">写操作</button></div>'+
+      '<div class="divider"></div><div>'+out+'</div>'+
+    '</div></div>'+
+  '</div>'+footerNote();
+}
+
+function vAudit(){
+  const acts=['ALL','QUERY_EXEC','UNIT_EXEC','TICKET_APPROVE','TICKET_SUBMIT','CRED_VIEW','ROLLBACK_APPLY','LOGIN'];
+  const f=S.auditFilter;
+  const ev=AUDIT_EVENTS.filter(e=>f==='ALL'||e.action===f);
+  const rows=ev.map(e=>{const rc=e.result==='SUCCESS'?'b-ok':e.result==='DENIED'||e.result==='WARN'?'b-danger':'b-warn';return '<tr class="clickable" data-audit="'+e.trace+'"><td class="mono nowrap">'+e.t+'</td><td><div class="row-title">'+esc(e.actor)+'</div><div class="row-sub">'+esc(e.role)+'</div></td><td><span class="tag">'+e.action+'</span></td><td class="mono">'+esc(e.target)+'</td><td><span class="badge '+rc+'">'+e.result+'</span></td><td class="mono dim">'+e.ip+'</td><td class="mono dim">'+e.trace+'</td></tr>';}).join('');
+  return pageHead('审计日志','每人每步可追溯 · append-only + hash 链 + 链头外置 · 只防无意篡改',
+    '<button class="btn" data-act="audit-export">'+ic('file',14)+'导出（需审批）</button>')+
+  '<div class="card" style="margin-bottom:14px"><div class="card-b"><div class="flex between wrap gap12">'+
+    '<div class="flex gap12 center"><span class="badge b-ok">'+ic('link',12)+' hash 链完整</span><span class="muted">seq 连续 · 今日链头已外置 WORM · 最近校验 14:00</span></div>'+
+    '<div class="flex gap6 center"><span class="tag">口径</span><span class="muted">只防无意篡改 / 单点改动，不防有 DBA 权限的内部人</span></div>'+
+  '</div></div></div>'+
+  '<div class="split">'+
+    '<div class="card"><div class="card-h"><div><div class="card-t">事件流</div><div class="card-sub">点击任意行查看明细摘要</div></div><div class="flex gap6 wrap">'+acts.map(a=>'<span class="chip '+(f===a?'on':'')+'" data-act="audit-filter" data-v="'+a+'">'+(a==='ALL'?'全部':a)+'</span>').join('')+'</div></div><div class="card-b tight"><table><thead><tr><th>时间</th><th>操作人</th><th>动作</th><th>目标</th><th>结果</th><th>IP</th><th>trace_id</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>'+
+    '<div>'+
+      '<div class="card" style="margin-bottom:14px"><div class="card-h"><div class="card-t">覆盖矩阵</div></div><div class="card-b">'+
+        [['认证','登录/登出/失败 · Token 刷新撤销 · TOTP'],['凭据','查看/轮换（只记动作，绝不记值）'],['配置','实例/规则/流程/掩码/执行窗口'],['工单','创建/编辑/提交/取消/审批/规则豁免'],['查询','每次查询 + 导出申请与下载'],['执行','每 unit 抢占/执行/影响行数/needs_confirm'],['回滚','生成/校验/审批/执行/依赖检测失败'],['权限','角色授予回收 · 实例 Owner 变更']].map(x=>'<div class="checkline">'+ic('check',15)+'<div><b>'+x[0]+'</b><br><span class="dim">'+x[1]+'</span></div></div>').join('')+
+      '</div></div>'+
+      '<div class="card"><div class="card-h"><div class="card-t">不可篡改设计</div></div><div class="card-b">'+
+        '<div class="kv"><span class="k">写入权限</span><span class="v">应用仅 INSERT/SELECT</span></div>'+
+        '<div class="kv"><span class="k">链公式</span><span class="v mono" style="font-size:10px">SHA256(prev‖seq‖record)</span></div>'+
+        '<div class="kv"><span class="k">并发串行化</span><span class="v">seq 自增 + 锁链尾</span></div>'+
+        '<div class="kv"><span class="k">链头外置</span><span class="v">每日 00:00 → WORM</span></div>'+
+        '<div class="kv"><span class="k">保留期</span><span class="v">≥180 天，归档不删除</span></div>'+
+        '<div class="notice n-warn" style="margin-top:12px">'+ic('lock',15)+'<div><b>detail 与 sql_text 加密存储</b>（含前镜像旧值），访问需单独授权并写审计；这是加密与访问控制，不是脱敏。</div></div>'+
+      '</div></div>'+
+    '</div>'+
+  '</div>'+footerNote();
+}
+
+function vAdmin(){
+  const tabs=[['instances','数据库管理'],['perms','权限配置'],['flows','审批流'],['rules','审核规则'],['masking','掩码规则']];
+  const isAdmin=S.role==='admin';
+  let body='';
+  if(S.adminTab==='instances') body=adminInstances();
+  if(S.adminTab==='perms') body=adminPerms();
+  if(S.adminTab==='flows') body=adminFlows();
+  if(S.adminTab==='rules') body='<table><thead><tr><th>规则 code</th><th>方言</th><th>类型</th><th>级别</th><th>阈值</th><th>说明</th><th>启用</th></tr></thead><tbody>'+RULES.map(r=>'<tr><td class="mono">'+r.code+'</td><td>'+r.dialect+'</td><td>'+r.type+'</td><td><span class="badge '+(r.level==='ERROR'?'b-danger':'b-warn')+'">'+r.level+'</span></td><td class="mono">'+r.param+'</td><td class="dim">'+esc(r.desc)+'</td><td><button class="switch '+(r.on?'on':'')+'" data-act="toggle-rule" data-v="'+r.code+'"></button></td></tr>').join('')+'</tbody></table><div class="notice n-neutral" style="margin-top:12px">'+ic('info',15)+'<div>ERROR 阻断提交，WARN 仅提示；豁免必须走审批并写审计（谁豁免了哪条规则、原因）。</div></div>';
+  if(S.adminTab==='masking') body='<table><thead><tr><th>实例 / 列</th><th>规则</th><th>适用角色</th><th>导出</th></tr></thead><tbody>'+
+    '<tr><td class="mono">*.phone</td><td>手机号掩码 3****4</td><td>开发 / 主管</td><td>需审批</td></tr>'+
+    '<tr><td class="mono">*.id_card</td><td>证件号掩码</td><td>开发 / 主管</td><td>需审批</td></tr>'+
+    '<tr><td class="mono">*.email</td><td>邮箱前缀掩码</td><td>开发</td><td>需审批</td></tr>'+
+    '<tr><td class="mono">order_db.amount</td><td>不掩码</td><td>全部</td><td>需审批 + 水印</td></tr>'+
+    '</tbody></table><div class="notice n-neutral" style="margin-top:12px">'+ic('info',15)+'<div>导出文件带操作人 / 时间 / trace_id 水印，生成后限时下载，不落平台库。</div></div>';
+  return pageHead('系统配置','数据库管理 · 权限配置 · 审批流 · 审核规则 · 掩码规则',
+    '<span class="badge '+(isAdmin?'b-brand':'b-neutral')+'">'+roleName(S.role)+(isAdmin?' · 全功能':' · 只读')+'</span>')+
+  (isAdmin?'':'<div class="notice n-warn" style="margin-bottom:14px">'+ic('lock',15)+'<div>当前角色为 <b>'+roleName(S.role)+'</b>，系统配置为只读。数据库接入、授权与回收仅<b>管理员</b>可操作，避免不必要的变更。可在右上角切换角色体验差异。</div></div>')+
+  '<div class="card"><div class="tabs">'+tabs.map(t=>'<button class="'+(S.adminTab===t[0]?'on':'')+'" data-act="admin-tab" data-v="'+t[0]+'">'+t[1]+'</button>').join('')+'</div><div class="card-b">'+body+'</div></div>'+footerNote();
+}
+
+function adminInstances(){
+  const list=DBS.filter(d=>S.dbFilter==='ALL'||d.type===S.dbFilter);
+  const rows=list.map(d=>'<tr>'+
+    '<td><div class="flex gap8 center">'+typeBadge(d.type)+'<div><div class="row-title">'+esc(d.name)+'</div><div class="row-sub mono">'+d.host+'</div></div></div></td>'+
+    '<td>'+d.ver+'</td><td>'+badge({prod:['b-danger','prod'],staging:['b-info','staging']},d.env)+'</td>'+
+    '<td>'+esc(d.owner)+'</td><td class="dim">'+esc(d.desc)+'</td>'+
+    '<td><div class="row-sub mono">ro_meta / ro_data'+(d.canChange?' / rw_exec':'')+'</div><div class="row-sub dim">'+d.cred+'</div></td>'+
+    '<td><div class="flex gap6"><button class="btn btn-sm" data-act="db-edit" data-v="'+d.id+'">'+ic('edit',12)+'编辑</button><button class="btn btn-sm btn-ghost" data-act="db-perm" data-v="'+d.id+'">'+ic('key',12)+'授权</button></div></td></tr>').join('');
+  return '<div class="flex between wrap gap12" style="margin-bottom:12px"><div class="flex gap6 wrap">'+
+    ['ALL','MySQL','PostgreSQL','IoTDB'].map(t=>'<span class="chip '+(S.dbFilter===t?'on':'')+'" data-act="db-filter" data-v="'+t+'">'+(t==='ALL'?'全部类型':t)+'</span>').join('')+
+    '</div><button class="btn btn-primary" data-act="db-new">'+ic('plus',14)+'新建数据库</button></div>'+
+  '<table><thead><tr><th>数据库 / 连接</th><th>版本</th><th>环境</th><th>Owner</th><th>用途</th><th>账号与凭据</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table>'+
+  '<div class="grid g3" style="margin-top:14px">'+
+    '<div class="notice n-info">'+ic('db',15)+'<div><b>三类账号物理隔离</b><br>ro_meta 元数据只读 / ro_data 数据只读 / rw_exec 执行（默认不授 DROP）</div></div>'+
+    '<div class="notice n-info">'+ic('key',15)+'<div><b>凭据 AES-GCM 加密</b><br>主密钥走 KMS/环境变量；查看解密动作本身写审计；90 天轮换</div></div>'+
+    '<div class="notice n-warn">'+ic('alert',15)+'<div><b>接入即校验</b><br>binlog ROW/FULL/保留期、只读副本连通性、防火墙白名单</div></div>'+
+  '</div>';
+}
+
+function adminPerms(){
+  const rows=PERMS.map((p,i)=>'<tr>'+
+    '<td><div class="row-title">'+esc(p.user)+'</div><div class="row-sub">'+(USERS.find(u=>u.name===p.user)||{}).role+'</div></td>'+
+    '<td>'+(p.db==='*'?'<span class="badge b-purple">全部实例</span>':esc(dbName(p.db)))+'</td>'+
+    '<td>'+(p.query?'<span class="perm-cell perm-y">✓ 查询</span>':'<span class="perm-cell perm-n">—</span>')+'</td>'+
+    '<td>'+(p.change?'<span class="perm-cell perm-y">✓ 变更</span>':'<span class="perm-cell perm-n">—</span>')+'</td>'+
+    '<td>'+(p.approve?'<span class="perm-cell perm-y">✓</span>':'<span class="perm-cell perm-n">—</span>')+'</td>'+
+    '<td>'+(p.admin?'<span class="perm-cell perm-y">✓</span>':'<span class="perm-cell perm-n">—</span>')+'</td>'+
+    '<td class="dim nowrap">'+p.expire+'</td><td class="dim">'+p.by+'</td>'+
+    '<td><div class="flex gap6"><button class="btn btn-sm btn-ghost" data-act="perm-edit" data-v="'+i+'">编辑</button><button class="btn btn-sm btn-ghost" data-act="perm-revoke" data-v="'+i+'">回收</button></div></td></tr>').join('');
+  const matrix=[['提交工单','✓','✓','✓','✓'],['查询通道','✓','✓','✓','✓'],['审批（非本人）','—','✓','✓','✓'],['执行 / 二次确认','—','—','✓','✓'],['规则 / 流程配置','—','—','✓','✓'],['数据库接入 / 授权','—','—','—','✓'],['凭据管理','—','—','—','✓'],['审计检索 / 导出','—','自身','✓','✓']];
+  return '<div class="notice n-info" style="margin-bottom:12px">'+ic('shield',15)+'<div><b>管理员默认拥有全部功能点权限</b>，可给他人开通 SQL 查询 / SQL 变更 / 审批 / 管理权限。生产库是核心资产：<b>默认最小权限、按需授权、到期自动回收、全程写审计</b>。</div></div>'+
+  '<div class="flex between wrap gap12" style="margin-bottom:12px"><div class="flex gap6 wrap"><span class="chip on">全部授权 '+PERMS.length+'</span><span class="chip">仅变更权限</span><span class="chip">30 天内到期 2</span></div><button class="btn btn-primary" data-act="perm-new">'+ic('plus',14)+'新增授权</button></div>'+
+  '<table><thead><tr><th>用户</th><th>实例</th><th>SQL 查询</th><th>SQL 变更</th><th>审批</th><th>管理</th><th>有效期</th><th>授权人</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table>'+
+  '<div class="section-t">角色默认权限矩阵（只读参考）</div>'+
+  '<table><thead><tr><th>动作</th><th>开发</th><th>主管</th><th>DBA</th><th>管理员</th></tr></thead><tbody>'+
+  matrix.map(r=>'<tr><td class="row-title">'+r[0]+'</td>'+r.slice(1).map(c=>'<td>'+(c==='✓'?'<span style="color:var(--ok);font-weight:700">✓</span>':c==='—'?'<span class="dim">—</span>':'<span class="tag">'+c+'</span>')+'</td>').join('')+'</tr>').join('')+
+  '</tbody></table>'+
+  '<div class="grid g3" style="margin-top:14px">'+
+    '<div class="notice n-warn">'+ic('alert',15)+'<div><b>变更权限二次确认</b><br>授予 SQL 变更 / 管理权限时需填写原因并二次确认</div></div>'+
+    '<div class="notice n-neutral">'+ic('clock',15)+'<div><b>到期自动回收</b><br>过期权限自动失效，查询页与提交页同步隐藏实例</div></div>'+
+    '<div class="notice n-neutral">'+ic('users',15)+'<div><b>登录与禁用</b><br>企微 OAuth 主登录；离职禁用即时生效，权限随账号失效</div></div>'+
+  '</div>';
+}
+
+function adminFlows(){
+  const isGlobal=S.flowScope==='global';
+  const gRows=FLOW_GLOBAL.map(f=>'<tr><td class="row-title">'+f.cond+'</td><td>'+f.env+'</td><td>'+chainHtml(f.chain)+'</td><td>'+f.mode+'</td><td>'+(f.over?'<span class="badge b-neutral">允许加严</span>':'<span class="badge b-danger">不可覆盖</span>')+'</td></tr>').join('');
+  const dbId=S.flowDb;
+  const overrides=FLOW_DB[dbId]||[];
+  const ovRows=overrides.length?overrides.map(f=>'<tr><td class="row-title">'+f.cond+'</td><td>'+f.env+'</td><td>'+chainHtml(f.chain)+'</td><td>'+f.mode+'</td><td class="dim">'+esc(f.note)+'</td></tr>').join(''):'<tr><td colspan="5" class="dim" style="text-align:center;padding:20px">无实例级覆盖，全部继承全局默认</td></tr>';
+  const inheritRows=FLOW_GLOBAL.map(f=>'<tr><td class="row-title dim">'+f.cond+'</td><td class="dim">'+f.env+'</td><td>'+chainHtml(f.chain)+'</td><td colspan="2"><span class="inherit">继承全局默认</span></td></tr>').join('');
+  const eff=effectiveFlow(dbId,S.flowPreviewRisk);
+  const dbOpts=DBS.map(d=>'<option value="'+d.id+'"'+(d.id===dbId?' selected':'')+'>'+esc(d.name)+' · '+d.type+'</option>').join('');
+  return '<div class="card" style="margin-bottom:14px;border-color:var(--brand2)"><div class="card-b">'+
+    '<div class="flex gap8 center" style="margin-bottom:6px">'+ic('star',16)+'<b>推荐：全局默认 + 实例级覆盖 + 最严链兜底（三层）</b></div>'+
+    '<div class="muted">只用全局 → 核心库无法加严；只用实例级 → 新接入的库漏配就等于没有审批。三层模型让新库默认安全、核心库可加严、配置错误也不会把高危降级。</div>'+
+    '<div class="grid g3" style="margin-top:12px">'+
+      '<div class="scope-card"><div class="lvl">L1 · 全局默认</div><div style="font-weight:650;margin:4px 0">保底安全线</div><div class="dim">所有实例未配置时的兜底审批链</div></div>'+
+      '<div class="scope-card"><div class="lvl">L2 · 实例级覆盖</div><div style="font-weight:650;margin:4px 0">只能加严，不能放宽</div><div class="dim">核心交易库 / IoTDB 等差异化管控</div></div>'+
+      '<div class="scope-card"><div class="lvl">L3 · 最严链兜底</div><div style="font-weight:650;margin:4px 0">CRITICAL 不可覆盖</div><div class="dim">任何配置都不能把高危降级</div></div>'+
+    '</div></div></div>'+
+  '<div class="flex between wrap gap12" style="margin-bottom:12px"><div class="seg"><button class="'+(isGlobal?'on':'')+'" data-act="flow-scope" data-v="global">全局审批流</button><button class="'+(!isGlobal?'on':'')+'" data-act="flow-scope" data-v="instance">按数据库配置</button></div>'+
+    (isGlobal?'<button class="btn btn-sm" data-act="flow-add">'+ic('plus',13)+'新增全局规则</button>':'<div class="flex gap8 center"><select class="select" style="width:200px" data-act="flow-db">'+dbOpts+'</select><button class="btn btn-sm" data-act="flow-add">'+ic('plus',13)+'添加实例覆盖</button></div>')+'</div>'+
+  '<table><thead><tr><th>触发条件</th><th>环境</th><th>审批链</th><th>模式</th><th>'+(isGlobal?'覆盖策略':'说明')+'</th></tr></thead><tbody>'+(isGlobal?gRows:ovRows+inheritRows)+'</tbody></table>'+
+  '<div class="section-t">最终生效预览（继承 / 覆盖 / 最严链的实际结果）</div>'+
+  '<div class="flex gap8 wrap center" style="margin-bottom:10px"><select class="select" style="width:200px" data-act="flow-preview-db">'+dbOpts+'</select><select class="select" style="width:160px" data-act="flow-preview-risk">'+['LOW','MEDIUM','HIGH','CRITICAL'].map(r=>'<option'+(S.flowPreviewRisk===r?' selected':'')+'>'+r+'</option>').join('')+'</select></div>'+
+  '<div class="notice '+(eff.src.indexOf('不可覆盖')>=0?'n-danger':'n-info')+'">'+ic('shield',15)+'<div><b>'+dbName(dbId)+' · '+S.flowPreviewRisk+'</b><br>审批链：'+eff.chain.join(' → ')+'<br><span class="dim">来源：'+eff.src+'</span></div></div>'+
+  '<div class="notice n-warn" style="margin-top:12px">'+ic('alert',15)+'<div>路由取<b>所有命中规则中最严的审批链</b>，不是「命中第一条生效」——后者一条配置写错就能把高危 DROP 降到低危链。</div></div>';
+}
+function effectiveFlow(dbId,risk){
+  if(risk==='CRITICAL') return {src:'全局 L3（不可覆盖）',chain:['主管','DBA','管理员']};
+  const ov=(FLOW_DB[dbId]||[]).find(f=>f.cond===risk);
+  if(ov) return {src:'实例级覆盖 L2 · '+dbName(dbId)+'（加严）',chain:ov.chain};
+  const g=FLOW_GLOBAL.find(f=>f.cond===risk);
+  return {src:'继承全局默认 L1',chain:g?g.chain:['自动通过']};
+}
+
+const VIEWS={overview:vOverview,submit:vSubmit,tickets:vTickets,approvals:vApprovals,execution:vExecution,rollback:vRollback,query:vQuery,audit:vAudit,admin:vAdmin};
+
+/* ---------------- shell render ---------------- */
+function pendingCount(){return TICKETS.filter(t=>['pending_approval','auditing'].includes(t.status)&&!S.approvalDone[t.id]).length;}
+function confirmCount(){return TICKETS.filter(t=>t.status==='needs_confirm').length;}
+function navItems(){
+  const p=pendingCount(),c=confirmCount();
+  return [
+    {g:'工作台',items:[['overview','工作台','grid']]},
+    {g:'变更链路',items:[['submit','提交变更','plus'],['tickets','工单中心','file'],['approvals','审批中心','check',p?String(p):''],['execution','执行监控','activity',c?String(c):''],['rollback','回滚管理','undo']]},
+    {g:'查询与审计',items:[['query','线上查询','terminal'],['audit','审计日志','list']]},
+    {g:'系统',items:[['admin','系统配置','settings']]}
+  ];
+}
+function roleName(r){return {dev:'开发',lead:'主管',dba:'DBA',admin:'管理员'}[r]||r;}
+function shell(){
+  const nav=navItems().map(g=>'<div class="nav-group">'+g.g+'</div>'+g.items.map(it=>'<div class="nav-item '+(S.view===it[0]?'active':'')+'" data-go="'+it[0]+'" title="'+it[1]+'">'+ic(it[2],16)+'<span>'+it[1]+'</span>'+(it[3]?'<span class="nav-badge">'+it[3]+'</span>':'')+'</div>').join('')).join('');
+  const titles={overview:'工作台',submit:'提交变更',tickets:'工单中心',approvals:'审批中心',execution:'执行监控',rollback:'回滚管理',query:'线上查询',audit:'审计日志',admin:'系统配置'};
+  return '<div class="app"><div class="sidebar '+(S.sideCollapsed?'collapsed':'')+'">'+
+    '<div class="brand"><div class="brand-mark">'+ic('star')+'</div><div class="brand-txt"><div class="brand-name">SQL 审核平台</div><div class="brand-sub">POLARSTARX · INTERNAL</div></div></div>'+
+    '<div class="nav">'+nav+'</div>'+
+    '<div class="side-foot"><div class="kv"><span class="k">环境</span><span class="v">'+S.env+'</span></div><div class="kv"><span class="k">通道</span><span class="v" style="color:var(--ok)">唯一出口已生效</span></div></div>'+
+  '</div><div class="main">'+
+    '<div class="topbar">'+
+      '<button class="icon-btn" data-act="toggle-side" title="折叠侧栏">'+ic('menu',16)+'</button>'+
+      '<div class="crumb">极星动力 / <b>'+titles[S.view]+'</b></div>'+
+      '<div class="grow"></div>'+
+      '<div class="seg"><button class="'+(S.env==='prod'?'on':'')+'" data-act="env" data-v="prod">生产</button><button class="'+(S.env==='staging'?'on':'')+'" data-act="env" data-v="staging">预发</button></div>'+
+      '<div class="searchbox" data-act="search">'+ic('search',14)+'<span>搜索工单 / SQL / 审计</span><span class="kbd">⌘K</span></div>'+
+      '<button class="icon-btn" data-act="alerts" title="告警">'+ic('bell',16)+'<span class="dot"></span></button>'+
+      '<button class="icon-btn" data-act="theme" title="切换主题">'+ic(S.theme==='light'?'moon':'sun',16)+'</button>'+
+      '<select class="select" style="width:104px" data-act="role"><option value="dev"'+(S.role==='dev'?' selected':'')+'>开发</option><option value="lead"'+(S.role==='lead'?' selected':'')+'>主管</option><option value="dba"'+(S.role==='dba'?' selected':'')+'>DBA</option><option value="admin"'+(S.role==='admin'?' selected':'')+'>管理员</option></select>'+
+      '<div class="avatar" title="陈默 · '+roleName(S.role)+'">陈</div>'+
+    '</div>'+
+    '<div class="content" id="content"><div class="fade">'+VIEWS[S.view]()+'</div></div>'+
+  '</div></div>';
+}
+function paint(){document.documentElement.setAttribute('data-theme',S.theme);document.getElementById('app').innerHTML=shell();paintDrawer();paintModal();}
+
+/* ---------------- drawer ---------------- */
+function paintDrawer(){
+  const r=document.getElementById('drawer-root');
+  if(!S.drawerTicket){r.innerHTML='';return;}
+  const t=TICKETS.find(x=>x.id===S.drawerTicket)||TICKETS[0];
+  const steps=[['draft','草稿'],['submitted','已提交'],['auditing','审核中'],['pending_approval','待审批'],['approved','已批准'],['scheduled','待执行'],['executing','执行中'],['succeeded','已成功']];
+  const curIdx=Math.max(0,steps.findIndex(s=>s[0]===t.status));
+  const sb=steps.map((s,i)=>'<div class="step '+(i<curIdx?'done':i===curIdx?'cur':'')+'"><span class="cir">'+(i<curIdx?'✓':i+1)+'</span>'+s[1]+'</div>'+(i<steps.length-1?'<div class="step-line"></div>':'')).join('');
+  const units=Array.from({length:t.units},(_,k)=>'<tr><td class="mono">#'+(k+1)+'</td><td class="mono">'+esc(t.inst)+'</td><td class="mono">'+(k===0?'UPDATE orders …':k===1?'INSERT … SELECT …':'ALTER TABLE …')+'</td><td>'+badge(ST,k===2&&t.status==='needs_confirm'?'needs_confirm':'succeeded')+'</td><td>'+badge(RB,k===1?'NONE':'FULL')+'</td></tr>').join('');
+  r.innerHTML='<div class="drawer-wrap"><div class="drawer-bg" data-close="1"></div><div class="drawer">'+
+    '<div class="drawer-h"><div class="flex between"><div><div class="flex gap8 center"><span class="mono row-title">'+t.id+'</span>'+badge(RISK,t.risk)+badge(ST,t.status)+'</div><div class="page-desc" style="margin-top:5px">'+esc(t.title)+'</div></div><button class="icon-btn" data-close="1">'+ic('x')+'</button></div></div>'+
+    '<div class="drawer-b">'+
+      '<div class="section-t" style="margin-top:0">状态机</div><div class="card-b" style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px"><div class="stepbar">'+sb+'</div></div>'+
+      '<div class="section-t">基本信息</div>'+
+      '<div class="kv"><span class="k">提交人</span><span class="v">'+esc(t.creator)+' · 开发</span></div>'+
+      '<div class="kv"><span class="k">实例 / 方言</span><span class="v">'+esc(t.inst)+' / '+t.dialect+'</span></div>'+
+      '<div class="kv"><span class="k">环境</span><span class="v">prod</span></div>'+
+      '<div class="kv"><span class="k">回滚能力</span><span class="v">'+badge(RB,t.rollback)+'</span></div>'+
+      '<div class="kv"><span class="k">建议窗口</span><span class="v">02:00–04:00（影响 2,418 行）</span></div>'+
+      '<div class="section-t">执行单元（unit）</div><table><thead><tr><th>#</th><th>实例</th><th>语句</th><th>状态</th><th>回滚</th></tr></thead><tbody>'+units+'</tbody></table>'+
+      '<div class="section-t">审批链</div>'+
+      '<div class="checkline">'+ic('check',15)+'<div><b>主管审批</b> · 王屹 <span class="dim">已通过 10:12</span></div></div>'+
+      '<div class="checkline">'+ic('check',15)+'<div><b>DBA 确认</b> · 陈默 <span class="dim">已通过 10:31</span></div></div>'+
+      (t.risk==='CRITICAL'?'<div class="checkline">'+ic('clock',15)+'<div><b>管理员 + 执行前二次确认</b> <span class="dim">待执行</span></div></div>':'')+
+      '<div class="section-t">操作时间线</div><div class="timeline">'+
+        '<div class="tl-item hi"><div class="tl-t">提交工单</div><div class="tl-m">许昭 · '+t.time+' · trace a91c…3f2</div></div>'+
+        '<div class="tl-item"><div class="tl-t">自动审核完成</div><div class="tl-m">规则引擎 · 3 ERROR / 2 WARN · 回滚能力 '+RB[t.rollback][1]+'</div></div>'+
+        '<div class="tl-item"><div class="tl-t">审批通过（approved）</div><div class="tl-m">陈默 · 10:31 · 未执行，等待显式动作</div></div>'+
+        (t.status==='needs_confirm'?'<div class="tl-item hi"><div class="tl-t" style="color:var(--danger)">进入 needs_confirm</div><div class="tl-m">worker-01 · intent 已写未确认 · 禁止自动重试</div></div>':'')+
+      '</div>'+
+    '</div>'+
+    '<div class="drawer-f"><button class="btn" data-act="drawer-rollback" data-id="'+t.id+'">'+ic('undo',14)+'申请回滚</button><button class="btn btn-primary" data-act="drawer-exec" data-id="'+t.id+'">'+ic('play',14)+'去执行监控</button></div>'+
+  '</div></div>';
+}
+
+/* ---------------- actions ---------------- */
+function go(v){S.view=v;S.searchOpen=false;paint();document.getElementById('content').scrollTop=0;}
+function setBind(path,val){const p=path.split('.');S[p[0]][p[1]]=val;}
+function doPrecheck(){
+  S.submit.phase='running';paint();
+  setTimeout(()=>{S.submit.phase='done';paint();toast('预审完成','命中 3 条 ERROR，存在不可回滚单元','warn');},700);
+}
+function startExec(){
+  const e=S.execution;
+  e.units=[
+    {i:1,inst:'prod-order-mysql',schema:'order_db',sql:'UPDATE orders SET status=2 WHERE …',st:'pending',lease:'—',intent:false,exec:false},
+    {i:2,inst:'prod-order-mysql',schema:'order_db',sql:'INSERT INTO order_archive …',st:'pending',lease:'—',intent:false,exec:false},
+    {i:3,inst:'prod-user-pg',schema:'user_db',sql:'ALTER TABLE users ADD COLUMN …',st:'pending',lease:'—',intent:false,exec:false}
+  ];
+  e.step=0;e.running=true;e.confirmPending=false;go('execution');
+  const seq=['leased','executing','success'];
+  const timer=setInterval(()=>{
+    const u=e.units[e.step];
+    if(!u){clearInterval(timer);return;}
+    const idx=seq.indexOf(u.st);
+    if(idx<0)u.st='leased';else if(u.st!=='success')u.st=seq[Math.min(idx+1,2)];
+    if(u.st==='leased'){u.lease='worker-02';}
+    if(u.st==='executing'){u.intent=true;}
+    if(u.st==='success'){
+      u.exec=true;u.lease='worker-02';
+      if(e.step===2&&!e.confirmPending){
+        e.confirmPending=true;u.st='needs_confirm';clearInterval(timer);e.running=false;paint();
+        openModal({title:'人工确认 · needs_confirm',
+          body:'<div class="notice n-danger">'+ic('alert',15)+'<div><b>生产库 SQL 可能已生效，但平台库状态未确认。</b><br>按幂等协议，此单元已冻结自动重试，需人工核对后定态。</div></div>'+
+            '<div class="section-t">现场信息</div>'+
+            '<div class="kv"><span class="k">unit</span><span class="v mono">TK-1042 / unit#3</span></div>'+
+            '<div class="kv"><span class="k">intent_written</span><span class="v">1（已预写）</span></div>'+
+            '<div class="kv"><span class="k">executed_at</span><span class="v" style="color:var(--danger)">NULL</span></div>'+
+            '<div class="kv"><span class="k">binlog 区间</span><span class="v mono">mysql-bin.00412:8912 → :9044</span></div>'+
+            '<div class="notice n-neutral" style="margin-top:12px">'+ic('info',15)+'<div>核对生产库实际状态后再选择；选「确认已执行」会按 unit_id 幂等写回 succeeded，<b>不会重新执行 SQL</b>。</div></div>',
+          actions:'<button class="btn" data-close="1">稍后处理</button><button class="btn btn-danger" data-act="confirm-fail">标记失败</button><button class="btn btn-primary" data-act="confirm-ok">确认已执行</button>'});
+        return;
+      }
+      e.step++;
+    }
+    paint();
+    if(e.step>=e.units.length){clearInterval(timer);e.running=false;paint();toast('执行完成','3 / 3 unit 已幂等确认','ok');}
+  },850);
+}
+function doQuery(){
+  const q=S.query;q.phase='running';q.blocked=false;paint();
+  const danger=/explain\s+analyze|for\s+update|into\s+outfile|lock\s+in\s+share/i.test(q.sql);
+  setTimeout(()=>{q.phase='done';q.blocked=danger;paint();toast(danger?'查询被拦截':'查询完成',danger?'非只读语句已降级为审核工单':'返回 5 行 · 128ms',danger?'err':'ok');},650);
+}
+function handle(act,el){
+  switch(act){
+    case 'toggle-side':S.sideCollapsed=!S.sideCollapsed;paint();break;
+    case 'theme':S.theme=S.theme==='light'?'dark':'light';localStorage.setItem('sa-theme',S.theme);paint();break;
+    case 'env':S.env=el.dataset.v;paint();break;
+    case 'search':openCmd();break;
+    case 'alerts':go('overview');toast('告警中心','1 条 P0 待人工确认（TK-1039）','warn');break;
+    case 'go':go(el.dataset.go);if(el.dataset.ticket)openDrawer(el.dataset.ticket);break;
+    case 'ticket':openDrawer(el.dataset.ticket);break;
+    case 'precheck':doPrecheck();break;
+    case 'load-sample':S.submit.sql="UPDATE orders SET status = 2, updated_at = NOW()\nWHERE created_at < '2026-01-01' AND status = 1;";S.submit.phase='idle';paint();break;
+    case 'sample-update':S.submit.sql="UPDATE orders SET status = 2 WHERE id = 10241873;";S.submit.phase='idle';paint();break;
+    case 'sample-insert':S.submit.sql="INSERT INTO order_archive (id, status)\nSELECT id, status FROM orders WHERE created_at < '2025-06-01';";S.submit.phase='idle';paint();break;
+    case 'sample-ddl':S.submit.sql='DROP TABLE dict_v1;';S.submit.phase='idle';paint();break;
+    case 'sample-danger':S.submit.sql="SELECT * FROM orders INTO OUTFILE '/tmp/orders.csv';";S.submit.phase='idle';paint();break;
+    case 'submit-ticket':toast('已提交审批','TK-1043 · 命中规则豁免流程','ok');go('tickets');break;
+    case 'split-ticket':toast('已拆分','把可回滚单元拆为独立工单 TK-1043','ok');break;
+    case 'save-draft':toast('草稿已保存','仅本地，不写审计','ok');break;
+    case 'filter-demo':toast('筛选','演示稿保留全部筛选条件');break;
+    case 'approve':{
+      const id=el.dataset.id;
+      openModal({title:'确认审批通过 · '+id,
+        body:'<div class="notice n-warn">'+ic('alert',15)+'<div><b>审批通过只进入 approved（待执行），不会立即在生产库执行。</b><br>执行需显式动作或低峰窗口触发，责任边界清晰。</div></div>'+
+          '<div class="section-t">本次操作</div><div class="kv"><span class="k">审批人</span><span class="v">陈默 · '+roleName(S.role)+'</span></div><div class="kv"><span class="k">审批链</span><span class="v">主管 + DBA（会签）</span></div><div class="kv"><span class="k">防自审校验</span><span class="v" style="color:var(--ok)">通过</span></div><div class="kv"><span class="k">审计</span><span class="v">TICKET_APPROVE 写入 append-only</span></div>',
+        actions:'<button class="btn" data-close="1">取消</button><button class="btn btn-primary" data-act="approve-ok" data-id="'+id+'">确认通过</button>'});
+      break;}
+    case 'approve-ok':{const id=el.dataset.id;S.approvalDone[id]=true;const t=TICKETS.find(x=>x.id===id);if(t)t.status='approved';closeModal();paint();toast('审批通过',id+' 已进入 approved（待执行）','ok');break;}
+    case 'reject':{const id=el.dataset.id;const t=TICKETS.find(x=>x.id===id);if(t)t.status='rejected';S.approvalDone[id]=true;paint();toast('已驳回',id+' 回到提交人','warn');break;}
+    case 'transfer':toast('已转交','转交给实例 Owner · 王屹','ok');break;
+    case 'start-exec':startExec();break;
+    case 'reset-exec':S.execution={ticketId:'TK-1042',units:[],running:false,step:0,confirmPending:false};paint();break;
+    case 'inject-fault':openModal({title:'故障注入 · COMMIT 后 worker 崩溃',body:'<div class="notice n-warn">'+ic('bolt',15)+'<div>模拟在 COMMIT 之后、平台库状态写回之前 kill worker-02。重启后检查：<b>unit 是否进入 needs_confirm，且生产库没有被执行第二次</b>。</div></div><div class="notice n-ok" style="margin-top:12px">'+ic('check',15)+'<div>预期结果：intent_written=1 且 executed_at IS NULL → 冻结自动重试，转人工确认态。</div></div>',actions:'<button class="btn" data-close="1">关闭</button><button class="btn btn-primary" data-act="start-exec">运行用例</button>'});break;
+    case 'confirm-ok':{const e2=S.execution;const u=e2.units[2];if(u){u.st='success';u.exec=true;}e2.step=e2.units.length;e2.running=false;closeModal();paint();toast('已幂等确认','unit#3 标记 succeeded，未重新执行 SQL · 3/3 完成','ok');break;}
+    case 'confirm-fail':{const u=S.execution.units[2];if(u)u.st='needs_confirm';closeModal();paint();toast('保持待确认','已通知 DBA 人工核对','warn');break;}
+    case 'build-rollback':S.rollback.built=true;paint();toast('回滚计划已生成','3 个 unit 倒序 · 1 个依赖检测失败','warn');break;
+    case 'rollback-reset':S.rollback.built=false;paint();break;
+    case 'rollback-apply':toast('已提交回滚申请','独立 rollback_ticket，等待审批','ok');break;
+    case 'query-run':doQuery();break;
+    case 'query-danger':S.query.sql='EXPLAIN ANALYZE UPDATE orders SET status = 3 WHERE id = 10241873;';S.query.phase='idle';paint();break;
+    case 'q-sample-ok':S.query.sql='SELECT id, user_id, phone, amount, created_at FROM orders ORDER BY created_at DESC LIMIT 100;';S.query.phase='idle';paint();break;
+    case 'q-sample-nolimit':S.query.sql='SELECT * FROM orders;';S.query.phase='idle';paint();break;
+    case 'q-sample-danger':S.query.sql='EXPLAIN ANALYZE UPDATE orders SET status = 3 WHERE id = 10241873;';S.query.phase='idle';paint();break;
+    case 'export-query':toast('导出申请已提交','需审批 + 水印（操作人/时间/trace_id）','ok');break;
+    case 'audit-filter':S.auditFilter=el.dataset.v;paint();break;
+    case 'audit-export':toast('导出申请已提交','审计导出走审批并留痕','ok');break;
+    case 'admin-tab':S.adminTab=el.dataset.v;paint();break;
+    case 'toggle-rule':{const r=RULES.find(x=>x.code===el.dataset.v);if(r)r.on=!r.on;paint();toast('规则已'+(r&&r.on?'启用':'停用'),el.dataset.v+' · 配置变更已写审计','ok');break;}
+    case 'admin-audit':go('audit');break;
+    case 'drawer-exec':closeDrawer();go('execution');break;
+    case 'drawer-rollback':closeDrawer();S.rollback.built=false;go('rollback');break;
+    case 'db-select':{S.query.db=el.dataset.v;const tb=(TABLES[S.query.db]||[])[0];S.query.table=tb?tb.name:'';S.query.phase='idle';S.query.hint=[];paint();break;}
+    case 'db-locked':{S.permDraft={user:'许昭',db:el.dataset.v,query:true,change:false,approve:false,admin:false,expire:'2027-02-28',reason:''};openPermModal('申请权限 · '+dbName(el.dataset.v));break;}
+    case 'db-table':{S.query.table=el.dataset.v;paint();break;}
+    case 'db-fill-select':{S.query.sql='SELECT * FROM '+el.dataset.v+'\nORDER BY 1 DESC\nLIMIT 5;';S.query.phase='idle';S.query.hint=[];paint();break;}
+    case 'db-filter':{S.dbFilter=el.dataset.v;paint();break;}
+    case 'db-new':case 'db-edit':{openDbModal(act==='db-edit'?el.dataset.v:null);break;}
+    case 'db-save':{closeModal();toast('数据库已保存','接入校验：binlog / 只读副本 / 防火墙白名单','ok');break;}
+    case 'db-perm':{S.permDraft={user:'许昭',db:el.dataset.v,query:true,change:false,approve:false,admin:false,expire:'2027-02-28',reason:''};openPermModal('实例授权 · '+dbName(el.dataset.v));break;}
+    case 'perm-new':{S.permDraft={user:'许昭',db:'db_order',query:true,change:false,approve:false,admin:false,expire:'2027-02-28',reason:''};openPermModal('新增授权');break;}
+    case 'perm-edit':{const p=PERMS[+el.dataset.v];S.permDraft={user:p.user,db:p.db,query:p.query,change:p.change,approve:p.approve,admin:p.admin,expire:p.expire,reason:''};openPermModal('编辑授权 · '+p.user);break;}
+    case 'perm-toggle':{S.permDraft[el.dataset.v]=!S.permDraft[el.dataset.v];paintModal();break;}
+    case 'perm-save':{const d=S.permDraft;PERMS.push({user:d.user,db:d.db,query:d.query,change:d.change,approve:d.approve,admin:d.admin,expire:d.expire,by:'管理员'});closeModal();paint();toast('授权已生效',d.user+' × '+dbName(d.db)+' · 已写审计 PERM_GRANT','ok');break;}
+    case 'perm-revoke':{const i=+el.dataset.v;const p=PERMS[i];openModal({title:'回收权限',body:'<div class="notice n-danger">'+ic('alert',15)+'<div>确认回收 <b>'+esc(p.user)+'</b> 在 <b>'+esc(dbName(p.db))+'</b> 的权限？回收即时生效，并写入审计日志。</div></div>',actions:'<button class="btn" data-close="1">取消</button><button class="btn btn-danger" data-act="perm-revoke-ok" data-v="'+i+'">确认回收</button>'});break;}
+    case 'perm-revoke-ok':{PERMS.splice(+el.dataset.v,1);closeModal();paint();toast('权限已回收','已写审计 PERM_REVOKE','warn');break;}
+    case 'flow-scope':{S.flowScope=el.dataset.v;paint();break;}
+    case 'flow-add':{openModal({title:'新增审批规则',body:'<div class="form-grid"><div class="field"><label>触发条件</label><select class="select"><option>LOW</option><option>MEDIUM</option><option>HIGH</option><option>CRITICAL</option></select></div><div class="field"><label>环境</label><select class="select"><option>prod</option><option>staging</option><option>any</option></select></div><div class="field full"><label>审批节点（按顺序）</label><input class="input" value="主管 → DBA → 实例 Owner"></div><div class="field"><label>会签模式</label><select class="select"><option>AND 会签</option><option>OR 或签</option></select></div><div class="field"><label>覆盖策略</label><select class="select"><option>仅允许加严</option><option>不可覆盖</option></select></div></div><div class="notice n-warn" style="margin-top:12px">'+ic('alert',15)+'<div>实例级覆盖只能加严；CRITICAL 与破坏性 DDL 不可覆盖。</div></div>',actions:'<button class="btn" data-close="1">取消</button><button class="btn btn-primary" data-act="flow-save">保存规则</button>'});break;}
+    case 'flow-save':{closeModal();toast('审批规则已保存','配置变更已写审计 FLOW_UPDATE','ok');break;}
+    case 'q-sample-write':{S.query.sql='DELETE FROM orders WHERE id = 10241873;';S.query.phase='idle';S.query.hint=[];paint();break;}
+    case 'hint-pick':{S.query.sql=S.query.sql.replace(/([A-Za-z_][A-Za-z0-9_.]*)$/,el.dataset.v);S.query.hint=[];const ta=document.querySelector('[data-sql]');if(ta)ta.value=S.query.sql;const hp=document.getElementById('hint-pop');if(hp)hp.innerHTML='';const lb=document.getElementById('lint-bar');if(lb){const l=lintSql(S.query.sql);lb.className='lint-bar lint-'+l.lv;lb.innerHTML=ic(l.lv==='ok'?'check':l.lv==='warn'?'alert':'x',13)+'<span>'+l.msg+'</span>';}break;}
+    case 'open-cmd':openCmd();break;
+  }
+}
+function openDbModal(id){
+  const d=id?DBS.find(x=>x.id===id):{name:'',type:'MySQL',ver:'8.0',env:'prod',host:'',owner:'陈默',desc:''};
+  S.dbDraft=Object.assign({},d);
+  openModal({title:id?'编辑数据库 · '+d.name:'新建数据库',
+    body:'<div class="form-grid">'+
+      '<div class="field"><label>名称</label><input class="input" data-bind="dbDraft.name" value="'+esc(d.name)+'" placeholder="如：订单主库"></div>'+
+      '<div class="field"><label>类型</label><select class="select" data-bind="dbDraft.type">'+['MySQL','PostgreSQL','IoTDB'].map(t=>'<option'+(d.type===t?' selected':'')+'>'+t+'</option>').join('')+'</select></div>'+
+      '<div class="field"><label>版本</label><input class="input" data-bind="dbDraft.ver" value="'+esc(d.ver)+'"></div>'+
+      '<div class="field"><label>环境</label><select class="select" data-bind="dbDraft.env"><option'+(d.env==='prod'?' selected':'')+'>prod</option><option'+(d.env==='staging'?' selected':'')+'>staging</option></select></div>'+
+      '<div class="field full"><label>连接地址 host:port</label><input class="input mono" data-bind="dbDraft.host" value="'+esc(d.host)+'" placeholder="10.30.1.12:3306"></div>'+
+      '<div class="field"><label>实例 Owner</label><select class="select" data-bind="dbDraft.owner">'+USERS.map(u=>'<option'+(d.owner===u.name?' selected':'')+'>'+u.name+'</option>').join('')+'</select></div>'+
+      '<div class="field"><label>凭据</label><input class="input" placeholder="AES-GCM 加密存储，不回显"></div>'+
+      '<div class="field full"><label>用途说明</label><input class="input" data-bind="dbDraft.desc" value="'+esc(d.desc)+'"></div>'+
+    '</div>'+
+    '<div class="notice n-info" style="margin-top:12px">'+ic('shield',15)+'<div>保存后自动接入校验：只读副本连通性、binlog 格式（ROW/FULL/保留期）、防火墙白名单；三类账号按最小权限创建。</div></div>',
+    actions:'<button class="btn" data-close="1">取消</button><button class="btn btn-primary" data-act="db-save">保存并校验</button>'});
+}
+function openPermModal(title){
+  const d=S.permDraft;
+  const opt=(k,label,warn)=>'<div class="check-opt '+(d[k]?'on':'')+'" data-act="perm-toggle" data-v="'+k+'">'+ic(d[k]?'check':'plus',13)+label+(warn?' <span class="dim">（需二次确认）</span>':'')+'</div>';
+  openModal({title:title,
+    body:'<div class="form-grid">'+
+      '<div class="field"><label>授权用户</label><select class="select" data-bind="permDraft.user">'+USERS.map(u=>'<option value="'+u.name+'"'+(d.user===u.name?' selected':'')+'>'+u.name+' · '+u.role+'</option>').join('')+'</select></div>'+
+      '<div class="field"><label>目标实例</label><select class="select" data-bind="permDraft.db">'+DBS.map(x=>'<option value="'+x.id+'"'+(d.db===x.id?' selected':'')+'>'+esc(x.name)+' · '+x.type+'</option>').join('')+'<option value="*"'+(d.db==='*'?' selected':'')+'>全部实例（谨慎）</option></select></div>'+
+    '</div>'+
+    '<div class="section-t">权限点（按需勾选，最小权限）</div><div class="check-grid">'+opt('query','SQL 查询')+opt('change','SQL 变更',true)+opt('approve','审批权限')+opt('admin','管理权限',true)+'</div>'+
+    '<div class="form-grid" style="margin-top:12px"><div class="field"><label>有效期</label><input class="input" data-bind="permDraft.expire" value="'+esc(d.expire)+'"></div><div class="field"><label>授权原因（写审计）</label><input class="input" data-bind="permDraft.reason" placeholder="如：订单归档需求"></div></div>'+
+    (d.change||d.admin?'<div class="notice n-danger" style="margin-top:12px">'+ic('alert',15)+'<div>你正在授予<b>高权限</b>（变更 / 管理）。请确认确有必要；该操作将二次确认并写入审计。</div></div>':'<div class="notice n-neutral" style="margin-top:12px">'+ic('info',15)+'<div>仅授予查询权限：用户只能走只读通道，不能提交变更工单。</div></div>'),
+    actions:'<button class="btn" data-close="1">取消</button><button class="btn btn-primary" data-act="perm-save">确认授权</button>'});
+}
+function computeHint(sql){
+  const m=(sql||'').match(/([A-Za-z_][A-Za-z0-9_.]*)$/);
+  if(!m) return [];
+  const w=m[1].toUpperCase();
+  if(!w) return [];
+  const tbls=(TABLES[S.query.db]||[]).map(t=>t.name);
+  return SQL_KW.concat(tbls).filter(k=>k.toUpperCase().indexOf(w)===0&&k.toUpperCase()!==w).slice(0,6);
+}
+function openCmd(){
+  const items=[['overview','工作台'],['submit','提交变更'],['tickets','工单中心'],['approvals','审批中心'],['execution','执行监控'],['rollback','回滚管理'],['query','线上查询'],['audit','审计日志'],['admin','系统配置']];
+  openModal({title:'全局搜索 / 快速跳转',
+    body:'<div class="notice n-info" style="margin-bottom:10px">'+ic('search',15)+'<div>输入工单号、SQL 关键字或页面名称。⌘K 唤起，Esc 关闭。</div></div>'+items.map(i=>'<div class="cmd" data-act="cmd-go" data-v="'+i[0]+'">'+ic('chev',13)+'<span>'+i[1]+'</span><span class="grow"></span><span class="kbd">↵</span></div>').join(''),
+    actions:'<button class="btn" data-close="1">关闭</button>'});
+}
+document.addEventListener('click',e=>{
+  const closeEl=e.target.closest('[data-close]');
+  if(closeEl){const inModal=closeEl.closest('#modal-root');const inDrawer=closeEl.closest('#drawer-root');if(inModal)closeModal();else if(inDrawer)closeDrawer();return;}
+  const bindEl=e.target.closest('[data-act="cmd-go"]');
+  if(bindEl){closeModal();go(bindEl.dataset.v);return;}
+  const actEl=e.target.closest('[data-act]');
+  if(actEl){
+    // 表单控件（select / input）的 click 不能 preventDefault，否则下拉打不开；
+    // 它们的交互走 change 监听器。
+    const tag=e.target.tagName;
+    if(tag!=='SELECT'&&tag!=='INPUT'&&tag!=='TEXTAREA'){e.preventDefault();handle(actEl.dataset.act,actEl);}
+    return;
+  }
+  const goEl=e.target.closest('[data-go]');
+  if(goEl){const t=goEl.dataset.ticket;if(goEl.dataset.tab)S.adminTab=goEl.dataset.tab;go(goEl.dataset.go);if(t)openDrawer(t);return;}
+  const tkEl=e.target.closest('[data-ticket]');
+  if(tkEl){openDrawer(tkEl.dataset.ticket);return;}
+  const auEl=e.target.closest('[data-audit]');
+  if(auEl){openModal({title:'审计事件明细',body:'<div class="kv"><span class="k">trace_id</span><span class="v mono">'+auEl.dataset.audit+'</span></div><div class="kv"><span class="k">detail</span><span class="v">加密存储（SQL 摘要 / 前后摘要）</span></div><div class="kv"><span class="k">hash 链</span><span class="v" style="color:var(--ok)">校验通过</span></div><div class="notice n-neutral" style="margin-top:12px">'+ic('lock',15)+'<div>查看完整明文需单独授权，且本次查看本身会写入审计日志。</div></div>',actions:'<button class="btn" data-close="1">关闭</button>'});}
+});
+document.addEventListener('input',e=>{
+  const b=e.target.closest('[data-bind]');
+  if(b){setBind(b.dataset.bind,e.target.value);}
+  if(b&&b.dataset.sql){
+    const l=lintSql(S.query.sql);
+    const lb=document.getElementById('lint-bar');
+    if(lb){lb.className='lint-bar lint-'+l.lv;lb.innerHTML=ic(l.lv==='ok'?'check':l.lv==='warn'?'alert':'x',13)+'<span>'+l.msg+'</span>';}
+    const hp=document.getElementById('hint-pop');
+    if(hp){const hs=computeHint(S.query.sql);hp.innerHTML=hs.length?'<div class="hint-pop">'+hs.map(h=>'<div class="hi-item" data-act="hint-pick" data-v="'+esc(h)+'"><span>'+esc(h)+'</span><span class="k">'+(/^[A-Z]/.test(h)?'关键字':'表名')+'</span></div>').join('')+'</div>':'';}
+  }
+});
+document.addEventListener('change',e=>{
+  const b=e.target.closest('[data-bind]');if(b)setBind(b.dataset.bind,e.target.value);
+  const fb=e.target.closest('[data-act="flow-db"],[data-act="flow-preview-db"]');if(fb){S.flowDb=fb.value;paint();return;}
+  const fr=e.target.closest('[data-act="flow-preview-risk"]');if(fr){S.flowPreviewRisk=fr.value;paint();return;}
+  const r=e.target.closest('[data-act="role"]');if(r){S.role=r.value;paint();toast('角色已切换','当前：'+roleName(S.role)+'（用于演示权限差异）');}
+});
+document.addEventListener('keydown',e=>{
+  if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();if(S.modal)closeModal();else openCmd();}
+  if(e.key==='Escape'){if(S.modal)closeModal();else if(S.drawerTicket)closeDrawer();}
+  if((e.metaKey||e.ctrlKey)&&e.key==='Enter'&&S.view==='submit'){e.preventDefault();doPrecheck();}
+});
+paint();
+</script>
+</body>
+</html>

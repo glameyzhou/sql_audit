@@ -1,0 +1,107 @@
+/* ============================================================
+   SQL 审核平台 · 设计 Token（定版）
+   来源：sql-audit-ui-prototype.html 的 :root（以 light 主题为准，
+   深色主题 W2 后再做，禁止启用）。
+   两层结构：
+   - --sa-*  平台自有 token（自定义组件直接使用）
+   - --el-*  Element Plus 主题映射（EP 组件自动跟随）
+   加载顺序：element-plus/dist/index.css → main.css(@import 本文件)，
+   保证映射覆盖生效。
+   ============================================================ */
+:root {
+  /* ---- 品牌色 ---- */
+  --sa-brand: #17315E;        /* 主品牌·深蓝：主按钮、品牌区底色起点 */
+  --sa-brand-2: #0FA8B7;      /* 交互强调·青：链接、激活态、focus、徽标 */
+  --sa-brand-soft: #E6F6F8;   /* 品牌浅底：激活背景、focus ring、b-brand 徽章底 */
+
+  /* ---- 功能色（soft 为同色系浅底，用于徽章 / notice） ---- */
+  --sa-success: #15A06A;  --sa-success-soft: #E6F6EE;
+  --sa-warning: #D9860B;  --sa-warning-soft: #FDF3E0;
+  --sa-danger:  #DC3C47;  --sa-danger-soft:  #FDECEE;
+  --sa-info:    #3568D4;  --sa-info-soft:    #EAF1FD;
+  --sa-purple:  #7651C8;  --sa-purple-soft:  #F0EBFB;  /* 影子表/快照等待执行类 */
+
+  /* ---- 中性色阶 ---- */
+  --sa-bg: #F4F6FA;          /* 页面背景 */
+  --sa-surface: #FFFFFF;     /* 卡片 / 面板 / 侧栏 */
+  --sa-surface-2: #F8FAFD;   /* 表头、次级底 */
+  --sa-surface-3: #EEF2F8;   /* hover 底、分段控件底 */
+  --sa-border: #E2E8F2;      /* 常规边框 */
+  --sa-border-2: #CBD5E5;   /* 控件边框（输入框 / 按钮） */
+  --sa-text: #14213D;        /* 主文本 / 标题 */
+  --sa-text-2: #5A6B88;      /* 次级文本 / 正文辅助 */
+  --sa-text-3: #8A99B2;      /* 弱文本 / 占位 / 表头 */
+
+  /* ---- 圆角 ---- */
+  --sa-radius: 10px;         /* 卡片 / 弹窗主体 */
+  --sa-radius-sm: 7px;       /* 按钮 / 输入 / 菜单项 */
+
+  /* ---- 阴影 ---- */
+  --sa-shadow: 0 1px 2px rgba(20, 33, 61, .05), 0 8px 24px rgba(20, 33, 61, .06);
+  --sa-shadow-lg: 0 12px 48px rgba(20, 33, 61, .16);   /* 弹窗 / 抽屉 */
+
+  /* ---- 字体 ---- */
+  --sa-font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  --sa-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;  /* SQL / 工单号 / trace */
+
+  /* ==== Element Plus 主题映射 ==== */
+  --el-color-primary: var(--sa-brand);
+  /* hover 态直接切换为交互青，对齐原型 btn-primary:hover */
+  --el-color-primary-light-3: var(--sa-brand-2);
+  /* 以下为 brand 与白色的近似混色阶 */
+  --el-color-primary-light-5: #8B98AE;
+  --el-color-primary-light-7: #B9C1CF;
+  --el-color-primary-light-8: #D1D6DF;
+  --el-color-primary-light-9: var(--sa-brand-soft);
+  --el-color-primary-dark-2: #12274B;
+
+  --el-color-success: var(--sa-success);
+  --el-color-success-light-3: #E6F6EE; --el-color-success-light-5: #E6F6EE;
+  --el-color-success-light-7: #E6F6EE; --el-color-success-light-8: #E6F6EE; --el-color-success-light-9: #E6F6EE;
+  --el-color-warning: var(--sa-warning);
+  --el-color-warning-light-3: #FDF3E0; --el-color-warning-light-5: #FDF3E0;
+  --el-color-warning-light-7: #FDF3E0; --el-color-warning-light-8: #FDF3E0; --el-color-warning-light-9: #FDF3E0;
+  --el-color-danger: var(--sa-danger);
+  --el-color-danger-light-3: #FDECEE; --el-color-danger-light-5: #FDECEE;
+  --el-color-danger-light-7: #FDECEE; --el-color-danger-light-8: #FDECEE; --el-color-danger-light-9: #FDECEE;
+  --el-color-error: var(--sa-danger);
+  --el-color-error-light-3: #FDECEE; --el-color-error-light-5: #FDECEE;
+  --el-color-error-light-7: #FDECEE; --el-color-error-light-8: #FDECEE; --el-color-error-light-9: #FDECEE;
+  --el-color-info: var(--sa-info);
+  --el-color-info-light-3: #EAF1FD; --el-color-info-light-5: #EAF1FD;
+  --el-color-info-light-7: #EAF1FD; --el-color-info-light-8: #EAF1FD; --el-color-info-light-9: #EAF1FD;
+
+  /* 文本 */
+  --el-text-color-primary: var(--sa-text);
+  --el-text-color-regular: var(--sa-text-2);
+  --el-text-color-secondary: var(--sa-text-3);
+  --el-text-color-placeholder: var(--sa-text-3);
+  --el-text-color-disabled: #B4C0D2;
+
+  /* 边框 / 填充 / 背景 */
+  --el-border-color: var(--sa-border-2);
+  --el-border-color-light: var(--sa-border);
+  --el-border-color-lighter: var(--sa-border);
+  --el-border-color-extra-light: var(--sa-border);
+  --el-fill-color: var(--sa-surface-3);
+  --el-fill-color-light: var(--sa-surface-2);
+  --el-fill-color-lighter: var(--sa-surface-2);
+  --el-fill-color-extra-light: var(--sa-surface-3);
+  --el-fill-color-blank: var(--sa-surface);
+  --el-bg-color: var(--sa-surface);
+  --el-bg-color-page: var(--sa-bg);
+  --el-bg-color-overlay: var(--sa-surface);
+
+  /* 圆角 / 阴影 / 字体（对齐原型控件尺度） */
+  --el-border-radius-base: var(--sa-radius-sm);
+  --el-border-radius-small: 5px;
+  --el-border-radius-round: 20px;
+  --el-box-shadow: var(--sa-shadow);
+  --el-box-shadow-light: var(--sa-shadow);
+  --el-box-shadow-lighter: 0 1px 2px rgba(20, 33, 61, .05);
+  --el-box-shadow-dark: var(--sa-shadow-lg);
+  --el-font-family: var(--sa-font-sans);
+
+  /* 禁用透明度（对齐原型 .btn:disabled） */
+  --el-disabled-opacity: 0.45;
+}

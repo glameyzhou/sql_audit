@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.sqlaudit</groupId>
+        <artifactId>sqlaudit</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>sqlaudit-storage</artifactId>
+    <name>sqlaudit-storage</name>
+    <description>平台库 DAO 接口层 + Flyway DDL + 对象存储客户端（W0 只落接口与 DDL）</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.sqlaudit</groupId>
+            <artifactId>sqlaudit-common</artifactId>
+        </dependency>
+        <!-- JDBC 真实现（W2）：JdbcTemplate + 连接池（版本走 Spring Boot BOM） -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-jdbc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.zaxxer</groupId>
+            <artifactId>HikariCP</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+        </dependency>
+        <!-- PostgreSQL 方言 DAO（生产库 PG；版本走 Spring Boot BOM，runtime 供生产运行与 IT 使用） -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- JDBC DAO 集成测试（对本地 Docker MySQL；无库时 -DskipITs 跳过） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- surefire 默认只匹配 *Test，此处补上 *IT（对本地 Docker MySQL 的集成测试；
+                 MySQL 不可用时测试类内用 Assumptions 优雅跳过，不会红） -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <includes>
+                        <include>**/*Test.java</include>
+                        <include>**/*Tests.java</include>
+                        <include>**/*IT.java</include>
+                    </includes>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
