@@ -86,22 +86,38 @@
 import { ref, onMounted } from 'vue'
 import { api } from '../../api'
 
-// action 中文映射：已知动作显示中文，其余原样展示（mono）
+// action 中文映射：对齐后端 AuditAction 枚举（大写下划线），未知动作原样展示（mono）
 const ACTION_META = {
-  'ticket.state_change': { label: '状态迁移', known: true },
-  'query.executed': { label: '查询执行', known: true }
+  LOGIN: { label: '登录', known: true },
+  USER_CREATE: { label: '创建用户', known: true },
+  USER_UPDATE: { label: '更新用户', known: true },
+  PASSWORD_RESET: { label: '重置密码', known: true },
+  ROLE_ASSIGN: { label: '分配角色', known: true },
+  INSTANCE_CREATE: { label: '新增实例', known: true },
+  INSTANCE_UPDATE: { label: '修改实例', known: true },
+  INSTANCE_DELETE: { label: '删除实例', known: true },
+  RULE_CREATE: { label: '新增规则', known: true },
+  RULE_UPDATE: { label: '修改规则', known: true },
+  RULE_DELETE: { label: '删除规则', known: true },
+  FLOW_CREATE: { label: '新增流程', known: true },
+  FLOW_UPDATE: { label: '修改流程', known: true },
+  FLOW_DELETE: { label: '删除流程', known: true },
+  QUERY_EXECUTED: { label: '查询执行', known: true },
+  TICKET_STATE_CHANGE: { label: '状态迁移', known: true },
+  UNIT_EXEC: { label: '执行单元执行', known: true },
+  ROLLBACK_EXECUTE: { label: '回滚执行', known: true },
+  ROLLBACK_STATEMENT_APPLIED: { label: '回滚语句应用', known: true }
 }
 function actionMeta(a) {
   return ACTION_META[a] || { label: a || '-', known: false }
 }
 
+// result 对齐后端 AuditResult 枚举：SUCCESS / REJECTED / FAILED / PARTIAL
 const RESULT_META = {
   SUCCESS: { label: '成功', type: 'success' },
-  success: { label: '成功', type: 'success' },
-  FAILURE: { label: '失败', type: 'danger' },
-  FAIL: { label: '失败', type: 'danger' },
-  failure: { label: '失败', type: 'danger' },
-  fail: { label: '失败', type: 'danger' }
+  REJECTED: { label: '已拒绝', type: 'warning' },
+  FAILED: { label: '失败', type: 'danger' },
+  PARTIAL: { label: '部分成功', type: 'warning' }
 }
 function resultMeta(r) {
   return RESULT_META[r] || { label: r || '-', type: 'info' }

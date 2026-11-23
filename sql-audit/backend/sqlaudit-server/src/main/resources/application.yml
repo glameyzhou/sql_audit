@@ -9,14 +9,15 @@ spring:
   profiles:
     group:
       dev-home: [dev, mysql]
-      dev-company: [dev, postgres]
+#      dev-company: [dev, postgres]
+      dev-company: [dev, mysql]
       test: [test, postgres]
       prod: [prod, postgres]
   flyway:
     enabled: false            # memory 默认方言无库，禁用 Flyway；mysql/postgres/h2 方言各自启用
 
 server:
-  port: 8080
+  port: 8888
 
 logging:
   level:

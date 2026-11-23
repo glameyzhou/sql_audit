@@ -5,6 +5,7 @@ import com.sqlaudit.storage.dao.AuditDao;
 import com.sqlaudit.storage.dao.CredentialDao;
 import com.sqlaudit.storage.dao.FlowRuleDao;
 import com.sqlaudit.storage.dao.InstanceDao;
+import com.sqlaudit.storage.dao.PermissionDao;
 import com.sqlaudit.storage.dao.RoleDao;
 import com.sqlaudit.storage.dao.RuleDao;
 import com.sqlaudit.storage.dao.TicketDao;
@@ -15,6 +16,7 @@ import com.sqlaudit.storage.impl.jdbc.mysql.MySqlCredentialDao;
 import com.sqlaudit.storage.impl.jdbc.mysql.MySqlExecLockDao;
 import com.sqlaudit.storage.impl.jdbc.mysql.MySqlFlowRuleDao;
 import com.sqlaudit.storage.impl.jdbc.mysql.MySqlInstanceDao;
+import com.sqlaudit.storage.impl.jdbc.mysql.MySqlPermissionDao;
 import com.sqlaudit.storage.impl.jdbc.mysql.MySqlRoleDao;
 import com.sqlaudit.storage.impl.jdbc.mysql.MySqlRollbackDao;
 import com.sqlaudit.storage.impl.jdbc.mysql.MySqlRuleDao;
@@ -80,6 +82,11 @@ public class MysqlProfileConfig {
     @Bean
     public RoleDao roleDao(JdbcTemplate jdbcTemplate) {
         return new MySqlRoleDao(jdbcTemplate);
+    }
+
+    @Bean
+    public PermissionDao permissionDao(JdbcTemplate jdbcTemplate) {
+        return new MySqlPermissionDao(jdbcTemplate);
     }
 
     @Bean

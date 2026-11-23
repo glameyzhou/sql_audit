@@ -5,6 +5,7 @@ import com.sqlaudit.common.model.RuleHit;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -39,12 +40,13 @@ public class ApprovalRouter {
         }
 
         List<ApprovalChain> candidates = new ArrayList<>();
+        Map<String, Integer> rank = config.roleRanks();
 
         // L2 实例级覆盖：只可加严——弱于全局链的覆盖忽略
         Optional<ApprovalChain> l2 = config.instanceChain(instanceId, riskLevel);
         Optional<ApprovalChain> l1 = config.globalChain(riskLevel);
         if (l2.isPresent() && l1.isPresent()) {
-            if (l2.get().atLeastAsStrictAs(l1.get())) {
+            if (l2.get().atLeastAsStrictAs(l1.get(), rank)) {
                 candidates.add(l2.get());
             }
             // 弱于全局 → 忽略（实例级只能加严，§8.2）
@@ -61,8 +63,8 @@ public class ApprovalRouter {
         // 取最严：strictness 最大者；平手取 L3 语义（secondConfirm 优先）
         ApprovalChain strictest = candidates.get(0);
         for (ApprovalChain c : candidates) {
-            if (c.strictness() > strictest.strictness()
-                    || c.strictness() == strictest.strictness() && c.secondConfirm()) {
+            if (c.strictness(rank) > strictest.strictness(rank)
+                    || c.strictness(rank) == strictest.strictness(rank) && c.secondConfirm()) {
                 strictest = c;
             }
         }
@@ -72,5 +74,10 @@ public class ApprovalRouter {
                     strictest.source() + "+CRITICAL_SECOND_CONFIRM", riskLevel);
         }
         return strictest;
+    }
+
+    /** 角色权重表（多实例取最严时复用，见 TicketService）。 */
+    public Map<String, Integer> roleRanks() {
+        return config.roleRanks();
     }
 }

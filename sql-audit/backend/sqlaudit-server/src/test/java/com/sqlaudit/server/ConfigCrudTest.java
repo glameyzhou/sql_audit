@@ -112,6 +112,36 @@ class ConfigCrudTest {
         assertThat(body).contains("INSTANCE_CREATE", "INSTANCE_UPDATE", "INSTANCE_DELETE");
     }
 
+    @Test
+    void createInstance_withCredentials_persistsRoMetaAndRwExec_withoutEchoingPassword() throws Exception {
+        String token = login("admin", "admin12345");
+        String name = uniqueName("inst");
+
+        MvcResult created = mvc.perform(post("/api/config/instances")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(instanceJsonWithCredentials(name, "app_user", "s3cret")))
+                .andExpect(status().isOk())
+                .andReturn();
+        long id = mapper.readTree(created.getResponse().getContentAsString()).get("id").asLong();
+
+        MvcResult creds = mvc.perform(get("/api/config/instances/" + id + "/credentials")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode arr = mapper.readTree(creds.getResponse().getContentAsString());
+
+        // 一组账号 → 两条凭据（RO_META + RW_EXEC），账号一致
+        assertThat(arr).hasSize(2);
+        assertThat(arr).allSatisfy(node -> {
+            assertThat(node.path("username").asText()).isEqualTo("app_user");
+            assertThat(node.has("password")).isFalse();
+            assertThat(node.has("passwordEnc")).isFalse();
+        });
+        assertThat(arr.get(0).path("accountType").asText()).isEqualTo("RO_META");
+        assertThat(arr.get(1).path("accountType").asText()).isEqualTo("RW_EXEC");
+    }
+
     // ---------------- 工具 ----------------
 
     private long createInstance(String token, String name) throws Exception {
@@ -157,5 +187,12 @@ class ConfigCrudTest {
         return "{\"name\":\"" + name + "\",\"dialect\":\"MYSQL\",\"environment\":\"prod\","
                 + "\"ownerId\":1,\"host\":\"127.0.0.1\",\"port\":3306,"
                 + "\"defaultSchema\":\"db1\",\"status\":\"ACTIVE\"}";
+    }
+
+    private static String instanceJsonWithCredentials(String name, String username, String password) {
+        return "{\"name\":\"" + name + "\",\"dialect\":\"MYSQL\",\"environment\":\"test\","
+                + "\"ownerId\":1,\"host\":\"127.0.0.1\",\"port\":3306,"
+                + "\"defaultSchema\":\"db1\",\"status\":\"ACTIVE\","
+                + "\"username\":\"" + username + "\",\"password\":\"" + password + "\"}";
     }
 }

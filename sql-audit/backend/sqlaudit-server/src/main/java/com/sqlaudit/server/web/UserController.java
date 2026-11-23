@@ -1,8 +1,15 @@
 package com.sqlaudit.server.web;
 
 import com.sqlaudit.audit.AuditWriter;
+import com.sqlaudit.common.enums.AuditAction;
+import com.sqlaudit.common.enums.AuditResult;
+import com.sqlaudit.common.enums.AuditTargetType;
+import com.sqlaudit.common.enums.ErrorCode;
+import com.sqlaudit.common.enums.PermissionCode;
+import com.sqlaudit.common.enums.UserSource;
+import com.sqlaudit.common.enums.UserStatus;
 import com.sqlaudit.common.model.AuditEvent;
-import com.sqlaudit.server.auth.RequireRole;
+import com.sqlaudit.server.auth.RequirePermission;
 import com.sqlaudit.server.auth.RoleAuthInterceptor;
 import com.sqlaudit.storage.dao.RoleDao;
 import com.sqlaudit.storage.dao.UserDao;
@@ -34,13 +41,13 @@ import java.util.stream.Collectors;
 /**
  * 手工用户管理端点（仅 ADMIN）：创建本地账号、分配角色、改密码、停用/启用。
  *
- * <p>企微 OAuth 暂不在此列（source=LOCAL 本地应急账号）。密码用 BCrypt 存哈希，
- * 角色经 {@link RoleDao} 以「删旧 + 插新」方式重设，写审计
- * （USER_CREATE / USER_UPDATE / PASSWORD_RESET / ROLE_ASSIGN）。</p>
+ * <p>企微 OAuth 暂不在此列（{@link UserSource#LOCAL} 本地应急账号）。密码用 BCrypt 存哈希，
+ * 角色经 {@link RoleDao} 以「删旧 + 插新」方式重设（角色 code 来自请求 / t_role，仍是字符串），
+ * 写审计（USER_CREATE / USER_UPDATE / PASSWORD_RESET / ROLE_ASSIGN）。</p>
  */
 @RestController
 @RequestMapping("/api/users")
-@RequireRole("ADMIN")
+@RequirePermission(PermissionCode.USER_ADMIN)
 public class UserController {
 
     private static final Logger log = LoggerFactory.getLogger(UserController.class);
@@ -91,7 +98,7 @@ public class UserController {
         String username = req.username().trim();
         if (userDao.findByUsername(username) != null) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
-                    "code", "USERNAME_EXISTS", "message", "用户名已存在"));
+                    "code", ErrorCode.USERNAME_EXISTS.getCode(), "message", "用户名已存在"));
         }
         List<Long> roleIds;
         try {
@@ -105,12 +112,12 @@ public class UserController {
         user.setDisplayName(req.displayName() == null || req.displayName().isBlank()
                 ? username : req.displayName().trim());
         user.setEmail(req.email());
-        user.setSource("LOCAL");
+        user.setSource(UserSource.LOCAL);
         user.setPasswordHash(passwordEncoder.encode(req.password()));
-        user.setStatus("ACTIVE");
+        user.setStatus(UserStatus.ACTIVE);
         long id = userDao.insert(user);
         roleDao.assignRoles(id, roleIds, currentUserId(request));
-        audit(request, "USER_CREATE", id, "{\"username\":\"" + username + "\"}");
+        audit(request, AuditAction.USER_CREATE, id, "{\"username\":\"" + username + "\"}");
         return ResponseEntity.ok(Map.of("id", id));
     }
 
@@ -127,7 +134,7 @@ public class UserController {
             return ResponseEntity.notFound().build();
         }
         userDao.updatePassword(id, passwordEncoder.encode(req.password()));
-        audit(request, "PASSWORD_RESET", id, "{\"username\":\"" + user.getUsername() + "\"}");
+        audit(request, AuditAction.PASSWORD_RESET, id, "{\"username\":\"" + user.getUsername() + "\"}");
         return ResponseEntity.ok(Map.of("id", id));
     }
 
@@ -142,10 +149,10 @@ public class UserController {
         if (req.displayName() != null) {
             userDao.updateProfile(id, req.displayName().trim(), req.email());
         }
-        if (req.status() != null && !req.status().isBlank()) {
+        if (req.status() != null) {
             userDao.updateStatus(id, req.status());
         }
-        audit(request, "USER_UPDATE", id, "{\"id\":" + id + "}");
+        audit(request, AuditAction.USER_UPDATE, id, "{\"id\":" + id + "}");
         return ResponseEntity.ok(Map.of("id", id));
     }
 
@@ -165,7 +172,7 @@ public class UserController {
         }
         roleDao.removeAllRoles(id);
         roleDao.assignRoles(id, roleIds, currentUserId(request));
-        audit(request, "ROLE_ASSIGN", id, "{\"roles\":" + jsonArray(req.roles()) + "}");
+        audit(request, AuditAction.ROLE_ASSIGN, id, "{\"roles\":" + jsonArray(req.roles()) + "}");
         return ResponseEntity.ok(Map.of("id", id));
     }
 
@@ -190,7 +197,7 @@ public class UserController {
         return ids;
     }
 
-    private void audit(HttpServletRequest request, String action, long targetId, String detail) {
+    private void audit(HttpServletRequest request, AuditAction action, long targetId, String detail) {
         try {
             Long actorId = (Long) request.getAttribute(RoleAuthInterceptor.ATTR_USER_ID);
             String actorName = (String) request.getAttribute(RoleAuthInterceptor.ATTR_USERNAME);
@@ -199,20 +206,20 @@ public class UserController {
             String actorRole = roles != null && !roles.isEmpty() ? roles.get(0) : null;
             AuditEvent event = AuditEvent.builder()
                     .actorId(actorId == null ? 0L : actorId)
-                    .actorName(actorName == null ? "system" : actorName)
-                    .actorRole(actorRole == null ? "SYSTEM" : actorRole)
+                    .actorName(actorName == null ? AuditEvent.SYSTEM_ACTOR_NAME : actorName)
+                    .actorRole(actorRole == null ? AuditEvent.SYSTEM_ACTOR_ROLE : actorRole)
                     .action(action)
-                    .targetType("user")
+                    .targetType(AuditTargetType.USER)
                     .targetId(String.valueOf(targetId))
                     .detailPlaintext(detail)
-                    .result("SUCCESS")
+                    .result(AuditResult.SUCCESS)
                     // audit_log.trace_id NOT NULL：用户管理操作链路标识，与 ticket-/config- 前缀口径一致
                     .traceId("user-" + targetId)
                     .createdAt(OffsetDateTime.now(zone))
                     .build();
             auditWriter.append(event);
         } catch (Exception e) {
-            log.warn("用户管理审计失败 action={} targetId={}: {}", action, targetId, e.getMessage());
+            log.warn("用户管理审计失败 action={} targetId={}: {}", action.getCode(), targetId, e.getMessage());
         }
     }
 
@@ -223,7 +230,7 @@ public class UserController {
 
     private static ResponseEntity<Map<String, Object>> badRequest(String message) {
         return ResponseEntity.badRequest().body(Map.of(
-                "code", "INVALID_REQUEST", "message", message));
+                "code", ErrorCode.INVALID_REQUEST.getCode(), "message", message));
     }
 
     private static String jsonArray(List<String> codes) {
@@ -239,7 +246,7 @@ public class UserController {
                                     String password, List<String> roles) {
     }
 
-    public record UpdateUserRequest(String displayName, String email, String status) {
+    public record UpdateUserRequest(String displayName, String email, UserStatus status) {
     }
 
     public record ResetPasswordRequest(String password) {

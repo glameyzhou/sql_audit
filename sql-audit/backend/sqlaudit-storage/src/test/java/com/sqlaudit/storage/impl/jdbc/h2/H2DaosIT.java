@@ -1,5 +1,13 @@
 package com.sqlaudit.storage.impl.jdbc.h2;
 
+import com.sqlaudit.common.enums.ApprovalMode;
+import com.sqlaudit.common.enums.ApprovalResult;
+import com.sqlaudit.common.enums.Environment;
+import com.sqlaudit.common.enums.RiskLevel;
+import com.sqlaudit.common.enums.RollbackCoverage;
+import com.sqlaudit.common.enums.RollbackGenerator;
+import com.sqlaudit.common.enums.RollbackStatus;
+import com.sqlaudit.common.enums.TicketStatus;
 import com.sqlaudit.storage.model.Approval;
 import com.sqlaudit.storage.model.AuditLog;
 import com.sqlaudit.storage.model.ChainHead;
@@ -103,9 +111,9 @@ class H2DaosIT {
         ticket.setTitle("t-" + creatorId);
         ticket.setCreatorId(creatorId);
         ticket.setInstanceIds(new ArrayList<>(List.of(1L, 2L)));
-        ticket.setEnvironment("prod");
-        ticket.setRiskLevel("HIGH");
-        ticket.setStatus("draft");
+        ticket.setEnvironment(Environment.PROD);
+        ticket.setRiskLevel(RiskLevel.HIGH);
+        ticket.setStatus(TicketStatus.DRAFT);
         ticket.setTraceId("trace-" + creatorId);
         ticket.setCreatedAt(createdAt);
         ticket.setUpdatedAt(createdAt);
@@ -119,9 +127,9 @@ class H2DaosIT {
         ticket.setTitle("发布工单");
         ticket.setCreatorId(100L);
         ticket.setInstanceIds(List.of(1L, 2L, 3L));
-        ticket.setEnvironment("prod");
-        ticket.setRiskLevel("CRITICAL");
-        ticket.setStatus("draft");
+        ticket.setEnvironment(Environment.PROD);
+        ticket.setRiskLevel(RiskLevel.CRITICAL);
+        ticket.setStatus(TicketStatus.DRAFT);
         ticket.setRollbackSummary("{\"rollbackable\":[1],\"unrollbackable\":[]}");
         ticket.setScheduledAt(now.plusHours(2));
         ticket.setTraceId("trace-1");
@@ -134,9 +142,9 @@ class H2DaosIT {
         assertEquals("发布工单", found.getTitle());
         assertEquals(100L, found.getCreatorId());
         assertEquals(List.of(1L, 2L, 3L), found.getInstanceIds(), "instance_ids JSON 列序列化/反序列化");
-        assertEquals("prod", found.getEnvironment());
-        assertEquals("CRITICAL", found.getRiskLevel());
-        assertEquals("draft", found.getStatus());
+        assertEquals(Environment.PROD, found.getEnvironment());
+        assertEquals(RiskLevel.CRITICAL, found.getRiskLevel());
+        assertEquals(TicketStatus.DRAFT, found.getStatus());
         // H2 JSON 类型不规范化文本格式（区别于 PG jsonb），字节级透传
         assertEquals("{\"rollbackable\":[1],\"unrollbackable\":[]}", found.getRollbackSummary(),
                 "rollback_summary JSON 字符串字节级透传（H2 JSON 不规范化）");
@@ -152,9 +160,9 @@ class H2DaosIT {
         ticket.setTitle("t");
         ticket.setCreatorId(100L);
         ticket.setInstanceIds(List.of(1L));
-        ticket.setEnvironment("staging");
-        ticket.setRiskLevel("LOW");
-        ticket.setStatus("draft");
+        ticket.setEnvironment(Environment.STAGING);
+        ticket.setRiskLevel(RiskLevel.LOW);
+        ticket.setStatus(TicketStatus.DRAFT);
         ticket.setTraceId("trace-1");
         ticket.setCreatedAt(now);
         long id = ticketDao.insertTicket(ticket);
@@ -175,17 +183,17 @@ class H2DaosIT {
         long id = insertDraftTicket(100L, now);
         LocalDateTime changedAt = now.plusMinutes(5);
 
-        assertEquals(1, ticketDao.updateStatus(id, "draft", "submitted", changedAt));
+        assertEquals(1, ticketDao.updateStatus(id, TicketStatus.DRAFT, TicketStatus.SUBMITTED, changedAt));
         Ticket found = ticketDao.findById(id);
-        assertEquals("submitted", found.getStatus());
+        assertEquals(TicketStatus.SUBMITTED, found.getStatus());
         assertEquals(changedAt, found.getUpdatedAt(), "updated_at 置为 changedAt（approval_ttl 基准）");
 
         // 状态已被并发推进，以 draft 为条件再更新必然失败（乐观并发）
-        assertEquals(0, ticketDao.updateStatus(id, "draft", "auditing", now));
-        assertEquals("submitted", ticketDao.findById(id).getStatus());
+        assertEquals(0, ticketDao.updateStatus(id, TicketStatus.DRAFT, TicketStatus.AUDITING, now));
+        assertEquals(TicketStatus.SUBMITTED, ticketDao.findById(id).getStatus());
 
         // 工单不存在
-        assertEquals(0, ticketDao.updateStatus(999L, "draft", "submitted", now));
+        assertEquals(0, ticketDao.updateStatus(999L, TicketStatus.DRAFT, TicketStatus.SUBMITTED, now));
     }
 
     @Test
@@ -201,7 +209,7 @@ class H2DaosIT {
             pool.submit(() -> {
                 try {
                     startGate.await();
-                    success.addAndGet(ticketDao.updateStatus(id, "draft", "submitted", nowMillis()));
+                    success.addAndGet(ticketDao.updateStatus(id, TicketStatus.DRAFT, TicketStatus.SUBMITTED, nowMillis()));
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 } finally {
@@ -214,7 +222,7 @@ class H2DaosIT {
         pool.shutdownNow();
 
         assertEquals(1, success.get(), "并发竞争下同一 fromStatus 只能有一个影响行数 1");
-        assertEquals("submitted", ticketDao.findById(id).getStatus());
+        assertEquals(TicketStatus.SUBMITTED, ticketDao.findById(id).getStatus());
     }
 
     @Test
@@ -235,20 +243,20 @@ class H2DaosIT {
     @Test
     void Ticket_listByStatus_仅返回匹配状态() {
         long id = insertDraftTicket(100L, nowMillis());
-        ticketDao.updateStatus(id, "draft", "submitted", nowMillis());
+        ticketDao.updateStatus(id, TicketStatus.DRAFT, TicketStatus.SUBMITTED, nowMillis());
         insertDraftTicket(200L, nowMillis());
 
-        assertEquals(1, ticketDao.listByStatus("submitted").size());
-        assertEquals(1, ticketDao.listByStatus("draft").size());
-        assertEquals(0, ticketDao.listByStatus("closed").size());
+        assertEquals(1, ticketDao.listByStatus(TicketStatus.SUBMITTED).size());
+        assertEquals(1, ticketDao.listByStatus(TicketStatus.DRAFT).size());
+        assertEquals(0, ticketDao.listByStatus(TicketStatus.CLOSED).size());
     }
 
     // ------------------------------------------------------------------
     // ApprovalDao（对照 InMemoryApprovalDaoTest）
     // ------------------------------------------------------------------
 
-    private long insertApproval(long ticketId, int nodeOrder, long approverId, String mode,
-                                String result, LocalDateTime createdAt) {
+    private long insertApproval(long ticketId, int nodeOrder, long approverId, ApprovalMode mode,
+                                ApprovalResult result, LocalDateTime createdAt) {
         Approval approval = new Approval();
         approval.setTicketId(ticketId);
         approval.setNodeId(0L);
@@ -265,10 +273,10 @@ class H2DaosIT {
         LocalDateTime now = nowMillis();
         long t1 = 1L;
         // 先插 node2 再插 node1（含同 nodeOrder 多行 = 会签组），验证排序稳定
-        insertApproval(t1, 2, 0L, "AND", "PENDING", now);
-        long firstOfNode1 = insertApproval(t1, 1, 10L, "AND", "PENDING", now);
-        long secondOfNode1 = insertApproval(t1, 1, 20L, "AND", "PENDING", now);
-        insertApproval(2L, 1, 0L, "OR", "PENDING", now);
+        insertApproval(t1, 2, 0L, ApprovalMode.AND, ApprovalResult.PENDING, now);
+        long firstOfNode1 = insertApproval(t1, 1, 10L, ApprovalMode.AND, ApprovalResult.PENDING, now);
+        long secondOfNode1 = insertApproval(t1, 1, 20L, ApprovalMode.AND, ApprovalResult.PENDING, now);
+        insertApproval(2L, 1, 0L, ApprovalMode.OR, ApprovalResult.PENDING, now);
 
         List<Approval> rows = approvalDao.listByTicket(t1);
         assertEquals(3, rows.size());
@@ -281,12 +289,12 @@ class H2DaosIT {
     @Test
     void Approval_updateResult条件更新_PENDING到APPROVED成功并记录决策人() {
         LocalDateTime now = nowMillis();
-        long id = insertApproval(1L, 1, 0L, "AND", "PENDING", now);
+        long id = insertApproval(1L, 1, 0L, ApprovalMode.AND, ApprovalResult.PENDING, now);
         LocalDateTime decidedAt = now.plusMinutes(10);
 
-        assertEquals(1, approvalDao.updateResult(id, 30L, "PENDING", "APPROVED", "同意", decidedAt));
+        assertEquals(1, approvalDao.updateResult(id, 30L, ApprovalResult.PENDING, ApprovalResult.APPROVED, "同意", decidedAt));
         Approval found = approvalDao.listByTicket(1L).get(0);
-        assertEquals("APPROVED", found.getResult());
+        assertEquals(ApprovalResult.APPROVED, found.getResult());
         assertEquals(30L, found.getApproverId(), "ROLE 占位记录被决策人认领");
         assertEquals("同意", found.getComment());
         assertEquals(decidedAt, found.getDecidedAt());
@@ -295,33 +303,33 @@ class H2DaosIT {
     @Test
     void Approval_updateResult_已决策记录返回0且不被覆盖() {
         LocalDateTime now = nowMillis();
-        long id = insertApproval(1L, 1, 10L, "AND", "PENDING", now);
-        assertEquals(1, approvalDao.updateResult(id, 10L, "PENDING", "APPROVED", "ok", now));
+        long id = insertApproval(1L, 1, 10L, ApprovalMode.AND, ApprovalResult.PENDING, now);
+        assertEquals(1, approvalDao.updateResult(id, 10L, ApprovalResult.PENDING, ApprovalResult.APPROVED, "ok", now));
 
         // 已是 APPROVED：以 PENDING 为条件的更新（无论目标是什么）都失败
-        assertEquals(0, approvalDao.updateResult(id, 10L, "PENDING", "REJECTED", "改主意", now));
+        assertEquals(0, approvalDao.updateResult(id, 10L, ApprovalResult.PENDING, ApprovalResult.REJECTED, "改主意", now));
         Approval found = approvalDao.listByTicket(1L).get(0);
-        assertEquals("APPROVED", found.getResult());
+        assertEquals(ApprovalResult.APPROVED, found.getResult());
         assertEquals("ok", found.getComment(), "comment 不被覆盖");
     }
 
     @Test
     void Approval_updateResult_支持转交TRANSFERRED_记录不存在返回0() {
         LocalDateTime now = nowMillis();
-        long id = insertApproval(1L, 1, 10L, "OR", "PENDING", now);
-        assertEquals(1, approvalDao.updateResult(id, 10L, "PENDING", "TRANSFERRED", "转交 u20", now));
-        assertEquals("TRANSFERRED", approvalDao.listByTicket(1L).get(0).getResult());
+        long id = insertApproval(1L, 1, 10L, ApprovalMode.OR, ApprovalResult.PENDING, now);
+        assertEquals(1, approvalDao.updateResult(id, 10L, ApprovalResult.PENDING, ApprovalResult.TRANSFERRED, "转交 u20", now));
+        assertEquals(ApprovalResult.TRANSFERRED, approvalDao.listByTicket(1L).get(0).getResult());
 
-        assertEquals(0, approvalDao.updateResult(999L, 10L, "PENDING", "APPROVED", null, now));
+        assertEquals(0, approvalDao.updateResult(999L, 10L, ApprovalResult.PENDING, ApprovalResult.APPROVED, null, now));
     }
 
     @Test
     void Approval_listPendingCreatedBefore_只返回超时的PENDING记录() {
         LocalDateTime now = nowMillis();
-        long overduePending = insertApproval(1L, 1, 0L, "AND", "PENDING", now.minusHours(2));
-        insertApproval(1L, 1, 20L, "AND", "PENDING", now.minusMinutes(5)); // 未超时
-        insertApproval(1L, 1, 30L, "AND", "APPROVED", now.minusHours(3)); // 超时但已决策
-        insertApproval(2L, 1, 0L, "OR", "REJECTED", now.minusHours(3));    // 超时但已决策
+        long overduePending = insertApproval(1L, 1, 0L, ApprovalMode.AND, ApprovalResult.PENDING, now.minusHours(2));
+        insertApproval(1L, 1, 20L, ApprovalMode.AND, ApprovalResult.PENDING, now.minusMinutes(5)); // 未超时
+        insertApproval(1L, 1, 30L, ApprovalMode.AND, ApprovalResult.APPROVED, now.minusHours(3)); // 超时但已决策
+        insertApproval(2L, 1, 0L, ApprovalMode.OR, ApprovalResult.REJECTED, now.minusHours(3));    // 超时但已决策
 
         List<Approval> overdue = approvalDao.listPendingCreatedBefore(now.minusHours(1));
         assertEquals(1, overdue.size());
@@ -332,9 +340,9 @@ class H2DaosIT {
     @Test
     void Approval_listPending_全部PENDING按创建时间排序() {
         LocalDateTime now = nowMillis();
-        long older = insertApproval(1L, 1, 10L, "AND", "PENDING", now.minusHours(2));
-        long newer = insertApproval(2L, 1, 20L, "OR", "PENDING", now.minusMinutes(5));
-        insertApproval(3L, 1, 30L, "AND", "APPROVED", now.minusHours(3)); // 非 PENDING 不含
+        long older = insertApproval(1L, 1, 10L, ApprovalMode.AND, ApprovalResult.PENDING, now.minusHours(2));
+        long newer = insertApproval(2L, 1, 20L, ApprovalMode.OR, ApprovalResult.PENDING, now.minusMinutes(5));
+        insertApproval(3L, 1, 30L, ApprovalMode.AND, ApprovalResult.APPROVED, now.minusHours(3)); // 非 PENDING 不含
 
         List<Approval> pending = approvalDao.listPending();
         assertEquals(2, pending.size());
@@ -351,9 +359,9 @@ class H2DaosIT {
         rollbackSql.setUnitId(unitId);
         rollbackSql.setStmtCount(2);
         rollbackSql.setTotalBytes(64L);
-        rollbackSql.setGenerator("MIRROR");
-        rollbackSql.setStatus("generated");
-        rollbackSql.setCoverage("FULL");
+        rollbackSql.setGenerator(RollbackGenerator.MIRROR);
+        rollbackSql.setStatus(RollbackStatus.GENERATED);
+        rollbackSql.setCoverage(RollbackCoverage.FULL);
         rollbackSql.setCreatedAt(nowMillis());
         assertEquals(1, rollbackDao.insertRollbackSql(rollbackSql));
         return rollbackSql.getId();
@@ -364,17 +372,17 @@ class H2DaosIT {
         insertRollback(100L);
         RollbackSql duplicate = new RollbackSql();
         duplicate.setUnitId(100L);
-        duplicate.setGenerator("MIRROR");
-        duplicate.setStatus("generated");
-        duplicate.setCoverage("FULL");
+        duplicate.setGenerator(RollbackGenerator.MIRROR);
+        duplicate.setStatus(RollbackStatus.GENERATED);
+        duplicate.setCoverage(RollbackCoverage.FULL);
         assertEquals(0, rollbackDao.insertRollbackSql(duplicate), "uk_unit 冲突应返回 0");
 
         RollbackSql found = rollbackDao.findByUnitId(100L);
         assertNotNull(found);
         assertEquals(100L, found.getUnitId());
-        assertEquals("generated", found.getStatus());
-        assertEquals("FULL", found.getCoverage());
-        assertEquals("MIRROR", found.getGenerator());
+        assertEquals(RollbackStatus.GENERATED, found.getStatus());
+        assertEquals(RollbackCoverage.FULL, found.getCoverage());
+        assertEquals(RollbackGenerator.MIRROR, found.getGenerator());
         assertEquals(2, found.getStmtCount());
         assertEquals(64L, found.getTotalBytes());
         assertNull(rollbackDao.findByUnitId(999L));
@@ -447,12 +455,12 @@ class H2DaosIT {
     @Test
     void Rollback_updateStatus_更新主记录状态与原因() {
         long rollbackId = insertRollback(100L);
-        assertEquals(1, rollbackDao.updateStatus(rollbackId, "not_available", "R_ROLLBACK_UNAVAILABLE"));
+        assertEquals(1, rollbackDao.updateStatus(rollbackId, RollbackStatus.NOT_AVAILABLE, "R_ROLLBACK_UNAVAILABLE"));
         RollbackSql rollbackSql = rollbackDao.findByUnitId(100L);
-        assertEquals("not_available", rollbackSql.getStatus());
+        assertEquals(RollbackStatus.NOT_AVAILABLE, rollbackSql.getStatus());
         assertEquals("R_ROLLBACK_UNAVAILABLE", rollbackSql.getUnavailableReason(), "列名 unavailable_reason");
 
-        assertEquals(0, rollbackDao.updateStatus(99999L, "verified", null));
+        assertEquals(0, rollbackDao.updateStatus(99999L, RollbackStatus.VERIFIED, null));
     }
 
     private RollbackStatement makeStatement(long rollbackId, int stmtOrder) {

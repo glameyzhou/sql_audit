@@ -1,6 +1,8 @@
 package com.sqlaudit.worker.rollback;
 
 import com.sqlaudit.common.enums.Dialect;
+import com.sqlaudit.common.enums.RollbackCoverage;
+import com.sqlaudit.common.enums.RollbackGenerator;
 import com.sqlaudit.common.model.ParsedStatement;
 import com.sqlaudit.executor.gateway.ProductionGateway;
 import com.sqlaudit.executor.engine.UnitExecutionEngine;
@@ -70,8 +72,8 @@ public class RollbackPersisterImpl implements UnitExecutionEngine.RollbackPersis
             List<String> preimageRows = toCanonicalRows(result.preimageRows());
             lifecycle.persistAndVerify(
                     unit.getId(),
-                    "MIRROR",
-                    "FULL",
+                    RollbackGenerator.MIRROR,
+                    RollbackCoverage.FULL,
                     preimageRows,
                     statements,
                     dialectOf(unit),
@@ -320,7 +322,7 @@ public class RollbackPersisterImpl implements UnitExecutionEngine.RollbackPersis
         String hint = unit.getDialectSpecific();
         if (hint != null) {
             try {
-                return Dialect.valueOf(hint.toUpperCase());
+                return Dialect.fromCode(hint);
             } catch (IllegalArgumentException ignore) {
                 // 默认 MYSQL
             }

@@ -1,5 +1,8 @@
 package com.sqlaudit.storage.model;
 
+import com.sqlaudit.common.enums.Dialect;
+import com.sqlaudit.common.enums.Environment;
+import com.sqlaudit.common.enums.InstanceStatus;
 import java.time.LocalDateTime;
 
 /**
@@ -14,9 +17,9 @@ public class Instance {
     /** 实例名 */
     private String name;
     /** MYSQL / PG / IOTDB */
-    private String dialect;
+    private Dialect dialect;
     /** prod / staging */
-    private String environment;
+    private Environment environment;
     /** 实例 Owner（用户 id），自动进入该实例高危审批链 */
     private Long ownerId;
     private String host;
@@ -28,7 +31,7 @@ public class Instance {
     /** 指向 credential 组 */
     private Long credentialId;
     /** ACTIVE / DISABLED */
-    private String status;
+    private InstanceStatus status;
     private Long createdBy;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -50,19 +53,19 @@ public class Instance {
         this.name = name;
     }
 
-    public String getDialect() {
+    public Dialect getDialect() {
         return dialect;
     }
 
-    public void setDialect(String dialect) {
+    public void setDialect(Dialect dialect) {
         this.dialect = dialect;
     }
 
-    public String getEnvironment() {
+    public Environment getEnvironment() {
         return environment;
     }
 
-    public void setEnvironment(String environment) {
+    public void setEnvironment(Environment environment) {
         this.environment = environment;
     }
 
@@ -114,11 +117,11 @@ public class Instance {
         this.credentialId = credentialId;
     }
 
-    public String getStatus() {
+    public InstanceStatus getStatus() {
         return status;
     }
 
-    public void setStatus(String status) {
+    public void setStatus(InstanceStatus status) {
         this.status = status;
     }
 

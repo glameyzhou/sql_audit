@@ -1,8 +1,8 @@
 package com.sqlaudit.storage.impl.memory;
 
+import com.sqlaudit.common.enums.AccountType;
 import com.sqlaudit.storage.dao.CredentialDao;
 import com.sqlaudit.storage.model.Credential;
-
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -23,9 +23,9 @@ public class InMemoryCredentialDao implements CredentialDao {
     private final AtomicLong idGenerator = new AtomicLong(0);
 
     @Override
-    public synchronized Credential findByInstanceAndType(long instanceId, String accountType) {
+    public synchronized Credential findByInstanceAndType(long instanceId, AccountType accountType) {
         for (Credential c : store.values()) {
-            if (c.getInstanceId() == instanceId && accountType.equals(c.getAccountType())) {
+            if (c.getInstanceId() == instanceId && accountType == c.getAccountType()) {
                 return copy(c);
             }
         }
@@ -48,6 +48,23 @@ public class InMemoryCredentialDao implements CredentialDao {
         }
         store.put(id, copy(credential));
         return id;
+    }
+
+    @Override
+    public synchronized int update(Credential credential) {
+        Credential existing = store.get(credential.getId());
+        if (existing == null) {
+            return 0;
+        }
+        existing.setUsername(credential.getUsername());
+        existing.setPasswordEnc(credential.getPasswordEnc());
+        if (credential.getKeyVersion() != null) {
+            existing.setKeyVersion(credential.getKeyVersion());
+        }
+        existing.setLastRotatedAt(credential.getLastRotatedAt());
+        existing.setUpdatedAt(credential.getUpdatedAt() != null
+                ? credential.getUpdatedAt() : LocalDateTime.now());
+        return 1;
     }
 
     @Override

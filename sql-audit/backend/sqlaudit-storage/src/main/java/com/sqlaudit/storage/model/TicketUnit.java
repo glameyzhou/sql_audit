@@ -1,5 +1,7 @@
 package com.sqlaudit.storage.model;
 
+import com.sqlaudit.common.enums.StatementType;
+import com.sqlaudit.common.enums.UnitStatus;
 import java.time.LocalDateTime;
 
 /**
@@ -26,11 +28,11 @@ public class TicketUnit {
     /** 加密后的语句（VARBINARY） */
     private byte[] statement;
     private String statementHash;
-    private String statementType;
+    private StatementType statementType;
     /** IoTDB 等方言扩展（JSON） */
     private String dialectSpecific;
     /** pending/leased/executing/success/failed/skipped/needs_confirm，见 UnitStatus */
-    private String status;
+    private UnitStatus status;
     private String leaseOwner;
     private LocalDateTime leaseUntil;
     private LocalDateTime heartbeatAt;
@@ -110,11 +112,11 @@ public class TicketUnit {
         this.statementHash = statementHash;
     }
 
-    public String getStatementType() {
+    public StatementType getStatementType() {
         return statementType;
     }
 
-    public void setStatementType(String statementType) {
+    public void setStatementType(StatementType statementType) {
         this.statementType = statementType;
     }
 
@@ -126,11 +128,11 @@ public class TicketUnit {
         this.dialectSpecific = dialectSpecific;
     }
 
-    public String getStatus() {
+    public UnitStatus getStatus() {
         return status;
     }
 
-    public void setStatus(String status) {
+    public void setStatus(UnitStatus status) {
         this.status = status;
     }
 

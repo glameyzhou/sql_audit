@@ -23,4 +23,16 @@ public interface RoleDao {
 
     /** 给用户授予角色（授权人留痕；调用方需先 removeAllRoles 完成「重设」）。 */
     void assignRoles(long userId, List<Long> roleIds, Long grantedBy);
+
+    /** 按 code 查角色；未找到返回 null。 */
+    Role findByCode(String code);
+
+    /** 插入角色（自定义角色），回填自增 id。 */
+    long insert(Role role);
+
+    /** 更新角色（name/description/rank），按 id；影响行数 0 = 不存在。 */
+    int update(Role role);
+
+    /** 删除角色（按 id）；影响行数 0 = 不存在。 */
+    int delete(long id);
 }

@@ -1,12 +1,18 @@
 package com.sqlaudit.server.web;
 
+import com.sqlaudit.common.enums.ErrorCode;
+import com.sqlaudit.common.enums.StatementType;
 import com.sqlaudit.common.exception.SqlauditException;
 import com.sqlaudit.executor.gate.ExecutionGate;
+import com.sqlaudit.server.auth.RequireRole;
+import com.sqlaudit.server.auth.RoleAuthInterceptor;
 import com.sqlaudit.storage.dao.ApprovalDao;
 import com.sqlaudit.storage.dao.TicketUnitDao;
+import com.sqlaudit.storage.model.Approval;
 import com.sqlaudit.storage.model.TicketUnit;
 import com.sqlaudit.workflow.ApprovalDecision;
 import com.sqlaudit.workflow.ApprovalFlowEngine;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -19,7 +25,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 审批端点。防自审在 {@link ApprovalFlowEngine#submitDecision} 硬校验（§3.4）。
+ * 审批端点。审批人 / 二次确认人的真实身份从 JWT 取（拦截器写入 request attribute），
+ * 不再信任请求体；防自审与角色校验在 {@link ApprovalFlowEngine} 硬校验（§3.4 / §8.2）。
  *
  * <p><strong>§3.5 表结构指纹：审批时记录、执行前比对。</strong>审批通过（approve=true）
  * 时，在决策落库<strong>之前</strong>对工单的每个执行单元采集目标表当前结构指纹
@@ -49,49 +56,85 @@ public class ApprovalController {
         this.structureFingerprintProvider = structureFingerprintProvider;
     }
 
-    /** 待审批列表（W2 按角色过滤；approver_id=0 表示按角色解析的节点）。 */
+    /**
+     * 待我审批列表：按登录用户过滤——指派给本人（approver_id=本人）或 ROLE 占位节点
+     * （approver_id=0）且本人持有对应角色（approver_ref）。
+     */
     @GetMapping("/pending")
-    public List<com.sqlaudit.storage.model.Approval> pending() {
-        return approvalDao.listPending();
+    @RequireRole
+    public List<Approval> pending(HttpServletRequest request) {
+        Long userId = (Long) request.getAttribute(RoleAuthInterceptor.ATTR_USER_ID);
+        @SuppressWarnings("unchecked")
+        List<String> roles = (List<String>) request.getAttribute(RoleAuthInterceptor.ATTR_ROLES);
+        return approvalDao.listPending().stream()
+                .filter(a -> visibleTo(a, userId, roles))
+                .toList();
     }
 
     /**
-     * 审批决策（approve/reject/comment；approverId W2 改从 JWT 取）。
-     *
-     * <p>approve=true 时先采集 §3.5 表结构指纹（见类 javadoc），再落决策；
-     * 采集失败直接 400，工单保持 auditing 未动。</p>
+     * 审批决策（approve/reject/comment）。审批人身份取 JWT，角色校验在
+     * {@link ApprovalFlowEngine#submitDecision}（ROLE 节点须持有 approver_ref 角色）。
      */
     @PostMapping("/{ticketId}/decide")
-    public ApprovalDecision decide(@PathVariable long ticketId, @RequestBody DecideRequest req) {
+    @RequireRole
+    public ApprovalDecision decide(@PathVariable long ticketId, @RequestBody DecideRequest req,
+                                   HttpServletRequest request) {
+        Long approverId = requireUserId(request);
+        @SuppressWarnings("unchecked")
+        List<String> roles = (List<String>) request.getAttribute(RoleAuthInterceptor.ATTR_ROLES);
         if (req.approve()) {
             captureStructureFingerprints(ticketId);
         }
-        return approvalEngine.submitDecision(ticketId, req.approverId(), req.approve(), req.comment());
+        return approvalEngine.submitDecision(ticketId, approverId, roles, req.approve(), req.comment());
     }
 
-    /** 二次确认（CRITICAL 工单执行前，§3.4）。 */
+    /** 执行前二次确认（CRITICAL 工单，§3.4；角色校验 DBA/ADMIN 在引擎层）。 */
     @PostMapping("/{ticketId}/confirm-execution")
-    public void confirmExecution(@PathVariable long ticketId, @RequestBody ConfirmRequest req) {
-        approvalEngine.confirmExecution(ticketId, req.confirmerId());
+    @RequireRole
+    public void confirmExecution(@PathVariable long ticketId, HttpServletRequest request) {
+        Long confirmerId = requireUserId(request);
+        @SuppressWarnings("unchecked")
+        List<String> roles = (List<String>) request.getAttribute(RoleAuthInterceptor.ATTR_ROLES);
+        approvalEngine.confirmExecution(ticketId, confirmerId, roles);
+    }
+
+    /** 审批转交（代理人）：当前审批人把待审批记录转给代理人。 */
+    @PostMapping("/{ticketId}/transfer")
+    @RequireRole
+    public void transfer(@PathVariable long ticketId, @RequestBody TransferRequest req,
+                         HttpServletRequest request) {
+        Long fromUserId = requireUserId(request);
+        @SuppressWarnings("unchecked")
+        List<String> roles = (List<String>) request.getAttribute(RoleAuthInterceptor.ATTR_ROLES);
+        approvalEngine.transfer(ticketId, fromUserId, req.toUserId(), roles);
+    }
+
+    // ---------------- 工具 ----------------
+
+    /** 待审批记录是否对当前用户可见（本人指派 或 本人持有对应角色）。 */
+    private static boolean visibleTo(Approval a, Long userId, List<String> roles) {
+        if (userId != null && a.getApproverId() != null && a.getApproverId() == userId) {
+            return true;
+        }
+        return a.getApproverId() != null && a.getApproverId() == 0L
+                && a.getApproverRef() != null && roles != null && roles.contains(a.getApproverRef());
+    }
+
+    private static Long requireUserId(HttpServletRequest request) {
+        Long userId = (Long) request.getAttribute(RoleAuthInterceptor.ATTR_USER_ID);
+        if (userId == null) {
+            throw new SqlauditException(ErrorCode.UNAUTHORIZED, "未登录或 token 无效");
+        }
+        return userId;
     }
 
     /**
      * §3.5 审批时采集表结构指纹（在决策落库之前执行，失败即阻断、无副作用）。
-     *
-     * <p>逐 unit 处理：</p>
-     * <ul>
-     *   <li>DDL unit 跳过——对象在审批时点尚不存在（执行后才有），无法采集，
-     *       ddl_fingerprint 留空则执行期 drift 门禁自动跳过；</li>
-     *   <li>schemaName / objectName 为 null 的 unit 跳过（无从定位目标表）；</li>
-     *   <li>provider 返回 null（表不存在等场景）→ log.warn 后跳过，指纹留空；</li>
-     *   <li>provider 抛 {@link IllegalStateException}（连接/凭据问题）→ 包成
-     *       {@code FINGERPRINT_CAPTURE_FAILED} 抛出，审批整体失败。</li>
-     * </ul>
      */
     private void captureStructureFingerprints(long ticketId) {
         for (TicketUnit unit : ticketUnitDao.listByTicket(ticketId)) {
             // DDL 对象此刻尚不存在（执行后才有），无法采集；留空即可，执行期门禁自动跳过
-            if ("DDL".equals(unit.getStatementType())) {
+            if (unit.getStatementType() == StatementType.DDL) {
                 continue;
             }
             if (unit.getSchemaName() == null || unit.getObjectName() == null) {
@@ -107,16 +150,16 @@ public class ApprovalController {
                 }
                 ticketUnitDao.updateDdlFingerprint(unit.getId(), fingerprint);
             } catch (IllegalStateException e) {
-                throw new SqlauditException("FINGERPRINT_CAPTURE_FAILED",
+                throw new SqlauditException(ErrorCode.FINGERPRINT_CAPTURE_FAILED,
                         "审批前表结构指纹采集失败，请检查实例 " + unit.getInstanceId()
                                 + " 的 RO_META 凭据: " + e.getMessage(), e);
             }
         }
     }
 
-    public record DecideRequest(long approverId, boolean approve, String comment) {
+    public record DecideRequest(boolean approve, String comment) {
     }
 
-    public record ConfirmRequest(long confirmerId) {
+    public record TransferRequest(long toUserId) {
     }
 }

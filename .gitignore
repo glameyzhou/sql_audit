@@ -1,6 +1,13 @@
 # ===== 项目数据（本地工作日志，不入库）=====
 .workbuddy/
 
+# ===== IDE（IntelliJ IDEA）=====
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+
 # ===== macOS =====
 .DS_Store
 *.dmg

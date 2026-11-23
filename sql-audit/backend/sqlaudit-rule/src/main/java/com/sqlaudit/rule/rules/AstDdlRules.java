@@ -7,6 +7,7 @@ import com.alibaba.druid.sql.ast.statement.SQLCreateIndexStatement;
 import com.alibaba.druid.sql.ast.statement.SQLDropTableStatement;
 import com.alibaba.druid.sql.ast.statement.SQLExprTableSource;
 import com.alibaba.druid.sql.ast.statement.SQLTruncateStatement;
+import com.sqlaudit.common.enums.RuleCode;
 import com.sqlaudit.common.enums.StatementType;
 import com.sqlaudit.common.model.ParsedStatement;
 import com.sqlaudit.rule.BuiltInRules;
@@ -29,7 +30,7 @@ public final class AstDdlRules {
     private AstDdlRules() {
     }
 
-    private static RuleDefinition def(String code) {
+    private static RuleDefinition def(RuleCode code) {
         return BuiltInRules.byCode(code);
     }
 
@@ -38,7 +39,7 @@ public final class AstDdlRules {
         return new Rule() {
             @Override
             public RuleDefinition definition() {
-                return def("R_DDL_DESTRUCTIVE");
+                return def(RuleCode.R_DDL_DESTRUCTIVE);
             }
 
             @Override
@@ -74,7 +75,7 @@ public final class AstDdlRules {
         return new Rule() {
             @Override
             public RuleDefinition definition() {
-                return def("R_DDL_NO_IF_EXISTS");
+                return def(RuleCode.R_DDL_NO_IF_EXISTS);
             }
 
             @Override
@@ -96,7 +97,7 @@ public final class AstDdlRules {
         return new Rule() {
             @Override
             public RuleDefinition definition() {
-                return def("R_TABLE_NAME");
+                return def(RuleCode.R_TABLE_NAME);
             }
 
             @Override
@@ -124,7 +125,7 @@ public final class AstDdlRules {
         return new Rule() {
             @Override
             public RuleDefinition definition() {
-                return def("R_INDEX_NAME");
+                return def(RuleCode.R_INDEX_NAME);
             }
 
             @Override

@@ -1,17 +1,20 @@
 package com.sqlaudit.storage.impl.jdbc.h2;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sqlaudit.common.enums.CodedEnum;
+import com.sqlaudit.common.enums.RuleDialect;
+import com.sqlaudit.common.enums.RuleSeverity;
+import com.sqlaudit.common.enums.RuleStatementType;
 import com.sqlaudit.storage.dao.RuleDao;
 import com.sqlaudit.storage.model.Rule;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
-import org.springframework.jdbc.support.GeneratedKeyHolder;
-import org.springframework.jdbc.support.KeyHolder;
-
 import java.sql.PreparedStatement;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
 
 /**
  * rule 的 H2 真实现（DDL §6 t_rule 表；内存版语义基准 {@code InMemoryRuleDao}，
@@ -35,9 +38,9 @@ public class H2RuleDao implements RuleDao {
         Rule r = new Rule();
         r.setId(rs.getLong("id"));
         r.setCode(rs.getString("code"));
-        r.setDialect(rs.getString("dialect"));
-        r.setStatementType(rs.getString("statement_type"));
-        r.setSeverity(rs.getString("severity"));
+        r.setDialect(RuleDialect.fromCode(rs.getString("dialect")));
+        r.setStatementType(RuleStatementType.fromCode(rs.getString("statement_type")));
+        r.setSeverity(RuleSeverity.fromCode(rs.getString("severity")));
         r.setEnabled(rs.getBoolean("enabled"));
         r.setParams(readParams(rs.getString("params")));
         r.setDescription(rs.getString("description"));
@@ -61,9 +64,9 @@ public class H2RuleDao implements RuleDao {
         jdbc.update(conn -> {
             PreparedStatement ps = conn.prepareStatement(sql, new String[]{"id"});
             ps.setString(1, rule.getCode());
-            ps.setString(2, rule.getDialect());
-            ps.setString(3, rule.getStatementType());
-            ps.setString(4, rule.getSeverity());
+            ps.setString(2, CodedEnum.code(rule.getDialect()));
+            ps.setString(3, CodedEnum.code(rule.getStatementType()));
+            ps.setString(4, CodedEnum.code(rule.getSeverity()));
             ps.setBoolean(5, rule.getEnabled() == null || rule.getEnabled());
             int i = 6;
             if (hasParams) {
@@ -86,9 +89,9 @@ public class H2RuleDao implements RuleDao {
                 + (hasParams ? "? FORMAT JSON" : "NULL") + ", description=? WHERE id=?";
         return jdbc.update(sql,
                 rule.getCode(),
-                rule.getDialect(),
-                rule.getStatementType(),
-                rule.getSeverity(),
+                CodedEnum.code(rule.getDialect()),
+                CodedEnum.code(rule.getStatementType()),
+                CodedEnum.code(rule.getSeverity()),
                 rule.getEnabled() == null || rule.getEnabled(),
                 hasParams ? writeParams(rule.getParams()) : null,
                 rule.getDescription(),

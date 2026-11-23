@@ -1,5 +1,6 @@
 package com.sqlaudit.common.model;
 
+import com.sqlaudit.common.enums.RuleCode;
 import com.sqlaudit.common.enums.RuleSeverity;
 
 import java.util.LinkedHashMap;
@@ -19,8 +20,8 @@ import java.util.Map;
  */
 public class RuleHit {
 
-    /** 规则编码，如 R_MYSQL_NO_WHERE */
-    private String code;
+    /** 命中的内置规则 */
+    private RuleCode code;
 
     private RuleSeverity severity;
 
@@ -32,17 +33,17 @@ public class RuleHit {
     public RuleHit() {
     }
 
-    public RuleHit(String code, RuleSeverity severity, String message) {
+    public RuleHit(RuleCode code, RuleSeverity severity, String message) {
         this.code = code;
         this.severity = severity;
         this.message = message;
     }
 
-    public String getCode() {
+    public RuleCode getCode() {
         return code;
     }
 
-    public void setCode(String code) {
+    public void setCode(RuleCode code) {
         this.code = code;
     }
 

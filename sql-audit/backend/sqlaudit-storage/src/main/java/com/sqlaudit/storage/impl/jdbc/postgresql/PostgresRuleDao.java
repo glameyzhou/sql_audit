@@ -1,16 +1,19 @@
 package com.sqlaudit.storage.impl.jdbc.postgresql;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sqlaudit.common.enums.CodedEnum;
+import com.sqlaudit.common.enums.RuleDialect;
+import com.sqlaudit.common.enums.RuleSeverity;
+import com.sqlaudit.common.enums.RuleStatementType;
 import com.sqlaudit.storage.dao.RuleDao;
 import com.sqlaudit.storage.model.Rule;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
-
 import java.sql.PreparedStatement;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.LocalDateTime;
 import java.util.List;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
 
 /**
  * rule 的 PostgreSQL 真实现（DDL §6 t_rule 表；内存版语义基准
@@ -33,9 +36,9 @@ public class PostgresRuleDao implements RuleDao {
         Rule r = new Rule();
         r.setId(rs.getLong("id"));
         r.setCode(rs.getString("code"));
-        r.setDialect(rs.getString("dialect"));
-        r.setStatementType(rs.getString("statement_type"));
-        r.setSeverity(rs.getString("severity"));
+        r.setDialect(RuleDialect.fromCode(rs.getString("dialect")));
+        r.setStatementType(RuleStatementType.fromCode(rs.getString("statement_type")));
+        r.setSeverity(RuleSeverity.fromCode(rs.getString("severity")));
         r.setEnabled(rs.getBoolean("enabled"));
         r.setParams(readParams(rs.getString("params")));
         r.setDescription(rs.getString("description"));
@@ -56,9 +59,9 @@ public class PostgresRuleDao implements RuleDao {
                     "INSERT INTO t_rule (code, dialect, statement_type, severity, enabled, params, "
                             + "description, created_at) VALUES (?,?,?,?,?,?,?,?) RETURNING id");
             ps.setString(1, rule.getCode());
-            ps.setString(2, rule.getDialect());
-            ps.setString(3, rule.getStatementType());
-            ps.setString(4, rule.getSeverity());
+            ps.setString(2, CodedEnum.code(rule.getDialect()));
+            ps.setString(3, CodedEnum.code(rule.getStatementType()));
+            ps.setString(4, CodedEnum.code(rule.getSeverity()));
             ps.setBoolean(5, rule.getEnabled() == null || rule.getEnabled());
             ps.setObject(6, writeParams(rule.getParams()), Types.OTHER);
             ps.setString(7, rule.getDescription());
@@ -81,9 +84,9 @@ public class PostgresRuleDao implements RuleDao {
                 "UPDATE t_rule SET code=?, dialect=?, statement_type=?, severity=?, enabled=?, "
                         + "params=?, description=? WHERE id=?",
                 rule.getCode(),
-                rule.getDialect(),
-                rule.getStatementType(),
-                rule.getSeverity(),
+                CodedEnum.code(rule.getDialect()),
+                CodedEnum.code(rule.getStatementType()),
+                CodedEnum.code(rule.getSeverity()),
                 rule.getEnabled() == null || rule.getEnabled(),
                 rule.getParams() == null ? null : writeParams(rule.getParams()),
                 rule.getDescription(),

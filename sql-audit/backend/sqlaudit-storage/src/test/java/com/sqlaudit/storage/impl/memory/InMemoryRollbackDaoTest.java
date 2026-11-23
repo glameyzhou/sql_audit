@@ -1,5 +1,6 @@
 package com.sqlaudit.storage.impl.memory;
 
+import com.sqlaudit.common.enums.RollbackStatus;
 import com.sqlaudit.storage.model.RollbackSql;
 import com.sqlaudit.storage.model.RollbackStatement;
 import org.junit.jupiter.api.Test;
@@ -21,7 +22,7 @@ class InMemoryRollbackDaoTest {
     private long insertRollback(long unitId) {
         RollbackSql rollbackSql = new RollbackSql();
         rollbackSql.setUnitId(unitId);
-        rollbackSql.setStatus("generated");
+        rollbackSql.setStatus(RollbackStatus.GENERATED);
         assertEquals(1, dao.insertRollbackSql(rollbackSql));
         return rollbackSql.getId();
     }
@@ -31,7 +32,7 @@ class InMemoryRollbackDaoTest {
         insertRollback(100L);
         RollbackSql duplicate = new RollbackSql();
         duplicate.setUnitId(100L);
-        duplicate.setStatus("generated");
+        duplicate.setStatus(RollbackStatus.GENERATED);
         assertEquals(0, dao.insertRollbackSql(duplicate), "uk_unit 冲突应返回 0");
 
         assertNotNull(dao.findByUnitId(100L));
@@ -100,12 +101,12 @@ class InMemoryRollbackDaoTest {
     @Test
     void updateStatus_更新主记录状态与原因() {
         long rollbackId = insertRollback(100L);
-        assertEquals(1, dao.updateStatus(rollbackId, "not_available", "R_ROLLBACK_UNAVAILABLE"));
+        assertEquals(1, dao.updateStatus(rollbackId, RollbackStatus.NOT_AVAILABLE, "R_ROLLBACK_UNAVAILABLE"));
         RollbackSql rollbackSql = dao.findByUnitId(100L);
-        assertEquals("not_available", rollbackSql.getStatus());
+        assertEquals(RollbackStatus.NOT_AVAILABLE, rollbackSql.getStatus());
         assertEquals("R_ROLLBACK_UNAVAILABLE", rollbackSql.getUnavailableReason());
 
-        assertEquals(0, dao.updateStatus(99999L, "verified", null));
+        assertEquals(0, dao.updateStatus(99999L, RollbackStatus.VERIFIED, null));
     }
 
     private RollbackStatement makeStatement(long rollbackId, int stmtOrder) {

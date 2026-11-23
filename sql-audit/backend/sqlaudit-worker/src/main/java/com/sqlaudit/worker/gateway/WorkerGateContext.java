@@ -1,7 +1,10 @@
 package com.sqlaudit.worker.gateway;
 
+import com.sqlaudit.common.enums.ApprovalResult;
 import com.sqlaudit.common.enums.Dialect;
+import com.sqlaudit.common.enums.GateCode;
 import com.sqlaudit.common.enums.RollbackCoverage;
+import com.sqlaudit.common.enums.TicketStatus;
 import com.sqlaudit.common.model.ParsedStatement;
 import com.sqlaudit.common.model.RollbackPlan;
 import com.sqlaudit.common.model.RuleHit;
@@ -72,7 +75,7 @@ public class WorkerGateContext implements GateContext {
     public LocalDateTime approvedAt(TicketUnit unit) {
         try {
             return approvalDao.listByTicket(unit.getTicketId()).stream()
-                    .filter(r -> "APPROVED".equals(r.getResult()))
+                    .filter(r -> ApprovalResult.APPROVED == r.getResult())
                     .map(Approval::getDecidedAt)
                     .filter(Objects::nonNull)
                     .max(Comparator.naturalOrder())
@@ -119,31 +122,20 @@ public class WorkerGateContext implements GateContext {
 
     @Override
     public void onGateFailure(TicketUnit unit, ExecutionGate.GateResult result) {
-        if (result.failedGate() == null || !"APPROVAL_TTL".equals(result.failedGate())) {
+        if (result.failedGate() != GateCode.APPROVAL_TTL) {
             return;
         }
         try {
             // §3.5：审批超时 → 置 expired，需重新审批（expired 为终态，重新走审批 = 新工单）
-            ticketDao.updateStatus(unit.getTicketId(), "approved", "expired", LocalDateTime.now());
+            ticketDao.updateStatus(unit.getTicketId(), TicketStatus.APPROVED, TicketStatus.EXPIRED,
+                    LocalDateTime.now());
         } catch (Exception e) {
             log.warn("[gate] 审批超时置 expired 失败: ticket={}", unit.getTicketId(), e);
         }
     }
 
     private static Dialect dialectOf(Instance inst) {
-        if (inst == null || inst.getDialect() == null) {
-            return Dialect.MYSQL;
-        }
-        String dialect = inst.getDialect().trim().toUpperCase();
-        // 别名归一：UI/种子数据可能写入 POSTGRESQL/POSTGRES，统一映射枚举 PG，
-        // 避免未知字符串静默回落 MySQL（错方言会用错驱动连库）
-        if ("POSTGRESQL".equals(dialect) || "POSTGRES".equals(dialect)) {
-            return Dialect.PG;
-        }
-        try {
-            return Dialect.valueOf(dialect);
-        } catch (IllegalArgumentException e) {
-            return Dialect.MYSQL;
-        }
+        // 实例方言写入时已校验为 Dialect 枚举，未知取值到不了这里；仅保留 null 兜底
+        return inst == null || inst.getDialect() == null ? Dialect.MYSQL : inst.getDialect();
     }
 }

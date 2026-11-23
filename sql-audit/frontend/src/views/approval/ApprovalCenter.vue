@@ -5,13 +5,13 @@
         <h3 class="card-title">待审批工单</h3>
         <el-button size="small" :loading="loading" @click="load">刷新</el-button>
       </div>
-      <p class="hint">审批人由角色解析（W2 后段接登录态，当前以主管 200 模拟）</p>
+      <p class="hint">审批人按当前登录账号提交；防自审（提交人不能审自己的单）由后端硬校验</p>
 
       <div v-loading="loading" class="table-wrap">
         <el-table v-if="list.length" :data="list" class="sa-table">
           <el-table-column label="工单号" min-width="120">
             <template #default="{ row }">
-              <span class="mono strong">{{ row.ticketId }}</span>
+              <router-link class="mono strong link" :to="`/tickets/${row.ticketId}`">{{ row.ticketId }}</router-link>
             </template>
           </el-table-column>
           <el-table-column label="节点" width="90" align="center">
@@ -36,10 +36,11 @@
               <span class="time">{{ formatTime(row.createdAt) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="170" align="right">
+          <el-table-column label="操作" width="240" align="right">
             <template #default="{ row }">
               <el-button size="small" type="primary" @click="openDecide(row, true)">通过</el-button>
               <el-button size="small" type="danger" @click="openDecide(row, false)">驳回</el-button>
+              <el-button size="small" type="warning" plain @click="openTransfer(row)">转交</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -77,6 +78,25 @@
         >确认{{ dialog.approve ? '通过' : '驳回' }}</el-button>
       </template>
     </el-dialog>
+
+    <!-- 审批转交（代理人）弹窗 -->
+    <el-dialog v-model="transferDialog.visible" title="审批转交（代理人）" width="420px" class="sa-dialog">
+      <div class="dlg-body">
+        <div class="dlg-kv">
+          <span class="k">工单号</span>
+          <span class="mono v">{{ transferDialog.row?.ticketId }}</span>
+        </div>
+        <el-input
+          v-model.number="transferDialog.toUserId"
+          type="number"
+          placeholder="代理人用户 ID（转交后由对方审批）"
+        />
+      </div>
+      <template #footer>
+        <el-button @click="transferDialog.visible = false">取消</el-button>
+        <el-button type="primary" :loading="transferDialog.submitting" @click="submitTransfer">确认转交</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -84,6 +104,9 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
+import { useSessionStore } from '../../stores/session'
+
+const session = useSessionStore()
 
 // 审批结果中文映射（待办列表 result 理论均为 PENDING，兜底通用）
 const RESULT_META = {
@@ -136,7 +159,7 @@ async function submitDecide() {
   if (dialog.submitting || !dialog.row) return
   dialog.submitting = true
   try {
-    await api.decide(dialog.row.ticketId, 200, dialog.approve, dialog.comment)
+    await api.decide(dialog.row.ticketId, dialog.approve, dialog.comment)
     ElMessage.success(dialog.approve ? '已通过' : '已驳回')
     dialog.visible = false
     await load()
@@ -144,6 +167,33 @@ async function submitDecide() {
     /* 拦截器已提示错误 */
   } finally {
     dialog.submitting = false
+  }
+}
+
+// ---- 审批转交（代理人） ----
+const transferDialog = reactive({ visible: false, row: null, toUserId: null, submitting: false })
+
+function openTransfer(row) {
+  transferDialog.row = row
+  transferDialog.toUserId = null
+  transferDialog.visible = true
+}
+
+async function submitTransfer() {
+  if (!transferDialog.toUserId) {
+    ElMessage.warning('请填写代理人用户 ID')
+    return
+  }
+  transferDialog.submitting = true
+  try {
+    await api.transfer(transferDialog.row.ticketId, transferDialog.toUserId)
+    ElMessage.success('已转交')
+    transferDialog.visible = false
+    await load()
+  } catch {
+    /* 拦截器已提示错误 */
+  } finally {
+    transferDialog.submitting = false
   }
 }
 
@@ -179,6 +229,8 @@ onMounted(load)
 
 .mono { font-family: var(--sa-font-mono); font-size: 12px; }
 .strong { font-weight: 600; color: var(--sa-text); }
+.link { color: var(--sa-brand-2); }
+.link:hover { text-decoration: underline; }
 .node-order { font-size: 12px; color: var(--sa-text-2); }
 .mode { font-size: 12px; color: var(--sa-text-2); }
 .time { font-size: 12px; color: var(--sa-text-2); font-variant-numeric: tabular-nums; }

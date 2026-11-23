@@ -1,5 +1,10 @@
 package com.sqlaudit.workflow;
 
+import com.sqlaudit.common.enums.ApprovalMode;
+import com.sqlaudit.common.enums.ApprovalResult;
+import com.sqlaudit.common.enums.ApproverType;
+import com.sqlaudit.common.enums.ErrorCode;
+import com.sqlaudit.common.enums.RoleCode;
 import com.sqlaudit.common.enums.TicketStatus;
 import com.sqlaudit.common.exception.IllegalStateTransitionException;
 import com.sqlaudit.common.exception.SqlauditException;
@@ -17,7 +22,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 审批流引擎（设计文档 §3.4 / §4.5 / §8.2）。
@@ -46,11 +50,6 @@ public class ApprovalFlowEngine {
     private final TicketDao ticketDao;
     private final TicketStateMachine stateMachine;
 
-    /** ticketId → 审批链（secondConfirm 语义来源；W2 落库后移除） */
-    private final Map<Long, ApprovalChain> chains = new ConcurrentHashMap<>();
-    /** ticketId → 二次确认人（执行前显式确认，§3.4；W2 落审计后移除） */
-    private final Map<Long, Long> executionConfirmers = new ConcurrentHashMap<>();
-
     public ApprovalFlowEngine(ApprovalDao approvalDao, TicketDao ticketDao,
                               TicketStateMachine stateMachine) {
         this.approvalDao = Objects.requireNonNull(approvalDao, "approvalDao");
@@ -69,7 +68,7 @@ public class ApprovalFlowEngine {
         ApprovalMode mode = roles.size() == 1 ? ApprovalMode.OR : ApprovalMode.AND;
         List<ApprovalNode> nodes = new ArrayList<>(roles.size());
         for (int i = 0; i < roles.size(); i++) {
-            nodes.add(new ApprovalNode(i + 1, ApprovalNode.TYPE_ROLE, roles.get(i), mode));
+            nodes.add(new ApprovalNode(i + 1, ApproverType.ROLE, roles.get(i), mode));
         }
         return nodes;
     }
@@ -84,7 +83,7 @@ public class ApprovalFlowEngine {
     public List<Approval> createNodes(Ticket ticket, ApprovalChain chain) {
         Objects.requireNonNull(ticket, "ticket");
         if (!approvalDao.listByTicket(ticket.getId()).isEmpty()) {
-            throw new SqlauditException("APPROVAL_NODES_EXIST",
+            throw new SqlauditException(ErrorCode.APPROVAL_NODES_EXIST,
                     "工单 " + ticket.getId() + " 已生成审批节点，不得重复生成");
         }
         LocalDateTime now = LocalDateTime.now();
@@ -94,12 +93,17 @@ public class ApprovalFlowEngine {
             approval.setNodeId(0L);
             approval.setNodeOrder(node.nodeOrder());
             approval.setApproverId(0L);
-            approval.setMode(node.mode().name());
-            approval.setResult(ApprovalResult.PENDING.name());
+            approval.setApproverType(node.approverType());
+            // ROLE 节点把角色码落 approver_ref，供角色 → 用户解析与角色校验（§8.2）
+            approval.setApproverRef(node.approverType() == ApproverType.ROLE && node.role() != null
+                    ? node.role() : null);
+            approval.setMode(node.mode());
+            approval.setResult(ApprovalResult.PENDING);
             approval.setCreatedAt(now);
             approvalDao.insert(approval);
         }
-        chains.put(ticket.getId(), chain);
+        // §3.4：二次确认语义落库（替代内存 chains），服务重启不丢
+        ticketDao.markNeedsSecondConfirm(ticket.getId(), chain.secondConfirm());
         return approvalDao.listByTicket(ticket.getId());
     }
 
@@ -115,12 +119,13 @@ public class ApprovalFlowEngine {
      *                           TICKET_NOT_AUDITING / NO_PENDING_APPROVAL /
      *                           APPROVAL_TARGET_NOT_FOUND / APPROVAL_ALREADY_DECIDED
      */
-    public ApprovalDecision submitDecision(long ticketId, long approverId, boolean approve, String comment) {
+    public ApprovalDecision submitDecision(long ticketId, long approverId, List<String> approverRoles,
+                                           boolean approve, String comment) {
         Ticket ticket = requireTicket(ticketId);
 
         // §3.4 防自审硬校验：提交人不得审批自己的工单（不是前端隐藏按钮）
         if (ticket.getCreatorId() != null && ticket.getCreatorId() == approverId) {
-            throw new SqlauditException("SELF_APPROVAL_FORBIDDEN",
+            throw new SqlauditException(ErrorCode.SELF_APPROVAL_FORBIDDEN,
                     "提交人不得审批自己的工单（§3.4 防自审，ticket=" + ticketId + "）");
         }
 
@@ -130,43 +135,50 @@ public class ApprovalFlowEngine {
         // 幂等 / 冲突：该审批人已有既成决策（重放场景工单可能已推进到 approved/rejected）
         for (Approval row : rows) {
             if (row.getApproverId() != null && row.getApproverId() == approverId
-                    && !ApprovalResult.PENDING.name().equals(row.getResult())) {
-                if (decision.name().equals(row.getResult())) {
+                    && ApprovalResult.PENDING != row.getResult()) {
+                if (decision == row.getResult()) {
                     return rebuildDecision(ticket, row.getNodeOrder(), approverId, decision);
                 }
-                throw new SqlauditException("APPROVAL_ALREADY_DECIDED",
+                throw new SqlauditException(ErrorCode.APPROVAL_ALREADY_DECIDED,
                         "审批人 " + approverId + " 对工单 " + ticketId + " 已做出不同决策");
             }
         }
 
-        TicketStatus status = TicketStateMachine.parse(ticket.getStatus());
+        TicketStatus status = ticket.getStatus();
         if (status != TicketStatus.AUDITING) {
-            throw new SqlauditException("TICKET_NOT_AUDITING",
-                    "工单 " + ticketId + " 状态为 " + ticket.getStatus() + "，不在审批中");
+            throw new SqlauditException(ErrorCode.TICKET_NOT_AUDITING,
+                    "工单 " + ticketId + " 状态为 " + ticket.getStatus().getCode() + "，不在审批中");
         }
 
         int currentNode = rows.stream()
-                .filter(r -> ApprovalResult.PENDING.name().equals(r.getResult()))
+                .filter(r -> ApprovalResult.PENDING == r.getResult())
                 .mapToInt(Approval::getNodeOrder)
                 .min()
-                .orElseThrow(() -> new SqlauditException("NO_PENDING_APPROVAL",
+                .orElseThrow(() -> new SqlauditException(ErrorCode.NO_PENDING_APPROVAL,
                         "工单 " + ticketId + " 没有待审批节点"));
 
         // 目标记录：该审批人的 PENDING 记录，否则认领 ROLE 占位记录（approver_id=0）
         Approval target = rows.stream()
                 .filter(r -> r.getNodeOrder() == currentNode
-                        && ApprovalResult.PENDING.name().equals(r.getResult())
+                        && ApprovalResult.PENDING == r.getResult()
                         && (r.getApproverId() != null && r.getApproverId() == approverId
                             || r.getApproverId() != null && r.getApproverId() == 0L))
                 .findFirst()
-                .orElseThrow(() -> new SqlauditException("APPROVAL_TARGET_NOT_FOUND",
+                .orElseThrow(() -> new SqlauditException(ErrorCode.APPROVAL_TARGET_NOT_FOUND,
                         "节点 " + currentNode + " 无审批人 " + approverId + " 的待审批记录（非当前节点或无权限）"));
 
+        // §8.2 角色校验：ROLE 节点须由持有对应角色的审批人认领（approver_ref = 角色码）
+        if (target.getApproverType() == ApproverType.ROLE && target.getApproverRef() != null
+                && (approverRoles == null || !approverRoles.contains(target.getApproverRef()))) {
+            throw new SqlauditException(ErrorCode.FORBIDDEN,
+                    "审批人无「" + target.getApproverRef() + "」角色，无法审批节点 " + currentNode);
+        }
+
         int updated = approvalDao.updateResult(target.getId(), approverId,
-                ApprovalResult.PENDING.name(), decision.name(), comment, LocalDateTime.now());
+                ApprovalResult.PENDING, decision, comment, LocalDateTime.now());
         if (updated == 0) {
             // 快照后又被并发决策：极端竞争，直接报冲突（同结果重放走上面的幂等分支）
-            throw new SqlauditException("APPROVAL_ALREADY_DECIDED",
+            throw new SqlauditException(ErrorCode.APPROVAL_ALREADY_DECIDED,
                     "审批记录已被决策（并发冲突），ticket=" + ticketId + " node=" + currentNode);
         }
 
@@ -175,11 +187,11 @@ public class ApprovalFlowEngine {
         List<Approval> nodeRows = latest.stream()
                 .filter(r -> r.getNodeOrder() == currentNode)
                 .toList();
-        ApprovalMode mode = ApprovalMode.valueOf(nodeRows.get(0).getMode());
+        ApprovalMode mode = nodeRows.get(0).getMode();
         boolean anyApproved = nodeRows.stream()
-                .anyMatch(r -> ApprovalResult.APPROVED.name().equals(r.getResult()));
+                .anyMatch(r -> ApprovalResult.APPROVED == r.getResult());
         boolean anyRejected = nodeRows.stream()
-                .anyMatch(r -> ApprovalResult.REJECTED.name().equals(r.getResult()));
+                .anyMatch(r -> ApprovalResult.REJECTED == r.getResult());
 
         boolean nodePassed;
         boolean nodeRejected;
@@ -187,7 +199,7 @@ public class ApprovalFlowEngine {
             // 会签：任一 REJECTED 即驳回；全部 APPROVED 才通过
             nodeRejected = anyRejected;
             nodePassed = !anyRejected && nodeRows.stream()
-                    .allMatch(r -> ApprovalResult.APPROVED.name().equals(r.getResult()));
+                    .allMatch(r -> ApprovalResult.APPROVED == r.getResult());
         } else {
             // 或签：任一 APPROVED 即通过；无人通过且有人驳回即驳回（先决者胜）
             nodePassed = anyApproved;
@@ -207,7 +219,7 @@ public class ApprovalFlowEngine {
         // 节点通过：还有后续节点则等待（节点串行）
         boolean hasNextNode = latest.stream()
                 .anyMatch(r -> r.getNodeOrder() > currentNode
-                        && ApprovalResult.PENDING.name().equals(r.getResult()));
+                        && ApprovalResult.PENDING == r.getResult());
         if (hasNextNode) {
             return new ApprovalDecision(ticketId, currentNode, approverId, decision, true, false, false);
         }
@@ -227,25 +239,68 @@ public class ApprovalFlowEngine {
      * @throws SqlauditException               code=SELF_CONFIRM_FORBIDDEN / TICKET_NOT_FOUND
      * @throws IllegalStateTransitionException 工单不在 approved 态
      */
-    public void confirmExecution(long ticketId, long confirmerId) {
+    public void confirmExecution(long ticketId, long confirmerId, List<String> confirmerRoles) {
         Ticket ticket = requireTicket(ticketId);
         if (ticket.getCreatorId() != null && ticket.getCreatorId() == confirmerId) {
-            throw new SqlauditException("SELF_CONFIRM_FORBIDDEN",
+            throw new SqlauditException(ErrorCode.SELF_CONFIRM_FORBIDDEN,
                     "提交人不得二次确认自己的工单（§3.4，ticket=" + ticketId + "）");
         }
-        TicketStatus status = TicketStateMachine.parse(ticket.getStatus());
+        TicketStatus status = ticket.getStatus();
         if (status != TicketStatus.APPROVED) {
-            throw new IllegalStateTransitionException(ticket.getStatus(),
-                    TicketStateMachine.dbValue(TicketStatus.EXECUTING),
+            throw new IllegalStateTransitionException(ticket.getStatus().getCode(),
+                    TicketStatus.EXECUTING.getCode(),
                     "二次确认仅对 approved 工单有效");
         }
-        executionConfirmers.put(ticketId, confirmerId);
+        // §8.2：二次确认须 DBA / 管理员（角色校验，原「留给 W2」）
+        if (confirmerRoles == null
+                || (!confirmerRoles.contains(RoleCode.DBA.getCode())
+                    && !confirmerRoles.contains(RoleCode.ADMIN.getCode()))) {
+            throw new SqlauditException(ErrorCode.FORBIDDEN, "二次确认需 DBA 或管理员角色");
+        }
+        ticketDao.updateSecondConfirm(ticketId, confirmerId, LocalDateTime.now());
     }
 
     /** 该工单的审批链是否要求执行前二次确认。 */
     public boolean needsSecondConfirm(long ticketId) {
-        ApprovalChain chain = chains.get(ticketId);
-        return chain != null && chain.secondConfirm();
+        return requireTicket(ticketId).isNeedsSecondConfirm();
+    }
+
+    /**
+     * 审批转交（代理人）：当前审批人把本人当前节点的待审批记录转给代理人。
+     * 代理人须持有对应角色（ROLE 节点）、且不能是提交人（防自审）。
+     */
+    public void transfer(long ticketId, long fromUserId, long toUserId, List<String> toUserRoles) {
+        Ticket ticket = requireTicket(ticketId);
+        if (fromUserId == toUserId) {
+            throw new SqlauditException(ErrorCode.INVALID_REQUEST, "转交目标不能是本人");
+        }
+        if (ticket.getCreatorId() != null && ticket.getCreatorId() == toUserId) {
+            throw new SqlauditException(ErrorCode.FORBIDDEN, "不能转交给提交人（防自审）");
+        }
+        if (ticket.getStatus() != TicketStatus.AUDITING) {
+            throw new SqlauditException(ErrorCode.TICKET_NOT_AUDITING,
+                    "工单状态为 " + ticket.getStatus().getCode() + "，不在审批中");
+        }
+        List<Approval> rows = approvalDao.listByTicket(ticketId);
+        int currentNode = rows.stream()
+                .filter(r -> ApprovalResult.PENDING == r.getResult())
+                .mapToInt(Approval::getNodeOrder)
+                .min()
+                .orElseThrow(() -> new SqlauditException(ErrorCode.NO_PENDING_APPROVAL,
+                        "工单 " + ticketId + " 没有待审批节点"));
+        Approval target = rows.stream()
+                .filter(r -> r.getNodeOrder() == currentNode
+                        && ApprovalResult.PENDING == r.getResult()
+                        && r.getApproverId() != null && r.getApproverId() == fromUserId)
+                .findFirst()
+                .orElseThrow(() -> new SqlauditException(ErrorCode.NO_PENDING_APPROVAL,
+                        "当前节点无本人（" + fromUserId + "）的待审批记录"));
+        if (target.getApproverType() == ApproverType.ROLE && target.getApproverRef() != null
+                && (toUserRoles == null || !toUserRoles.contains(target.getApproverRef()))) {
+            throw new SqlauditException(ErrorCode.FORBIDDEN,
+                    "代理人无「" + target.getApproverRef() + "」角色");
+        }
+        approvalDao.transfer(target.getId(), fromUserId, toUserId);
     }
 
     /**
@@ -254,10 +309,10 @@ public class ApprovalFlowEngine {
      */
     public boolean canExecute(long ticketId) {
         Ticket ticket = requireTicket(ticketId);
-        if (TicketStateMachine.parse(ticket.getStatus()) != TicketStatus.APPROVED) {
+        if (ticket.getStatus() != TicketStatus.APPROVED) {
             return false;
         }
-        return !needsSecondConfirm(ticketId) || executionConfirmers.containsKey(ticketId);
+        return !ticket.isNeedsSecondConfirm() || ticket.getConfirmedBy() != null;
     }
 
     /**
@@ -279,12 +334,12 @@ public class ApprovalFlowEngine {
         List<Approval> result = new ArrayList<>();
         for (Map.Entry<Long, List<Approval>> entry : byTicket.entrySet()) {
             Ticket ticket = ticketDao.findById(entry.getKey());
-            if (ticket == null || TicketStateMachine.parse(ticket.getStatus()) != TicketStatus.AUDITING) {
+            if (ticket == null || ticket.getStatus() != TicketStatus.AUDITING) {
                 continue;
             }
             // 当前节点 = 该工单全部 PENDING 记录里 nodeOrder 最小者
             int currentNode = approvalDao.listByTicket(entry.getKey()).stream()
-                    .filter(r -> ApprovalResult.PENDING.name().equals(r.getResult()))
+                    .filter(r -> ApprovalResult.PENDING == r.getResult())
                     .mapToInt(Approval::getNodeOrder)
                     .min()
                     .orElse(Integer.MAX_VALUE);
@@ -300,7 +355,7 @@ public class ApprovalFlowEngine {
     /** 幂等重放：按工单当前状态重建返回值（不再触发状态迁移与节点判定）。 */
     private ApprovalDecision rebuildDecision(Ticket ticket, int nodeOrder, long approverId,
                                              ApprovalResult result) {
-        TicketStatus status = TicketStateMachine.parse(ticket.getStatus());
+        TicketStatus status = ticket.getStatus();
         boolean approved = status == TicketStatus.APPROVED;
         boolean rejected = status == TicketStatus.REJECTED;
         return new ApprovalDecision(ticket.getId(), nodeOrder, approverId, result,
@@ -310,7 +365,7 @@ public class ApprovalFlowEngine {
     private Ticket requireTicket(long ticketId) {
         Ticket ticket = ticketDao.findById(ticketId);
         if (ticket == null) {
-            throw new SqlauditException("TICKET_NOT_FOUND", "工单不存在：" + ticketId);
+            throw new SqlauditException(ErrorCode.TICKET_NOT_FOUND, "工单不存在：" + ticketId);
         }
         return ticket;
     }

@@ -1,11 +1,22 @@
 package com.sqlaudit.server;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sqlaudit.query.channel.ConnectionProvider;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
@@ -16,13 +27,52 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * 提交 → 审批端到端集成测试（内存 fake DAO + H2 查询演示库）。
+ *
+ * <p>生产路径的查询连接已改为按实例真连（{@code JdbcQueryConnectionProvider}），
+ * 集成测试用 {@link DemoQueryConnection} 覆盖为 H2 演示库，保证用例不依赖外部 MySQL。</p>
  */
 @SpringBootTest
 @AutoConfigureMockMvc
+@Import(SubmissionFlowTest.DemoQueryConnection.class)
 class SubmissionFlowTest {
 
     @Autowired
     private MockMvc mvc;
+
+    private final ObjectMapper mapper = new ObjectMapper();
+
+    /** 测试专用：所有 instanceId 路由到同一个 H2 内存库（t_user 20 行，供 LIMIT 注入用例）。 */
+    @TestConfiguration
+    static class DemoQueryConnection {
+
+        @Bean
+        @Primary
+        ConnectionProvider demoConnectionProvider() {
+            return new ConnectionProvider() {
+                private volatile boolean initialized;
+
+                @Override
+                public Connection getConnection(long instanceId) throws SQLException {
+                    Connection conn = DriverManager.getConnection(
+                            "jdbc:h2:mem:querydemo;DB_CLOSE_DELAY=-1", "sa", "");
+                    if (!initialized) {
+                        initDemo(conn);
+                        initialized = true;
+                    }
+                    return conn;
+                }
+
+                private void initDemo(Connection conn) throws SQLException {
+                    try (var st = conn.createStatement()) {
+                        st.execute("CREATE TABLE IF NOT EXISTS t_user (id INT PRIMARY KEY, name VARCHAR(64))");
+                        for (int i = 1; i <= 20; i++) {
+                            st.execute("MERGE INTO t_user (id, name) KEY (id) VALUES (" + i + ", 'user" + i + "')");
+                        }
+                    }
+                }
+            };
+        }
+    }
 
     // ---------------- 预览 ----------------
 
@@ -71,11 +121,12 @@ class SubmissionFlowTest {
 
     @Test
     void endToEnd_createApprove_auditChainIntact() throws Exception {
-        // 1. 建单（creator=100）
+        // 1. 建单（creator=admin 即 1 号账号；审批须由非提交人完成）
+        String adminToken = login("admin", "admin12345");
         MvcResult created = mvc.perform(post("/api/tickets")
                         .contentType(APPLICATION_JSON)
                         .content("""
-                                {"title":"常规变更","creatorId":100,
+                                {"title":"常规变更","creatorId":1,
                                  "instanceIds":[1],"environment":"prod",
                                  "sql":"UPDATE t_user SET a = 1 WHERE id = 1","dialect":"MYSQL"}"""))
                 .andExpect(status().isOk())
@@ -95,16 +146,21 @@ class SubmissionFlowTest {
                         .content("{\"impactAssessmentDone\":true}"))
                 .andExpect(status().isOk());
 
-        // 4. 防自审：creator 审自己 → 拒绝（§3.4）
+        // 4. 防自审：creator 审自己 → 拒绝（§3.4；审批人身份取 JWT）
         mvc.perform(post("/api/approvals/{id}/decide", ticketId)
+                        .header("Authorization", "Bearer " + adminToken)
                         .contentType(APPLICATION_JSON)
-                        .content("{\"approverId\":100,\"approve\":true,\"comment\":\"自己批自己\"}"))
-                .andExpect(status().isBadRequest());
+                        .content("{\"approve\":true,\"comment\":\"自己批自己\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("SELF_APPROVAL_FORBIDDEN"));
 
-        // 5. 主管（200）审批通过 → 工单 approved
+        // 5. 非提交人主管（LEAD）审批通过 → 工单 approved
+        createLeadUser(adminToken, "lead_e2e");
+        String leadToken = login("lead_e2e", "lead12345");
         mvc.perform(post("/api/approvals/{id}/decide", ticketId)
+                        .header("Authorization", "Bearer " + leadToken)
                         .contentType(APPLICATION_JSON)
-                        .content("{\"approverId\":200,\"approve\":true,\"comment\":\"同意\"}"))
+                        .content("{\"approve\":true,\"comment\":\"同意\"}"))
                 .andExpect(status().isOk());
 
         mvc.perform(get("/api/tickets/{id}", ticketId))
@@ -155,5 +211,25 @@ class SubmissionFlowTest {
         String rest = body.substring(idx + 11);
         int end = rest.indexOf('}');
         return Long.parseLong(rest.substring(0, end).trim());
+    }
+
+    private String login(String username, String password) throws Exception {
+        MvcResult result = mvc.perform(post("/api/auth/login")
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"username\":\"" + username + "\",\"password\":\"" + password + "\"}"))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode node = mapper.readTree(result.getResponse().getContentAsString());
+        return node.get("token").asText();
+    }
+
+    /** 以 admin 身份创建一个 LEAD 角色用户（审批测试用）。 */
+    private void createLeadUser(String adminToken, String username) throws Exception {
+        mvc.perform(post("/api/users")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"username\":\"" + username + "\",\"displayName\":\"主管\","
+                                + "\"password\":\"lead12345\",\"roles\":[\"LEAD\"]}"))
+                .andExpect(status().isOk());
     }
 }

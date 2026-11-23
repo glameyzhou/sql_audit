@@ -1,7 +1,7 @@
 /**
  * 共享常量：状态 / 风险 / 回滚覆盖的中文与颜色映射（对齐后端枚举）。
  *
- * 后端存小写字符串（TicketStateMachine.dbValue），前端 key 用小写。
+ * 后端 DB 存小写存储码（Java 侧是 TicketStatus 枚举，存储码见其 getCode），前端 key 用小写。
  * el-tag type 只支持 primary/success/info/warning/danger。
  */
 
@@ -70,13 +70,6 @@ export function envMeta(env) {
   if (env === 'staging') return ENV.test
   return ENV[env] || { label: env || '-', type: 'info' }
 }
-
-/**
- * @deprecated 开发期当前用户占位，已由 session store 的 user 取代。
- * 登录/JWT 接入后请勿再引用此常量，改用 useSessionStore().user。
- * 审批决策的 approverId 仍用 200（模拟主管，真实审批人需后端角色解析）。
- */
-export const CURRENT_USER = { id: 100, name: '文曜', role: 'DEV' }
 
 /** 状态标签的兜底：未知状态显示原文 */
 export function statusMeta(status) {

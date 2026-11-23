@@ -1,5 +1,7 @@
 package com.sqlaudit.workflow;
 
+import com.sqlaudit.common.enums.ApprovalResult;
+
 /**
  * 一次审批决策的结果快照（{@link ApprovalFlowEngine#submitDecision} 返回值）。
  *

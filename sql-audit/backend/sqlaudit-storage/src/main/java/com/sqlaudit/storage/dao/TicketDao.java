@@ -1,7 +1,7 @@
 package com.sqlaudit.storage.dao;
 
+import com.sqlaudit.common.enums.TicketStatus;
 import com.sqlaudit.storage.model.Ticket;
-
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -16,7 +16,8 @@ import java.util.List;
  *   <li>{@code updateStatus} 为<strong>条件更新</strong>（{@code WHERE status = fromStatus}）：
  *       影响行数 0 说明状态已被并发修改或不存在——调用方（状态机）必须视为乐观并发冲突抛异常，
  *       不得静默忽略；</li>
- *   <li>{@code status} 为小写字符串（§3.2），与 {@link TicketUnitDao} 的状态列风格一致。</li>
+ *   <li>{@code status} 在 Java 侧为 {@link TicketStatus} 枚举，DB 中存其小写存储码（§3.2），
+ *       转换只在 DAO 边界做。</li>
  * </ul>
  */
 public interface TicketDao {
@@ -35,11 +36,17 @@ public interface TicketDao {
      *
      * @return 影响行数：1 成功；0 = 状态已变 / 工单不存在（并发冲突）
      */
-    int updateStatus(long id, String fromStatus, String toStatus, LocalDateTime changedAt);
+    int updateStatus(long id, TicketStatus fromStatus, TicketStatus toStatus, LocalDateTime changedAt);
 
     /** 按创建人查询（「我的工单」列表），created_at 倒序（最新在前）。 */
     List<Ticket> listByCreator(long creatorId);
 
     /** 按状态查询（reaper / 到期扫描用，如 status='approved' 的超时检测）。 */
-    List<Ticket> listByStatus(String status);
+    List<Ticket> listByStatus(TicketStatus status);
+
+    /** 标记是否需要执行前二次确认（createNodes 时写入，§3.4 CRITICAL 链）。 */
+    int markNeedsSecondConfirm(long id, boolean required);
+
+    /** 记录执行前二次确认人 / 时间（confirmExecution 时写入）。 */
+    int updateSecondConfirm(long id, Long confirmedBy, LocalDateTime confirmedAt);
 }

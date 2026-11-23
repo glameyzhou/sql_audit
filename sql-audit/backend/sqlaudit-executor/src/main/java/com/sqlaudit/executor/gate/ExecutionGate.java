@@ -1,5 +1,6 @@
 package com.sqlaudit.executor.gate;
 
+import com.sqlaudit.common.enums.GateCode;
 import com.sqlaudit.storage.model.TicketUnit;
 
 import java.time.Duration;
@@ -37,14 +38,14 @@ public class ExecutionGate {
         String currentFingerprint(long instanceId, String schema, String table);
     }
 
-    /** 门禁结果。 */
-    public record GateResult(boolean pass, String failedGate, String reason) {
+    /** 门禁结果：{@code failedGate} 为未通过的门禁（见 {@link GateCode}），通过时为 null。 */
+    public record GateResult(boolean pass, GateCode failedGate, String reason) {
 
         public static GateResult ok() {
             return new GateResult(true, null, null);
         }
 
-        public static GateResult fail(String gate, String reason) {
+        public static GateResult fail(GateCode gate, String reason) {
             return new GateResult(false, gate, reason);
         }
 
@@ -73,7 +74,7 @@ public class ExecutionGate {
                             LocalDateTime now) {
         // 门禁 1：审批时效（approved → 执行窗口最长 24h）
         if (approvedAt != null && approvedAt.plus(DEFAULT_APPROVAL_TTL).isBefore(now)) {
-            return GateResult.fail("APPROVAL_TTL",
+            return GateResult.fail(GateCode.APPROVAL_TTL,
                     "审批已超 " + DEFAULT_APPROVAL_TTL.toHours() + "h 有效期，需重新审批");
         }
 
@@ -82,14 +83,14 @@ public class ExecutionGate {
             String current = fingerprintProvider.currentFingerprint(
                     unit.getInstanceId(), unit.getSchemaName(), unit.getObjectName());
             if (current == null || !current.equals(unit.getDdlFingerprint())) {
-                return GateResult.fail("R_SCHEMA_DRIFT",
+                return GateResult.fail(GateCode.SCHEMA_DRIFT,
                         "表结构与审核时不一致（" + unit.getObjectName() + "），退回重审");
             }
         }
 
         // 门禁 3：回滚能力复核（主键/触发器/外键 CASCADE 变化 → 阻断）
         if (!rollbackStillAvailable) {
-            return GateResult.fail("R_ROLLBACK_UNAVAILABLE",
+            return GateResult.fail(GateCode.ROLLBACK_UNAVAILABLE,
                     "回滚能力较审核时降级，按策略阻断");
         }
 

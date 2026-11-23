@@ -1,5 +1,7 @@
 package com.sqlaudit.executor;
 
+import com.sqlaudit.common.enums.StatementType;
+import com.sqlaudit.common.enums.UnitStatus;
 import com.sqlaudit.executor.engine.UnitExecutionEngine;
 import com.sqlaudit.executor.gate.ExecutionGate;
 import com.sqlaudit.executor.gate.GateContext;
@@ -75,8 +77,8 @@ class UnitExecutionEngineTest {
         u.setUnitOrder(1);
         u.setStatement("UPDATE t SET a=1 WHERE id=1".getBytes());
         u.setStatementHash("hash");
-        u.setStatementType("UPDATE");
-        u.setStatus("pending");
+        u.setStatementType(StatementType.UPDATE);
+        u.setStatus(UnitStatus.PENDING);
         u.setIntentWritten(false);
         u.setDdlFingerprint(ddlFingerprint);
         return unitDao.insert(u);
@@ -94,7 +96,7 @@ class UnitExecutionEngineTest {
 
         assertEquals(UnitExecutionEngine.EngineResult.Status.SUCCESS, r.status());
         assertEquals(1, r.affectedRows());
-        assertEquals("success", unitDao.findById(id).getStatus());
+        assertEquals(UnitStatus.SUCCESS, unitDao.findById(id).getStatus());
         assertEquals(Boolean.TRUE, unitDao.findById(id).getIntentWritten());
         assertEquals(1, gatewayCalls.get());
     }
@@ -124,7 +126,7 @@ class UnitExecutionEngineTest {
 
         assertEquals(UnitExecutionEngine.EngineResult.Status.NOT_CLAIMED, r.status());
         assertEquals(0, gatewayCalls.get());
-        assertEquals("leased", unitDao.findById(id).getStatus());
+        assertEquals(UnitStatus.LEASED, unitDao.findById(id).getStatus());
     }
 
     // ---------------- 执行锁 ----------------
@@ -146,7 +148,7 @@ class UnitExecutionEngineTest {
         UnitExecutionEngine.EngineResult r = engine.execute(unitDao.findById(id), WORKER, NOW);
 
         assertEquals(UnitExecutionEngine.EngineResult.Status.LOCK_BUSY, r.status());
-        assertEquals("pending", unitDao.findById(id).getStatus(), "释放租约退回 pending");
+        assertEquals(UnitStatus.PENDING, unitDao.findById(id).getStatus(), "释放租约退回 pending");
         assertEquals(0, gatewayCalls.get());
     }
 
@@ -161,7 +163,7 @@ class UnitExecutionEngineTest {
         UnitExecutionEngine.EngineResult r = engine.execute(unitDao.findById(id), WORKER, NOW);
 
         assertEquals(UnitExecutionEngine.EngineResult.Status.NEEDS_CONFIRM, r.status());
-        assertEquals("needs_confirm", unitDao.findById(id).getStatus());
+        assertEquals(UnitStatus.NEEDS_CONFIRM, unitDao.findById(id).getStatus());
 
         // needs_confirm 后重试：claimUnit 硬条件拦住（DAO 语义），绝不自动重跑
         UnitExecutionEngine.EngineResult retry =
@@ -178,7 +180,7 @@ class UnitExecutionEngineTest {
         UnitExecutionEngine.EngineResult r = engine.execute(unitDao.findById(id), WORKER, NOW);
 
         assertEquals(UnitExecutionEngine.EngineResult.Status.FAILED, r.status());
-        assertEquals("failed", unitDao.findById(id).getStatus());
+        assertEquals(UnitStatus.FAILED, unitDao.findById(id).getStatus());
         assertTrue(unitDao.findById(id).getErrorMessage().contains("syntax error"));
     }
 
@@ -199,7 +201,7 @@ class UnitExecutionEngineTest {
         UnitExecutionEngine.EngineResult r = engine.execute(unitDao.findById(id), WORKER, NOW);
 
         assertEquals(UnitExecutionEngine.EngineResult.Status.NEEDS_CONFIRM, r.status());
-        assertEquals("needs_confirm", unitDao.findById(id).getStatus());
+        assertEquals(UnitStatus.NEEDS_CONFIRM, unitDao.findById(id).getStatus());
     }
 
     @Test
@@ -239,7 +241,7 @@ class UnitExecutionEngineTest {
         assertTrue(r.message().contains("R_SCHEMA_DRIFT"));
         assertEquals(0, gatewayCalls.get(), "门禁不过绝不连生产库");
         TicketUnit after = unitDao.findById(id);
-        assertEquals("failed", after.getStatus());
+        assertEquals(UnitStatus.FAILED, after.getStatus());
         assertTrue(after.getErrorMessage().contains("R_SCHEMA_DRIFT"));
     }
 
@@ -279,7 +281,7 @@ class UnitExecutionEngineTest {
         assertTrue(r.message().contains("APPROVAL_TTL"));
         assertEquals(1, gateFailures.get(), "TTL 超时的补偿动作（置 expired 等）必须被调用");
         assertEquals(0, gatewayCalls.get());
-        assertEquals("failed", unitDao.findById(id).getStatus());
+        assertEquals(UnitStatus.FAILED, unitDao.findById(id).getStatus());
     }
 
     @Test
@@ -301,7 +303,7 @@ class UnitExecutionEngineTest {
 
         assertEquals(UnitExecutionEngine.EngineResult.Status.SUCCESS, r.status());
         assertEquals(1, r.affectedRows());
-        assertEquals("success", unitDao.findById(id).getStatus());
+        assertEquals(UnitStatus.SUCCESS, unitDao.findById(id).getStatus());
         assertEquals(1, gatewayCalls.get());
     }
 }

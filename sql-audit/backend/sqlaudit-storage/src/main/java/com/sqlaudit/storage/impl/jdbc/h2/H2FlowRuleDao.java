@@ -1,17 +1,19 @@
 package com.sqlaudit.storage.impl.jdbc.h2;
 
+import com.sqlaudit.common.enums.CodedEnum;
+import com.sqlaudit.common.enums.Environment;
+import com.sqlaudit.common.enums.RiskLevel;
 import com.sqlaudit.storage.dao.FlowRuleDao;
 import com.sqlaudit.storage.model.FlowRule;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
-import org.springframework.jdbc.support.GeneratedKeyHolder;
-import org.springframework.jdbc.support.KeyHolder;
-
 import java.sql.PreparedStatement;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.LocalDateTime;
 import java.util.List;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
 
 /**
  * flow_rule 的 H2 真实现（DDL §5 t_flow_rule 表；内存版语义基准
@@ -32,10 +34,10 @@ public class H2FlowRuleDao implements FlowRuleDao {
         FlowRule f = new FlowRule();
         f.setId(rs.getLong("id"));
         f.setName(rs.getString("name"));
-        f.setEnvironment(rs.getString("environment"));
+        f.setEnvironment(Environment.fromCode(rs.getString("environment")));
         long instanceId = rs.getLong("instance_id");
         f.setInstanceId(rs.wasNull() ? null : instanceId);
-        f.setRiskLevel(rs.getString("risk_level"));
+        f.setRiskLevel(RiskLevel.fromCode(rs.getString("risk_level")));
         f.setNonOverridable(rs.getBoolean("non_overridable"));
         int priority = rs.getInt("priority");
         f.setPriority(rs.wasNull() ? null : priority);
@@ -70,9 +72,9 @@ public class H2FlowRuleDao implements FlowRuleDao {
                             + "VALUES (?,?,?,?,?,?,?,?,?,?)",
                     new String[]{"id"});
             ps.setString(1, flowRule.getName());
-            ps.setString(2, flowRule.getEnvironment());
+            ps.setString(2, CodedEnum.code(flowRule.getEnvironment()));
             setNullableLong(ps, 3, flowRule.getInstanceId());
-            ps.setString(4, flowRule.getRiskLevel());
+            ps.setString(4, CodedEnum.code(flowRule.getRiskLevel()));
             ps.setBoolean(5, flowRule.getNonOverridable() != null && flowRule.getNonOverridable());
             ps.setInt(6, flowRule.getPriority() != null ? flowRule.getPriority() : 0);
             ps.setBoolean(7, flowRule.getEnabled() == null || flowRule.getEnabled());
@@ -94,9 +96,9 @@ public class H2FlowRuleDao implements FlowRuleDao {
                 "UPDATE t_flow_rule SET name=?, environment=?, instance_id=?, risk_level=?, "
                         + "non_overridable=?, priority=?, enabled=?, updated_at=? WHERE id=?",
                 flowRule.getName(),
-                flowRule.getEnvironment(),
+                CodedEnum.code(flowRule.getEnvironment()),
                 flowRule.getInstanceId(),
-                flowRule.getRiskLevel(),
+                CodedEnum.code(flowRule.getRiskLevel()),
                 flowRule.getNonOverridable() != null && flowRule.getNonOverridable(),
                 flowRule.getPriority() != null ? flowRule.getPriority() : 0,
                 flowRule.getEnabled() == null || flowRule.getEnabled(),

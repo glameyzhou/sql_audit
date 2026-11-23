@@ -11,7 +11,7 @@
       </div>
       <!-- 导航（分组 + 图标 + 激活态，对齐原型 .nav） -->
       <nav class="nav">
-        <template v-for="group in navGroups" :key="group.label">
+        <template v-for="group in menuGroups" :key="group.label">
           <div v-if="!collapsed" class="nav-group">{{ group.label }}</div>
           <router-link
             v-for="item in group.items"
@@ -80,7 +80,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Fold, Expand, Odometer, Plus, Document, Checked, Monitor, RefreshLeft, Search, List, Setting, ArrowDown } from '@element-plus/icons-vue'
+import { Fold, Expand, Odometer, Plus, Document, Checked, Monitor, RefreshLeft, Search, List, Operation, Connection, Coin, User, Avatar, Lock, ArrowDown } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { useSessionStore } from '../stores/session'
 import { ROLE_LABELS, ENV } from '../constants'
@@ -102,8 +102,13 @@ const navGroups = [
     { path: '/query', title: '线上查询', icon: Search },
     { path: '/audit', title: '审计日志', icon: List }
   ]},
-  { label: '系统', items: [
-    { path: '/settings', title: '系统配置', icon: Setting }
+  { label: '配置', items: [
+    { path: '/rules', title: '规则配置', icon: Operation },
+    { path: '/flows', title: '审批流配置', icon: Connection },
+    { path: '/instances', title: '实例管理', icon: Coin },
+    { path: '/users', title: '用户管理', icon: User, adminOnly: true },
+    { path: '/roles', title: '角色管理', icon: Avatar, adminOnly: true },
+    { path: '/permissions', title: '权限配置', icon: Lock, adminOnly: true }
   ]}
 ]
 
@@ -111,6 +116,14 @@ const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
 const collapsed = ref(false)
+
+// 按角色过滤菜单：adminOnly 项仅管理员可见（后端仍以 @RequireRole 兜底）
+const menuGroups = computed(() =>
+  navGroups.map((g) => ({
+    ...g,
+    items: g.items.filter((it) => !it.adminOnly || session.roles.includes('ADMIN'))
+  }))
+)
 
 // 真实角色（后端 user.roles 数组 → 中文），多角色以顿号连接
 const roleLabel = computed(

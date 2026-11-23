@@ -1,9 +1,11 @@
 package com.sqlaudit.rule.risk;
 
+import com.sqlaudit.common.enums.RuleCode;
 import com.sqlaudit.common.enums.RuleSeverity;
 import com.sqlaudit.common.enums.StatementType;
 import com.sqlaudit.common.model.RuleHit;
 
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
 
@@ -25,11 +27,11 @@ import java.util.Set;
 public final class RiskAssessor {
 
     /** 直接定级 CRITICAL 的规则码（§4.5：不可回滚与解析失败是硬底线）。 */
-    public static final Set<String> CRITICAL_CODES = Set.of(
-            "R_DDL_DESTRUCTIVE",
-            "R_ROLLBACK_UNAVAILABLE",
-            "R_PREIMAGE_TOO_LARGE",
-            "R_PARSE_FAILED");
+    public static final Set<RuleCode> CRITICAL_CODES = EnumSet.of(
+            RuleCode.R_DDL_DESTRUCTIVE,
+            RuleCode.R_ROLLBACK_UNAVAILABLE,
+            RuleCode.R_PREIMAGE_TOO_LARGE,
+            RuleCode.R_PARSE_FAILED);
 
     private RiskAssessor() {
     }

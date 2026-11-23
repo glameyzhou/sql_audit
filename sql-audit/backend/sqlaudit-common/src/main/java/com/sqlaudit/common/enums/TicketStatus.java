@@ -1,5 +1,8 @@
 package com.sqlaudit.common.enums;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonValue;
+
 import java.util.Set;
 
 /**
@@ -19,22 +22,43 @@ import java.util.Set;
  * </ul>
  *
  * <p>非法迁移必须由调用方（sqlaudit-workflow）抛异常，不得静默忽略（§B-3 验收）。</p>
+ *
+ * <p>存储码为小写（{@code t_ticket.status}，§3.2），见 {@link CodedEnum}。</p>
  */
-public enum TicketStatus {
-    DRAFT,
-    SUBMITTED,
-    AUDITING,
-    APPROVED,
-    REJECTED,
-    SCHEDULED,
-    EXECUTING,
-    SUCCEEDED,
-    PARTIALLY_SUCCEEDED,
-    FAILED,
-    NEEDS_CONFIRM,
-    CLOSED,
-    CANCELLED,
-    EXPIRED;
+public enum TicketStatus implements CodedEnum {
+    DRAFT("draft"),
+    SUBMITTED("submitted"),
+    AUDITING("auditing"),
+    APPROVED("approved"),
+    REJECTED("rejected"),
+    SCHEDULED("scheduled"),
+    EXECUTING("executing"),
+    SUCCEEDED("succeeded"),
+    PARTIALLY_SUCCEEDED("partially_succeeded"),
+    FAILED("failed"),
+    NEEDS_CONFIRM("needs_confirm"),
+    CLOSED("closed"),
+    CANCELLED("cancelled"),
+    EXPIRED("expired");
+
+    private final String code;
+
+    TicketStatus(String code) {
+        this.code = code;
+    }
+
+    /** DB / JSON 存储码（小写）。 */
+    @Override
+    @JsonValue
+    public String getCode() {
+        return code;
+    }
+
+    /** 存储码 → 枚举（大小写不敏感；null 透传；未知取值抛 IllegalArgumentException）。 */
+    @JsonCreator
+    public static TicketStatus fromCode(String code) {
+        return CodedEnum.fromCode(TicketStatus.class, code);
+    }
 
     /** 是否允许从当前状态迁移到 {@code target}。 */
     public boolean canTransitionTo(TicketStatus target) {

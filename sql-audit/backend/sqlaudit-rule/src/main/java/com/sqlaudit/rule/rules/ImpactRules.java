@@ -1,5 +1,6 @@
 package com.sqlaudit.rule.rules;
 
+import com.sqlaudit.common.enums.RuleCode;
 import com.sqlaudit.rule.BuiltInRules;
 import com.sqlaudit.rule.ImpactEstimate;
 import com.sqlaudit.rule.Rule;
@@ -24,7 +25,7 @@ public final class ImpactRules {
     private ImpactRules() {
     }
 
-    private static RuleDefinition def(String code) {
+    private static RuleDefinition def(RuleCode code) {
         return BuiltInRules.byCode(code);
     }
 
@@ -33,7 +34,7 @@ public final class ImpactRules {
         return new Rule() {
             @Override
             public RuleDefinition definition() {
-                return def("R_AFFECT_TOO_MANY");
+                return def(RuleCode.R_AFFECT_TOO_MANY);
             }
 
             @Override
@@ -57,7 +58,7 @@ public final class ImpactRules {
         return new Rule() {
             @Override
             public RuleDefinition definition() {
-                return def("R_LOW_PEAK_WINDOW");
+                return def(RuleCode.R_LOW_PEAK_WINDOW);
             }
 
             @Override
@@ -81,7 +82,7 @@ public final class ImpactRules {
         return new Rule() {
             @Override
             public RuleDefinition definition() {
-                return def("R_PREIMAGE_TOO_LARGE");
+                return def(RuleCode.R_PREIMAGE_TOO_LARGE);
             }
 
             @Override

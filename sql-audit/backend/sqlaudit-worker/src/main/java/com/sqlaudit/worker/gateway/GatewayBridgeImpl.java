@@ -110,7 +110,7 @@ public class GatewayBridgeImpl implements com.sqlaudit.executor.engine.UnitExecu
         String hint = unit.getDialectSpecific();
         if (hint != null) {
             try {
-                return Dialect.valueOf(hint.toUpperCase());
+                return Dialect.fromCode(hint);
             } catch (IllegalArgumentException ignore) {
                 // 落到默认 MYSQL
             }

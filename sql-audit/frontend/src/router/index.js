@@ -19,7 +19,12 @@ const routes = [
       { path: 'rollback', name: 'rollback', component: () => import('../views/rollback/RollbackCenter.vue'), meta: { title: '回滚管理', icon: 'RefreshLeft' } },
       { path: 'query', name: 'query', component: () => import('../views/query/QueryConsole.vue'), meta: { title: '线上查询', icon: 'Search' } },
       { path: 'audit', name: 'audit', component: () => import('../views/audit/AuditLog.vue'), meta: { title: '审计日志', icon: 'Document' } },
-      { path: 'settings', name: 'settings', component: () => import('../views/settings/Settings.vue'), meta: { title: '系统配置', icon: 'Setting' } }
+      { path: 'rules', name: 'rules', component: () => import('../views/config/RuleConfig.vue'), meta: { title: '规则配置', icon: 'Operation' } },
+      { path: 'flows', name: 'flows', component: () => import('../views/config/FlowConfig.vue'), meta: { title: '审批流配置', icon: 'Connection' } },
+      { path: 'instances', name: 'instances', component: () => import('../views/config/InstanceManage.vue'), meta: { title: '实例管理', icon: 'Coin' } },
+      { path: 'users', name: 'users', component: () => import('../views/admin/UserManage.vue'), meta: { title: '用户管理', icon: 'User' } },
+      { path: 'roles', name: 'roles', component: () => import('../views/admin/RoleManage.vue'), meta: { title: '角色管理', icon: 'Avatar' } },
+      { path: 'permissions', name: 'permissions', component: () => import('../views/admin/PermissionConfig.vue'), meta: { title: '权限配置', icon: 'Lock' } }
     ]
   }
 ]

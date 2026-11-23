@@ -8,6 +8,7 @@ import com.sqlaudit.common.model.RuleHit;
 import com.sqlaudit.rule.ImpactEstimate;
 import com.sqlaudit.rule.ImpactEstimator;
 import com.sqlaudit.rule.Rule;
+import com.sqlaudit.rule.RuleConfig;
 import com.sqlaudit.rule.RuleContext;
 import com.sqlaudit.rule.TableMetadataProvider;
 import com.sqlaudit.rule.rules.AstDdlRules;
@@ -46,10 +47,16 @@ import java.util.Map;
 public class RuleEngine {
 
     private final TableMetadataProvider metadata;
+    private final RuleConfig config;
     private final List<Rule> syncRules;
 
     public RuleEngine(TableMetadataProvider metadata) {
+        this(metadata, RuleConfig.DEFAULT);
+    }
+
+    public RuleEngine(TableMetadataProvider metadata, RuleConfig config) {
         this.metadata = metadata;
+        this.config = config == null ? RuleConfig.DEFAULT : config;
         this.syncRules = buildSyncRules();
     }
 
@@ -77,11 +84,14 @@ public class RuleEngine {
             List<RuleHit> hits = new ArrayList<>();
             RuleContext ctx = new RuleContext(unit, metadata, null, ticketUnits);
             for (Rule rule : syncRules) {
-                if (!rule.definition().matchesDialect(unit.getDialect())
+                if (!config.isEnabled(rule.definition().code())
+                        || !rule.definition().matchesDialect(unit.getDialect())
                         || !rule.definition().matchesStatementType(unit.getStatementType())) {
                     continue;
                 }
-                hits.addAll(rule.check(ctx));
+                List<RuleHit> ruleHits = rule.check(ctx);
+                applySeverityOverride(rule, ruleHits);
+                hits.addAll(ruleHits);
             }
             unitHits.put(i, List.copyOf(hits));
             for (RuleHit h : hits) {
@@ -112,11 +122,14 @@ public class RuleEngine {
         RuleContext ctx = new RuleContext(unit, metadata, estimate, ticketUnits);
         List<RuleHit> hits = new ArrayList<>();
         for (Rule rule : ImpactRules.all()) {
-            if (!rule.definition().matchesDialect(unit.getDialect())
+            if (!config.isEnabled(rule.definition().code())
+                    || !rule.definition().matchesDialect(unit.getDialect())
                     || !rule.definition().matchesStatementType(unit.getStatementType())) {
                 continue;
             }
-            hits.addAll(rule.check(ctx));
+            List<RuleHit> ruleHits = rule.check(ctx);
+            applySeverityOverride(rule, ruleHits);
+            hits.addAll(ruleHits);
         }
         return hits;
     }
@@ -134,5 +147,19 @@ public class RuleEngine {
     /** 引擎加载的同步规则数（观测用）。 */
     public int syncRuleCount() {
         return syncRules.size();
+    }
+
+    /** 级别覆盖：nonOverridable 规则不可降级（§4.5）。 */
+    private void applySeverityOverride(Rule rule, List<RuleHit> ruleHits) {
+        if (rule.definition().nonOverridable()) {
+            return;
+        }
+        RuleSeverity override = config.severityOverride(rule.definition().code());
+        if (override == null) {
+            return;
+        }
+        for (RuleHit h : ruleHits) {
+            h.setSeverity(override);
+        }
     }
 }

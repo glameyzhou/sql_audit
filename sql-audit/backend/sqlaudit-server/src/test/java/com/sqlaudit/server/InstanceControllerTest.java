@@ -103,6 +103,17 @@ class InstanceControllerTest {
     }
 
     @Test
+    void columns_instanceMissing_400() throws Exception {
+        String token = login("dev", "dev12345");
+        // 实例不存在 → resolveMeta 先抛 INSTANCE_NOT_FOUND，不触碰真实库
+        mvc.perform(get("/api/instances/99999999/databases/db1/columns")
+                        .param("table", "t_user")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INSTANCE_NOT_FOUND"));
+    }
+
+    @Test
     void createInstance_withoutOwnerId_ownerIsCurrentUser() throws Exception {
         String token = login("admin", "admin12345");
         long id = createInstance(token, uniqueName("inst"), false);

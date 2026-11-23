@@ -1,10 +1,10 @@
 package com.sqlaudit.storage.impl.jdbc.postgresql;
 
+import com.sqlaudit.common.enums.CodedEnum;
+import com.sqlaudit.common.enums.StatementType;
+import com.sqlaudit.common.enums.UnitStatus;
 import com.sqlaudit.storage.dao.TicketUnitDao;
 import com.sqlaudit.storage.model.TicketUnit;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
-
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -12,6 +12,8 @@ import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.LocalDateTime;
 import java.util.List;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
 
 /**
  * ticket_unit 的 PostgreSQL 真实现（设计文档 §3.3 协议 SQL 逐条对应，SQL 逐句对照
@@ -61,9 +63,9 @@ public class PostgresTicketUnitDao implements TicketUnitDao {
         u.setUnitOrder(rs.getInt("unit_order"));
         u.setStatement(rs.getBytes("statement"));
         u.setStatementHash(rs.getString("statement_hash"));
-        u.setStatementType(rs.getString("statement_type"));
+        u.setStatementType(StatementType.fromCode(rs.getString("statement_type")));
         u.setDialectSpecific(rs.getString("dialect_specific"));
-        u.setStatus(rs.getString("status"));
+        u.setStatus(UnitStatus.fromCode(rs.getString("status")));
         u.setLeaseOwner(rs.getString("lease_owner"));
         Timestamp leaseUntil = rs.getTimestamp("lease_until");
         u.setLeaseUntil(leaseUntil == null ? null : leaseUntil.toLocalDateTime());
@@ -91,11 +93,11 @@ public class PostgresTicketUnitDao implements TicketUnitDao {
         // §3.3 抢占：硬条件 intent_written=false + pending（无主）或租约过期（可重抢，
         // 原租约人崩溃后 lease_owner 仍在——过期即失权，与内存版语义一致）
         return jdbc.update(
-                "UPDATE " + tableName + " SET status='leased', lease_owner=?, lease_until=?, heartbeat_at=? "
+                "UPDATE " + tableName + " SET status=?, lease_owner=?, lease_until=?, heartbeat_at=? "
                         + "WHERE id=? AND intent_written=FALSE "
-                        + "AND (status='pending' OR (status='leased' AND lease_until < ?))",
-                leaseOwner, Timestamp.valueOf(leaseUntil), Timestamp.valueOf(heartbeatAt),
-                id, Timestamp.valueOf(heartbeatAt));
+                        + "AND (status=? OR (status=? AND lease_until < ?))",
+                UnitStatus.LEASED.getCode(), leaseOwner, Timestamp.valueOf(leaseUntil), Timestamp.valueOf(heartbeatAt),
+                id, UnitStatus.PENDING.getCode(), UnitStatus.LEASED.getCode(), Timestamp.valueOf(heartbeatAt));
     }
 
     @Override
@@ -103,37 +105,37 @@ public class PostgresTicketUnitDao implements TicketUnitDao {
         // §3.3 预写 intent：事务提交后才连生产库；条件=status='leased' 且被本线程持有租约上下文
         // （lease 校验由引擎的执行锁保证时序，此处按协议只做状态条件）
         return jdbc.update(
-                "UPDATE " + tableName + " SET status='executing', intent_written=TRUE, heartbeat_at=? "
-                        + "WHERE id=? AND status='leased' AND intent_written=FALSE",
-                Timestamp.valueOf(now), id);
+                "UPDATE " + tableName + " SET status=?, intent_written=TRUE, heartbeat_at=? "
+                        + "WHERE id=? AND status=? AND intent_written=FALSE",
+                UnitStatus.EXECUTING.getCode(), Timestamp.valueOf(now), id, UnitStatus.LEASED.getCode());
     }
 
     @Override
     public int confirmSuccess(long id, long affectedRows, LocalDateTime executedAt) {
         // §3.3 幂等确认：条件 UPDATE 不靠唯一约束；executed_at 已非空 → 0（已确认过，返回成功即可）
         return jdbc.update(
-                "UPDATE " + tableName + " SET status='success', affected_rows=?, executed_at=?, "
+                "UPDATE " + tableName + " SET status=?, affected_rows=?, executed_at=?, "
                         + "lease_owner=NULL, lease_until=NULL, heartbeat_at=NULL "
-                        + "WHERE id=? AND status='executing' AND executed_at IS NULL",
-                affectedRows, Timestamp.valueOf(executedAt), id);
+                        + "WHERE id=? AND status=? AND executed_at IS NULL",
+                UnitStatus.SUCCESS.getCode(), affectedRows, Timestamp.valueOf(executedAt), id, UnitStatus.EXECUTING.getCode());
     }
 
     @Override
     public int confirmFailed(long id, String errorMessage, LocalDateTime executedAt) {
         return jdbc.update(
-                "UPDATE " + tableName + " SET status='failed', error_message=?, executed_at=?, "
+                "UPDATE " + tableName + " SET status=?, error_message=?, executed_at=?, "
                         + "lease_owner=NULL, lease_until=NULL, heartbeat_at=NULL "
-                        + "WHERE id=? AND status='executing'",
-                errorMessage, Timestamp.valueOf(executedAt), id);
+                        + "WHERE id=? AND status=?",
+                UnitStatus.FAILED.getCode(), errorMessage, Timestamp.valueOf(executedAt), id, UnitStatus.EXECUTING.getCode());
     }
 
     @Override
     public int markNeedsConfirm(long id, String reason) {
         return jdbc.update(
-                "UPDATE " + tableName + " SET status='needs_confirm', error_message=?, "
+                "UPDATE " + tableName + " SET status=?, error_message=?, "
                         + "lease_owner=NULL, lease_until=NULL, heartbeat_at=NULL "
-                        + "WHERE id=? AND status IN ('executing','leased')",
-                reason, id);
+                        + "WHERE id=? AND status IN (?, ?)",
+                UnitStatus.NEEDS_CONFIRM.getCode(), reason, id, UnitStatus.EXECUTING.getCode(), UnitStatus.LEASED.getCode());
     }
 
     @Override
@@ -147,27 +149,27 @@ public class PostgresTicketUnitDao implements TicketUnitDao {
     @Override
     public int releaseLeaseToPending(long id) {
         return jdbc.update(
-                "UPDATE " + tableName + " SET status='pending', lease_owner=NULL, lease_until=NULL, heartbeat_at=NULL "
-                        + "WHERE id=? AND status='leased' AND intent_written=FALSE",
-                id);
+                "UPDATE " + tableName + " SET status=?, lease_owner=NULL, lease_until=NULL, heartbeat_at=NULL "
+                        + "WHERE id=? AND status=? AND intent_written=FALSE",
+                UnitStatus.PENDING.getCode(), id, UnitStatus.LEASED.getCode());
     }
 
     @Override
     public int reclaimExpiredLease(LocalDateTime now) {
         // reaper 安全回收：未预写 intent 的过期租约回 pending
         return jdbc.update(
-                "UPDATE " + tableName + " SET status='pending', lease_owner=NULL, lease_until=NULL, heartbeat_at=NULL "
+                "UPDATE " + tableName + " SET status=?, lease_owner=NULL, lease_until=NULL, heartbeat_at=NULL "
                         + "WHERE intent_written=FALSE AND lease_until < ? "
-                        + "AND status IN ('pending','leased')",
-                Timestamp.valueOf(now));
+                        + "AND status IN (?, ?)",
+                UnitStatus.PENDING.getCode(), Timestamp.valueOf(now), UnitStatus.PENDING.getCode(), UnitStatus.LEASED.getCode());
     }
 
     @Override
     public List<TicketUnit> listExecutingWithStaleHeartbeat(LocalDateTime heartbeatThreshold) {
         return jdbc.query(
-                "SELECT * FROM " + tableName + " WHERE status='executing' AND heartbeat_at < ? AND executed_at IS NULL "
+                "SELECT * FROM " + tableName + " WHERE status=? AND heartbeat_at < ? AND executed_at IS NULL "
                         + "ORDER BY id",
-                MAPPER, Timestamp.valueOf(heartbeatThreshold));
+                MAPPER, UnitStatus.EXECUTING.getCode(), Timestamp.valueOf(heartbeatThreshold));
     }
 
     @Override
@@ -188,17 +190,17 @@ public class PostgresTicketUnitDao implements TicketUnitDao {
     public List<TicketUnit> listClaimable(LocalDateTime now, int limit) {
         return jdbc.query(
                 "SELECT * FROM " + tableName + " WHERE intent_written=FALSE "
-                        + "AND (status='pending' OR (status='leased' AND lease_until < ?)) "
+                        + "AND (status=? OR (status=? AND lease_until < ?)) "
                         + "ORDER BY ticket_id, unit_order LIMIT ?",
-                MAPPER, Timestamp.valueOf(now), limit);
+                MAPPER, UnitStatus.PENDING.getCode(), UnitStatus.LEASED.getCode(), Timestamp.valueOf(now), limit);
     }
 
     @Override
     public int renewLease(long id, String leaseOwner, LocalDateTime leaseUntil, LocalDateTime heartbeatAt) {
         return jdbc.update(
                 "UPDATE " + tableName + " SET lease_until=?, heartbeat_at=? "
-                        + "WHERE id=? AND status='executing' AND lease_owner=?",
-                Timestamp.valueOf(leaseUntil), Timestamp.valueOf(heartbeatAt), id, leaseOwner);
+                        + "WHERE id=? AND status=? AND lease_owner=?",
+                Timestamp.valueOf(leaseUntil), Timestamp.valueOf(heartbeatAt), id, UnitStatus.EXECUTING.getCode(), leaseOwner);
     }
 
     /** 插入（测试与 workflow 建单用；自增 id 回填）。 */
@@ -210,10 +212,10 @@ public class PostgresTicketUnitDao implements TicketUnitDao {
     }
 
     @Override
-    public List<TicketUnit> listByStatus(String status) {
+    public List<TicketUnit> listByStatus(UnitStatus status) {
         return jdbc.query(
                 "SELECT * FROM " + tableName + " WHERE status=? ORDER BY id",
-                MAPPER, status);
+                MAPPER, CodedEnum.code(status));
     }
 
     public long insert(TicketUnit unit) {
@@ -230,10 +232,10 @@ public class PostgresTicketUnitDao implements TicketUnitDao {
             ps.setObject(5, unit.getUnitOrder());
             ps.setBytes(6, unit.getStatement());
             ps.setString(7, unit.getStatementHash());
-            ps.setString(8, unit.getStatementType());
+            ps.setString(8, CodedEnum.code(unit.getStatementType()));
             // JSONB 列：dialect_specific 原样透传（可 null），Types.OTHER 让驱动识别为 jsonb
             ps.setObject(9, unit.getDialectSpecific(), Types.OTHER);
-            ps.setString(10, unit.getStatus() == null ? "pending" : unit.getStatus());
+            ps.setString(10, unit.getStatus() == null ? UnitStatus.PENDING.getCode() : unit.getStatus().getCode());
             ps.setBoolean(11, Boolean.TRUE.equals(unit.getIntentWritten()));
             ps.setString(12, unit.getDdlFingerprint());
             ps.setString(13, unit.getExecFingerprint());
@@ -251,9 +253,9 @@ public class PostgresTicketUnitDao implements TicketUnitDao {
     }
 
     /** 按状态计数（观测/测试用）。 */
-    public int countByStatus(String status) {
+    public int countByStatus(UnitStatus status) {
         Integer count = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM " + tableName + " WHERE status=?", Integer.class, status);
+                "SELECT COUNT(*) FROM " + tableName + " WHERE status=?", Integer.class, CodedEnum.code(status));
         return count == null ? 0 : count;
     }
 }

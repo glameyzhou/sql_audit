@@ -1,16 +1,19 @@
 package com.sqlaudit.storage.impl.jdbc.postgresql;
 
+import com.sqlaudit.common.enums.CodedEnum;
+import com.sqlaudit.common.enums.RollbackCoverage;
+import com.sqlaudit.common.enums.RollbackGenerator;
+import com.sqlaudit.common.enums.RollbackStatus;
 import com.sqlaudit.storage.dao.RollbackDao;
 import com.sqlaudit.storage.model.RollbackSql;
 import com.sqlaudit.storage.model.RollbackStatement;
-import org.springframework.dao.DuplicateKeyException;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
-
 import java.sql.ResultSet;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
 
 /**
  * rollback_sql / rollback_statement 的 PostgreSQL 真实现
@@ -48,9 +51,9 @@ public class PostgresRollbackDao implements RollbackDao {
         r.setUnitId(rs.getLong("unit_id"));
         r.setStmtCount(rs.getInt("stmt_count"));
         r.setTotalBytes(rs.getLong("total_bytes"));
-        r.setGenerator(rs.getString("generator"));
-        r.setStatus(rs.getString("status"));
-        r.setCoverage(rs.getString("coverage"));
+        r.setGenerator(RollbackGenerator.fromCode(rs.getString("generator")));
+        r.setStatus(RollbackStatus.fromCode(rs.getString("status")));
+        r.setCoverage(RollbackCoverage.fromCode(rs.getString("coverage")));
         r.setUnavailableReason(rs.getString("unavailable_reason"));
         r.setPreimageHash(rs.getString("preimage_hash"));
         r.setBinlogStart(rs.getString("binlog_start"));
@@ -88,9 +91,9 @@ public class PostgresRollbackDao implements RollbackDao {
                     // null 按 DDL DEFAULT 0 写入（内存版存 null，DDL 为 NOT NULL DEFAULT 0）
                     rollbackSql.getStmtCount() == null ? 0 : rollbackSql.getStmtCount(),
                     rollbackSql.getTotalBytes() == null ? 0L : rollbackSql.getTotalBytes(),
-                    rollbackSql.getGenerator(),
-                    rollbackSql.getStatus(),
-                    rollbackSql.getCoverage(),
+                    CodedEnum.code(rollbackSql.getGenerator()),
+                    CodedEnum.code(rollbackSql.getStatus()),
+                    CodedEnum.code(rollbackSql.getCoverage()),
                     rollbackSql.getUnavailableReason(),
                     rollbackSql.getPreimageHash(),
                     rollbackSql.getBinlogStart(),
@@ -142,11 +145,11 @@ public class PostgresRollbackDao implements RollbackDao {
     }
 
     @Override
-    public int updateStatus(long id, String status, String unavailableReason) {
+    public int updateStatus(long id, RollbackStatus status, String unavailableReason) {
         // 无条件更新（内存版同款，无 fromStatus 条件）；unavailable_reason 允许写 null
         return jdbc.update(
                 "UPDATE t_rollback_sql SET status=?, unavailable_reason=? WHERE id=?",
-                status, unavailableReason, id);
+                CodedEnum.code(status), unavailableReason, id);
     }
 
     @Override

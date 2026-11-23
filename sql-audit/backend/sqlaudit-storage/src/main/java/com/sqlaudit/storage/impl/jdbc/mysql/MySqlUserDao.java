@@ -1,17 +1,19 @@
 package com.sqlaudit.storage.impl.jdbc.mysql;
 
+import com.sqlaudit.common.enums.CodedEnum;
+import com.sqlaudit.common.enums.UserSource;
+import com.sqlaudit.common.enums.UserStatus;
 import com.sqlaudit.storage.dao.UserDao;
 import com.sqlaudit.storage.model.User;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
-import org.springframework.jdbc.support.GeneratedKeyHolder;
-import org.springframework.jdbc.support.KeyHolder;
-
 import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
 
 /**
  * user 的 MySQL 真实现（DDL §8 t_user 表；内存版语义基准 {@code InMemoryUserDao}）。
@@ -34,11 +36,11 @@ public class MySqlUserDao implements UserDao {
         u.setUsername(rs.getString("username"));
         u.setDisplayName(rs.getString("display_name"));
         u.setEmail(rs.getString("email"));
-        u.setSource(rs.getString("source"));
+        u.setSource(UserSource.fromCode(rs.getString("source")));
         u.setWeworkOpenid(rs.getString("wework_openid"));
         u.setPasswordHash(rs.getString("password_hash"));
         u.setTotpSecret(rs.getString("totp_secret"));
-        u.setStatus(rs.getString("status"));
+        u.setStatus(UserStatus.fromCode(rs.getString("status")));
         Timestamp last = rs.getTimestamp("last_login_at");
         u.setLastLoginAt(last == null ? null : last.toLocalDateTime());
         Timestamp created = rs.getTimestamp("created_at");
@@ -62,11 +64,11 @@ public class MySqlUserDao implements UserDao {
             ps.setString(1, user.getUsername());
             ps.setString(2, user.getDisplayName());
             ps.setString(3, user.getEmail());
-            ps.setString(4, user.getSource());
+            ps.setString(4, CodedEnum.code(user.getSource()));
             ps.setString(5, user.getWeworkOpenid());
             ps.setString(6, user.getPasswordHash());
             ps.setString(7, user.getTotpSecret());
-            ps.setString(8, user.getStatus());
+            ps.setString(8, CodedEnum.code(user.getStatus()));
             ps.setTimestamp(9, user.getLastLoginAt() == null ? null : Timestamp.valueOf(user.getLastLoginAt()));
             ps.setTimestamp(10, Timestamp.valueOf(user.getCreatedAt() != null
                     ? user.getCreatedAt() : LocalDateTime.now()));
@@ -109,9 +111,9 @@ public class MySqlUserDao implements UserDao {
     }
 
     @Override
-    public int updateStatus(long id, String status) {
+    public int updateStatus(long id, UserStatus status) {
         return jdbc.update("UPDATE t_user SET status=?, updated_at=? WHERE id=?",
-                status, Timestamp.valueOf(LocalDateTime.now()), id);
+                CodedEnum.code(status), Timestamp.valueOf(LocalDateTime.now()), id);
     }
 
     @Override

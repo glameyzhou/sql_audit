@@ -2,7 +2,9 @@ package com.sqlaudit.server.service;
 
 import com.sqlaudit.common.crypto.CredentialCrypto;
 import com.sqlaudit.common.crypto.CredentialCryptoException;
+import com.sqlaudit.common.enums.AccountType;
 import com.sqlaudit.common.enums.Dialect;
+import com.sqlaudit.common.enums.ErrorCode;
 import com.sqlaudit.common.exception.SqlauditException;
 import com.sqlaudit.storage.dao.CredentialDao;
 import com.sqlaudit.storage.dao.InstanceDao;
@@ -14,6 +16,7 @@ import org.springframework.stereotype.Service;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -43,9 +46,6 @@ import java.util.Map;
 public class JdbcMetadataService {
 
     private static final Logger log = LoggerFactory.getLogger(JdbcMetadataService.class);
-
-    /** RO_META 只读元数据账号类型（与 §3.5 结构指纹、§6.2 查询通道口径一致）。 */
-    private static final String ACCOUNT_TYPE_RO_META = "RO_META";
 
     /** 连接登录超时（秒），覆盖「连接超时 ≤5s」要求（PG/MySQL 驱动均支持 loginTimeout）。 */
     private static final int LOGIN_TIMEOUT_SECONDS = 5;
@@ -135,7 +135,7 @@ public class JdbcMetadataService {
             }
             return out;
         } catch (SQLException e) {
-            throw new SqlauditException("META_QUERY_FAILED", "库列表查询失败: " + e.getMessage(), e);
+            throw new SqlauditException(ErrorCode.META_QUERY_FAILED, "库列表查询失败: " + e.getMessage(), e);
         }
     }
 
@@ -152,7 +152,7 @@ public class JdbcMetadataService {
      */
     public List<String> listTables(long instanceId, String database) {
         if (database == null || database.isBlank()) {
-            throw new SqlauditException("INVALID_REQUEST", "库名不能为空");
+            throw new SqlauditException(ErrorCode.INVALID_REQUEST, "库名不能为空");
         }
         Resolved r = resolveMeta(instanceId);
         if (r.dialect() == Dialect.MYSQL) {
@@ -166,7 +166,7 @@ public class JdbcMetadataService {
                 }
                 return out;
             } catch (SQLException e) {
-                throw new SqlauditException("META_QUERY_FAILED", "表列表查询失败: " + e.getMessage(), e);
+                throw new SqlauditException(ErrorCode.META_QUERY_FAILED, "表列表查询失败: " + e.getMessage(), e);
             }
         }
         // PG：连接到所选数据库（database 参数），跨 schema 返回限定名
@@ -182,9 +182,70 @@ public class JdbcMetadataService {
             }
             return out;
         } catch (SQLException e) {
-            throw new SqlauditException("META_QUERY_FAILED",
+            throw new SqlauditException(ErrorCode.META_QUERY_FAILED,
                     "表列表查询失败（请确认库 " + database + " 存在且 RO_META 可访问）: "
                             + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 经实例 RO_META 凭据列指定表的列名清单（按定义顺序）。
+     *
+     * <ul>
+     *   <li>MySQL：查 {@code information_schema.COLUMNS}，按 {@code TABLE_SCHEMA=库} +
+     *       {@code TABLE_NAME=表} 过滤；</li>
+     *   <li>PG：{@code table} 为 {@code schema.table} 限定名（与 {@link #listTables} 返回
+     *       口径一致），拆成 schema/table 过滤；裸表名回落 {@code public}；</li>
+     *   <li>IoTDB / 实例不存在 / 无 RO_META 凭据 → {@link SqlauditException}（400）。</li>
+     * </ul>
+     *
+     * <p>库名/表名一律走 {@link PreparedStatement} 参数绑定，不拼接进 SQL，防注入。</p>
+     */
+    public List<String> listColumns(long instanceId, String database, String table) {
+        if (database == null || database.isBlank()) {
+            throw new SqlauditException(ErrorCode.INVALID_REQUEST, "库名不能为空");
+        }
+        if (table == null || table.isBlank()) {
+            throw new SqlauditException(ErrorCode.INVALID_REQUEST, "表名不能为空");
+        }
+        Resolved r = resolveMeta(instanceId);
+        if (r.dialect() == Dialect.MYSQL) {
+            String sql = "SELECT COLUMN_NAME FROM information_schema.COLUMNS"
+                    + " WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?"
+                    + " ORDER BY ORDINAL_POSITION";
+            return queryColumns(r, bootstrapDatabase(r), sql, database, table, table);
+        }
+        // PG：table 为 schema.table 限定名（listTables 口径），拆开过滤；裸表名回落 public
+        String schema = "public";
+        String tbl = table;
+        int dot = table.indexOf('.');
+        if (dot > 0) {
+            schema = table.substring(0, dot);
+            tbl = table.substring(dot + 1);
+        }
+        String sql = "SELECT column_name FROM information_schema.columns"
+                + " WHERE table_schema = ? AND table_name = ?"
+                + " ORDER BY ordinal_position";
+        return queryColumns(r, database, sql, schema, tbl, table);
+    }
+
+    /** 列名查询公共体：参数绑定执行，统一转 {@link SqlauditException}（400）。 */
+    private List<String> queryColumns(Resolved r, String connectDb, String sql,
+                                      String p1, String p2, String label) {
+        try (Connection conn = open(r, connectDb);
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, p1);
+            ps.setString(2, p2);
+            try (ResultSet rs = ps.executeQuery()) {
+                List<String> out = new ArrayList<>();
+                while (rs.next()) {
+                    out.add(rs.getString(1));
+                }
+                return out;
+            }
+        } catch (SQLException e) {
+            throw new SqlauditException(ErrorCode.META_QUERY_FAILED,
+                    "列列表查询失败（表 " + label + "）: " + e.getMessage(), e);
         }
     }
 
@@ -192,26 +253,26 @@ public class JdbcMetadataService {
     // 实例路由与凭据
     // ------------------------------------------------------------------
 
-    /** 解析实例 + RO_META 凭据 + 明文密码；任何前置条件缺失抛 {@link SqlauditException}（400）。 */
+    /** 解析实例 + RO_META 凭据（{@link AccountType#RO_META}）+ 明文密码；任何前置条件缺失抛 {@link SqlauditException}（400）。 */
     private Resolved resolveMeta(long instanceId) {
         Instance inst = instanceDao.findById(instanceId);
         if (inst == null) {
-            throw new SqlauditException("INSTANCE_NOT_FOUND", "实例不存在: id=" + instanceId);
+            throw new SqlauditException(ErrorCode.INSTANCE_NOT_FOUND, "实例不存在: id=" + instanceId);
         }
         Dialect dialect = dialectOf(inst);
         if (dialect == Dialect.IOTDB) {
-            throw new SqlauditException("IOTDB_NOT_SUPPORTED", "IoTDB 实例暂不支持库表浏览");
+            throw new SqlauditException(ErrorCode.IOTDB_NOT_SUPPORTED, "IoTDB 实例暂不支持库表浏览");
         }
-        Credential cred = credentialDao.findByInstanceAndType(instanceId, ACCOUNT_TYPE_RO_META);
+        Credential cred = credentialDao.findByInstanceAndType(instanceId, AccountType.RO_META);
         if (cred == null) {
-            throw new SqlauditException("RO_META_CREDENTIAL_MISSING",
+            throw new SqlauditException(ErrorCode.RO_META_CREDENTIAL_MISSING,
                     "实例缺少 RO_META 凭据: id=" + instanceId);
         }
         String password;
         try {
             password = CredentialCrypto.decrypt(cred.getPasswordEnc());
         } catch (CredentialCryptoException e) {
-            throw new SqlauditException("RO_META_CREDENTIAL_INVALID",
+            throw new SqlauditException(ErrorCode.RO_META_CREDENTIAL_INVALID,
                     "RO_META 凭据解密失败: " + e.getMessage(), e);
         }
         return new Resolved(inst, dialect, cred, password);
@@ -279,16 +340,9 @@ public class JdbcMetadataService {
         };
     }
 
-    /** 实例方言解析（与 worker 侧 {@code JdbcProductionGateway} 同口径，未知回落 MYSQL）。 */
+    /** 实例方言（与 server 端 {@code JdbcProductionGateway} 同口径：列值已由存储层按存储码解码为枚举，为空回落 MYSQL）。 */
     private static Dialect dialectOf(Instance inst) {
-        if (inst.getDialect() == null) {
-            return Dialect.MYSQL;
-        }
-        try {
-            return Dialect.valueOf(inst.getDialect().toUpperCase(Locale.ROOT));
-        } catch (IllegalArgumentException e) {
-            return Dialect.MYSQL;
-        }
+        return inst.getDialect() == null ? Dialect.MYSQL : inst.getDialect();
     }
 
     /** MySQL 标识符转义：反引号内的反引号翻倍后整体包反引号（拼接前必调）。 */

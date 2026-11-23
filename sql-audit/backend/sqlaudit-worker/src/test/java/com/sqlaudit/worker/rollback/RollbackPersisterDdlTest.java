@@ -1,5 +1,7 @@
 package com.sqlaudit.worker.rollback;
 
+import com.sqlaudit.common.enums.RollbackCoverage;
+import com.sqlaudit.common.enums.RollbackStatus;
 import com.sqlaudit.executor.gateway.ProductionGateway;
 import com.sqlaudit.parser.SqlParserService;
 import com.sqlaudit.rollback.lifecycle.RollbackLifecycleService;
@@ -60,8 +62,8 @@ class RollbackPersisterDdlTest {
 
         List<RollbackSql> rolls = rollbackDao.listAll();
         assertEquals(1, rolls.size(), "应有一条回滚主记录");
-        assertEquals("verified", rolls.get(0).getStatus(), "语法自检通过应为 verified");
-        assertEquals("FULL", rolls.get(0).getCoverage(), "可逆 DDL 回滚覆盖为 FULL");
+        assertEquals(RollbackStatus.VERIFIED, rolls.get(0).getStatus(), "语法自检通过应为 verified");
+        assertEquals(RollbackCoverage.FULL, rolls.get(0).getCoverage(), "可逆 DDL 回滚覆盖为 FULL");
 
         List<RollbackStatement> statements = rollbackDao.listStatements(rolls.get(0).getId(), 0, 10);
         assertEquals(1, statements.size(), "应有一条反向语句");

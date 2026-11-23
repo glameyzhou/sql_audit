@@ -1,6 +1,7 @@
 package com.sqlaudit.rule;
 
 import com.sqlaudit.common.enums.Dialect;
+import com.sqlaudit.common.enums.RuleCode;
 import com.sqlaudit.common.enums.RuleSeverity;
 import com.sqlaudit.common.enums.StatementType;
 import com.sqlaudit.common.model.ParsedStatement;
@@ -67,88 +68,88 @@ class RuleEngineTest {
         return engine.audit(units).allHits();
     }
 
-    private boolean hasCode(List<RuleHit> hits, String code) {
-        return hits.stream().anyMatch(h -> code.equals(h.getCode()));
+    private boolean hasCode(List<RuleHit> hits, RuleCode code) {
+        return hits.stream().anyMatch(h -> h.getCode() == code);
     }
 
     // ---------------- AST DML 规则 ----------------
 
     @Test
     void rNoWhere_updateWithoutWhere() {
-        assertTrue(hasCode(auditMySql(defaultMeta(), "UPDATE t SET a = 1"), "R_NO_WHERE"));
-        assertFalse(hasCode(auditMySql(defaultMeta(), "UPDATE t SET a = 1 WHERE id = 1"), "R_NO_WHERE"));
-        assertTrue(hasCode(auditMySql(defaultMeta(), "DELETE FROM t"), "R_NO_WHERE"));
+        assertTrue(hasCode(auditMySql(defaultMeta(), "UPDATE t SET a = 1"), RuleCode.R_NO_WHERE));
+        assertFalse(hasCode(auditMySql(defaultMeta(), "UPDATE t SET a = 1 WHERE id = 1"), RuleCode.R_NO_WHERE));
+        assertTrue(hasCode(auditMySql(defaultMeta(), "DELETE FROM t"), RuleCode.R_NO_WHERE));
     }
 
     @Test
     void rLimitOrderDml_updateWithLimit() {
         assertTrue(hasCode(auditMySql(defaultMeta(), "UPDATE t SET a = 1 WHERE id = 1 LIMIT 10"),
-                "R_LIMIT_ORDER_DML"));
+                RuleCode.R_LIMIT_ORDER_DML));
         assertTrue(hasCode(auditMySql(defaultMeta(), "UPDATE t SET a = 1 WHERE id = 1 ORDER BY id"),
-                "R_LIMIT_ORDER_DML"));
+                RuleCode.R_LIMIT_ORDER_DML));
         assertTrue(hasCode(auditMySql(defaultMeta(), "DELETE FROM t WHERE id = 1 LIMIT 10"),
-                "R_LIMIT_ORDER_DML"));
+                RuleCode.R_LIMIT_ORDER_DML));
         assertFalse(hasCode(auditMySql(defaultMeta(), "UPDATE t SET a = 1 WHERE id = 1"),
-                "R_LIMIT_ORDER_DML"));
+                RuleCode.R_LIMIT_ORDER_DML));
     }
 
     @Test
     void rNondeterministicSet_selfIncrement() {
         assertTrue(hasCode(auditMySql(defaultMeta(), "UPDATE t SET a = a + 1 WHERE id = 1"),
-                "R_NONDETERMINISTIC_SET"));
+                RuleCode.R_NONDETERMINISTIC_SET));
         assertTrue(hasCode(auditMySql(defaultMeta(), "UPDATE t SET b = NOW() WHERE id = 1"),
-                "R_NONDETERMINISTIC_SET"));
+                RuleCode.R_NONDETERMINISTIC_SET));
         assertTrue(hasCode(auditMySql(defaultMeta(), "UPDATE t SET a = (SELECT MAX(x) FROM t2) WHERE id = 1"),
-                "R_NONDETERMINISTIC_SET"));
+                RuleCode.R_NONDETERMINISTIC_SET));
         // 全字面量 SET 不命中
         assertFalse(hasCode(auditMySql(defaultMeta(), "UPDATE t SET a = 1, b = 'x' WHERE id = 1"),
-                "R_NONDETERMINISTIC_SET"));
+                RuleCode.R_NONDETERMINISTIC_SET));
     }
 
     @Test
     void rMultiTableDml_joinUpdate() {
         assertTrue(hasCode(auditMySql(defaultMeta(), "UPDATE t1 JOIN t2 ON t1.id = t2.id SET t1.a = 1"),
-                "R_MULTI_TABLE_DML"));
+                RuleCode.R_MULTI_TABLE_DML));
         assertTrue(hasCode(auditMySql(defaultMeta(), "DELETE t1 FROM t1 JOIN t2 ON t1.id = t2.id WHERE t2.x = 1"),
-                "R_MULTI_TABLE_DML"));
+                RuleCode.R_MULTI_TABLE_DML));
         assertFalse(hasCode(auditMySql(defaultMeta(), "UPDATE t1 SET a = 1 WHERE id = 1"),
-                "R_MULTI_TABLE_DML"));
+                RuleCode.R_MULTI_TABLE_DML));
     }
 
     @Test
     void rSelectStar_insertSelectStar() {
-        assertTrue(hasCode(auditMySql(defaultMeta(), "INSERT INTO t1 SELECT * FROM t2"), "R_SELECT_STAR"));
-        assertFalse(hasCode(auditMySql(defaultMeta(), "INSERT INTO t1(a) SELECT b FROM t2"), "R_SELECT_STAR"));
+        assertTrue(hasCode(auditMySql(defaultMeta(), "INSERT INTO t1 SELECT * FROM t2"), RuleCode.R_SELECT_STAR));
+        assertFalse(hasCode(auditMySql(defaultMeta(), "INSERT INTO t1(a) SELECT b FROM t2"), RuleCode.R_SELECT_STAR));
     }
 
     // ---------------- DDL 规则 ----------------
 
     @Test
     void rDdlDestructive_dropTruncateAlter() {
-        assertTrue(hasCode(auditMySql(defaultMeta(), "DROP TABLE t"), "R_DDL_DESTRUCTIVE"));
-        assertTrue(hasCode(auditMySql(defaultMeta(), "TRUNCATE TABLE t"), "R_DDL_DESTRUCTIVE"));
-        assertTrue(hasCode(auditMySql(defaultMeta(), "ALTER TABLE t DROP COLUMN c1"), "R_DDL_DESTRUCTIVE"));
+        assertTrue(hasCode(auditMySql(defaultMeta(), "DROP TABLE t"), RuleCode.R_DDL_DESTRUCTIVE));
+        assertTrue(hasCode(auditMySql(defaultMeta(), "TRUNCATE TABLE t"), RuleCode.R_DDL_DESTRUCTIVE));
+        assertTrue(hasCode(auditMySql(defaultMeta(), "ALTER TABLE t DROP COLUMN c1"), RuleCode.R_DDL_DESTRUCTIVE));
         assertTrue(hasCode(auditMySql(defaultMeta(), "ALTER TABLE t MODIFY COLUMN c1 VARCHAR(32)"),
-                "R_DDL_DESTRUCTIVE"));
-        assertFalse(hasCode(auditMySql(defaultMeta(), "ALTER TABLE t ADD COLUMN c2 INT"), "R_DDL_DESTRUCTIVE"));
+                RuleCode.R_DDL_DESTRUCTIVE));
+        assertFalse(hasCode(auditMySql(defaultMeta(), "ALTER TABLE t ADD COLUMN c2 INT"), RuleCode.R_DDL_DESTRUCTIVE));
     }
 
     @Test
     void rDdlNoIfExists_dropWithoutIf() {
-        assertTrue(hasCode(auditMySql(defaultMeta(), "DROP TABLE t"), "R_DDL_NO_IF_EXISTS"));
-        assertFalse(hasCode(auditMySql(defaultMeta(), "DROP TABLE IF EXISTS t"), "R_DDL_NO_IF_EXISTS"));
+        assertTrue(hasCode(auditMySql(defaultMeta(), "DROP TABLE t"), RuleCode.R_DDL_NO_IF_EXISTS));
+        assertFalse(hasCode(auditMySql(defaultMeta(), "DROP TABLE IF EXISTS t"), RuleCode.R_DDL_NO_IF_EXISTS));
     }
 
     @Test
     void rTableName_badNaming() {
-        assertTrue(hasCode(auditMySql(defaultMeta(), "CREATE TABLE BadName (id INT)"), "R_TABLE_NAME"));
-        assertFalse(hasCode(auditMySql(defaultMeta(), "CREATE TABLE good_name (id INT)"), "R_TABLE_NAME"));
+        assertTrue(hasCode(auditMySql(defaultMeta(), "CREATE TABLE BadName (id INT)"), RuleCode.R_TABLE_NAME));
+        assertFalse(hasCode(auditMySql(defaultMeta(), "CREATE TABLE good_name (id INT)"), RuleCode.R_TABLE_NAME));
     }
 
     @Test
     void rIndexName_noPrefix() {
-        assertTrue(hasCode(auditMySql(defaultMeta(), "CREATE INDEX my_idx ON t (a)"), "R_INDEX_NAME"));
-        assertFalse(hasCode(auditMySql(defaultMeta(), "CREATE INDEX idx_a ON t (a)"), "R_INDEX_NAME"));
+        assertTrue(hasCode(auditMySql(defaultMeta(), "CREATE INDEX my_idx ON t (a)"), RuleCode.R_INDEX_NAME));
+        assertFalse(hasCode(auditMySql(defaultMeta(), "CREATE INDEX idx_a ON t (a)"), RuleCode.R_INDEX_NAME));
     }
 
     // ---------------- 元数据规则 ----------------
@@ -157,8 +158,8 @@ class RuleEngineTest {
     void rNoPk_tableWithoutPrimaryKey() {
         FakeMetadata meta = defaultMeta();
         meta.put("nopk", false);
-        assertTrue(hasCode(auditMySql(meta, "UPDATE nopk SET a = 1 WHERE id = 1"), "R_NO_PK"));
-        assertFalse(hasCode(auditMySql(meta, "UPDATE t SET a = 1 WHERE id = 1"), "R_NO_PK"));
+        assertTrue(hasCode(auditMySql(meta, "UPDATE nopk SET a = 1 WHERE id = 1"), RuleCode.R_NO_PK));
+        assertFalse(hasCode(auditMySql(meta, "UPDATE t SET a = 1 WHERE id = 1"), RuleCode.R_NO_PK));
     }
 
     @Test
@@ -166,7 +167,7 @@ class RuleEngineTest {
         FakeMetadata meta = defaultMeta();
         meta.available = false;
         // 元数据不可达 → 无法证明可回滚 → 保守阻断
-        assertTrue(hasCode(auditMySql(meta, "UPDATE t SET a = 1 WHERE id = 1"), "R_NO_PK"));
+        assertTrue(hasCode(auditMySql(meta, "UPDATE t SET a = 1 WHERE id = 1"), RuleCode.R_NO_PK));
     }
 
     @Test
@@ -174,7 +175,7 @@ class RuleEngineTest {
         FakeMetadata meta = defaultMeta();
         meta.tables.put("t", new TableMetadataProvider.TableMetadata(true, List.of("id"),
                 Set.of(), List.of("id"), Set.of(), false)); // t 移出白名单
-        assertTrue(hasCode(auditMySql(meta, "UPDATE t SET a = 1 WHERE id = 1"), "R_OBJECT_NOT_ALLOWED"));
+        assertTrue(hasCode(auditMySql(meta, "UPDATE t SET a = 1 WHERE id = 1"), RuleCode.R_OBJECT_NOT_ALLOWED));
     }
 
     @Test
@@ -182,28 +183,28 @@ class RuleEngineTest {
         FakeMetadata meta = defaultMeta();
         meta.tables.put("t", new TableMetadataProvider.TableMetadata(true, List.of("id"),
                 Set.of(), List.of("id", "phone"), Set.of("phone"), true));
-        assertTrue(hasCode(auditMySql(meta, "UPDATE t SET a = 1 WHERE id = 1"), "R_SENSITIVE_COLUMN"));
+        assertTrue(hasCode(auditMySql(meta, "UPDATE t SET a = 1 WHERE id = 1"), RuleCode.R_SENSITIVE_COLUMN));
     }
 
     // ---------------- 其他 AST/文本规则 ----------------
 
     @Test
     void rParseFailed_garbageSql() {
-        assertTrue(hasCode(auditMySql(defaultMeta(), "SELEC * FORM t"), "R_PARSE_FAILED"));
+        assertTrue(hasCode(auditMySql(defaultMeta(), "SELEC * FORM t"), RuleCode.R_PARSE_FAILED));
     }
 
     @Test
     void rSqlInjectionPattern_comments() {
         assertTrue(hasCode(auditMySql(defaultMeta(), "SELECT a FROM t WHERE id = 1 -- AND x = 2"),
-                "R_SQL_INJECTION_PATTERN"));
+                RuleCode.R_SQL_INJECTION_PATTERN));
         assertFalse(hasCode(auditMySql(defaultMeta(), "SELECT a FROM t WHERE id = 1"),
-                "R_SQL_INJECTION_PATTERN"));
+                RuleCode.R_SQL_INJECTION_PATTERN));
     }
 
     @Test
     void rNoLimitQuery_selectWithoutLimit() {
-        assertTrue(hasCode(auditMySql(defaultMeta(), "SELECT a FROM t"), "R_NO_LIMIT_QUERY"));
-        assertFalse(hasCode(auditMySql(defaultMeta(), "SELECT a FROM t LIMIT 10"), "R_NO_LIMIT_QUERY"));
+        assertTrue(hasCode(auditMySql(defaultMeta(), "SELECT a FROM t"), RuleCode.R_NO_LIMIT_QUERY));
+        assertFalse(hasCode(auditMySql(defaultMeta(), "SELECT a FROM t LIMIT 10"), RuleCode.R_NO_LIMIT_QUERY));
     }
 
     @Test
@@ -211,13 +212,13 @@ class RuleEngineTest {
         List<ParsedStatement> units = parserService.parse(
                 "UPDATE t SET a = 1 WHERE id = 1; ALTER TABLE t ADD COLUMN c INT", Dialect.MYSQL);
         AuditOutcome outcome = engineWith(defaultMeta()).audit(units);
-        assertTrue(outcome.allHits().stream().anyMatch(h -> "R_TX_DDL_MIX".equals(h.getCode())),
+        assertTrue(outcome.allHits().stream().anyMatch(h -> h.getCode() == RuleCode.R_TX_DDL_MIX),
                 "混合 DDL 与 DML 的工单应命中 R_TX_DDL_MIX");
         // 纯 DML 工单不命中
         List<ParsedStatement> dmlOnly = parserService.parse(
                 "UPDATE t SET a = 1 WHERE id = 1; DELETE FROM t WHERE id = 2", Dialect.MYSQL);
         assertFalse(engineWith(defaultMeta()).audit(dmlOnly).allHits().stream()
-                .anyMatch(h -> "R_TX_DDL_MIX".equals(h.getCode())));
+                .anyMatch(h -> h.getCode() == RuleCode.R_TX_DDL_MIX));
     }
 
     @Test
@@ -232,7 +233,7 @@ class RuleEngineTest {
         }
         List<ParsedStatement> units = parserService.parse(sql.toString(), Dialect.MYSQL);
         assertTrue(engineWith(defaultMeta()).audit(units).allHits().stream()
-                .anyMatch(h -> "R_BIG_UNIT_COUNT".equals(h.getCode())));
+                .anyMatch(h -> h.getCode() == RuleCode.R_BIG_UNIT_COUNT));
     }
 
     // ---------------- IoTDB 规则 ----------------
@@ -242,15 +243,15 @@ class RuleEngineTest {
         RuleEngine engine = engineWith(defaultMeta());
         List<ParsedStatement> drop = parserService.parse("DROP TIMESERIES root.sg.d1.status", Dialect.IOTDB);
         assertTrue(engine.audit(drop).allHits().stream()
-                .anyMatch(h -> "R_IOTDB_DROP".equals(h.getCode())));
+                .anyMatch(h -> h.getCode() == RuleCode.R_IOTDB_DROP));
 
         List<ParsedStatement> delNoRange = parserService.parse("DELETE FROM root.sg.d1", Dialect.IOTDB);
         assertTrue(engine.audit(delNoRange).allHits().stream()
-                .anyMatch(h -> "R_IOTDB_NO_TIME_RANGE".equals(h.getCode())));
+                .anyMatch(h -> h.getCode() == RuleCode.R_IOTDB_NO_TIME_RANGE));
 
         List<ParsedStatement> ttl = parserService.parse("SET TTL TO root.sg 3600", Dialect.IOTDB);
         assertTrue(engine.audit(ttl).allHits().stream()
-                .anyMatch(h -> "R_IOTDB_TTL".equals(h.getCode()) || "R_PARSE_FAILED".equals(h.getCode())));
+                .anyMatch(h -> h.getCode() == RuleCode.R_IOTDB_TTL || h.getCode() == RuleCode.R_PARSE_FAILED));
     }
 
     // ---------------- 影响面规则（两阶段） ----------------
@@ -262,21 +263,21 @@ class RuleEngineTest {
 
         // 首轮同步：影响面规则不触发
         AuditOutcome first = engine.audit(units);
-        assertFalse(first.allHits().stream().anyMatch(h -> "R_AFFECT_TOO_MANY".equals(h.getCode())));
+        assertFalse(first.allHits().stream().anyMatch(h -> h.getCode() == RuleCode.R_AFFECT_TOO_MANY));
 
         // 二次评估：10 万+1 行 → R_AFFECT_TOO_MANY（ERROR）+ R_LOW_PEAK_WINDOW（WARN）
         List<RuleHit> impactHits = engine.assessImpact(units.get(0), units, ImpactEstimate.of(100_001));
-        assertTrue(impactHits.stream().anyMatch(h -> "R_AFFECT_TOO_MANY".equals(h.getCode())
+        assertTrue(impactHits.stream().anyMatch(h -> h.getCode() == RuleCode.R_AFFECT_TOO_MANY
                 && h.getSeverity() == RuleSeverity.ERROR));
-        assertTrue(impactHits.stream().anyMatch(h -> "R_LOW_PEAK_WINDOW".equals(h.getCode())
+        assertTrue(impactHits.stream().anyMatch(h -> h.getCode() == RuleCode.R_LOW_PEAK_WINDOW
                 && h.getSeverity() == RuleSeverity.WARN));
 
         // 5000+1 行 → 只 LOW_PEAK（未达阻断与镜像上限）
         List<RuleHit> mid = engine.assessImpact(units.get(0), units, ImpactEstimate.of(5_001));
-        assertFalse(mid.stream().anyMatch(h -> "R_AFFECT_TOO_MANY".equals(h.getCode())));
-        assertTrue(mid.stream().anyMatch(h -> "R_LOW_PEAK_WINDOW".equals(h.getCode())));
+        assertFalse(mid.stream().anyMatch(h -> h.getCode() == RuleCode.R_AFFECT_TOO_MANY));
+        assertTrue(mid.stream().anyMatch(h -> h.getCode() == RuleCode.R_LOW_PEAK_WINDOW));
         // 5000 是 PREIMAGE 上限，5001 触发
-        assertTrue(mid.stream().anyMatch(h -> "R_PREIMAGE_TOO_LARGE".equals(h.getCode())));
+        assertTrue(mid.stream().anyMatch(h -> h.getCode() == RuleCode.R_PREIMAGE_TOO_LARGE));
 
         // 100 行 → 干净
         assertTrue(engine.assessImpact(units.get(0), units, ImpactEstimate.of(100)).isEmpty());

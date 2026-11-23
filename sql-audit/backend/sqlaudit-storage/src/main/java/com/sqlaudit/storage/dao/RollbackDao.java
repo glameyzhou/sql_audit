@@ -1,8 +1,8 @@
 package com.sqlaudit.storage.dao;
 
+import com.sqlaudit.common.enums.RollbackStatus;
 import com.sqlaudit.storage.model.RollbackSql;
 import com.sqlaudit.storage.model.RollbackStatement;
-
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -34,7 +34,7 @@ public interface RollbackDao {
     int markStatementApplied(long statementId, LocalDateTime appliedAt);
 
     /** 更新回滚主记录状态（generated → verified → applied/expired/not_available）。 */
-    int updateStatus(long id, String status, String unavailableReason);
+    int updateStatus(long id, RollbackStatus status, String unavailableReason);
 
     RollbackSql findByUnitId(long unitId);
 

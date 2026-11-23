@@ -1,6 +1,9 @@
 package com.sqlaudit.worker.gateway;
 
 import com.sqlaudit.common.crypto.CredentialCrypto;
+import com.sqlaudit.common.enums.Dialect;
+import com.sqlaudit.common.enums.Environment;
+import com.sqlaudit.common.enums.InstanceStatus;
 import com.sqlaudit.executor.gateway.ProductionGateway;
 import com.sqlaudit.executor.gateway.ProductionGateway.ExecutionResult;
 import com.sqlaudit.executor.gateway.ProductionGateway.Outcome;
@@ -251,13 +254,13 @@ class JdbcProductionGatewayIT {
     private static long insertInstance(MySqlInstanceDao dao) {
         Instance inst = new Instance();
         inst.setName("gw-test-instance");
-        inst.setDialect("MYSQL");
-        inst.setEnvironment("prod");
+        inst.setDialect(Dialect.MYSQL);
+        inst.setEnvironment(Environment.PROD);
         inst.setOwnerId(1L);
         inst.setHost(HOST);
         inst.setPort(PORT);
         inst.setDefaultSchema(PROD_DB);
-        inst.setStatus("ACTIVE");
+        inst.setStatus(InstanceStatus.ACTIVE);
         inst.setCreatedBy(1L);
         return dao.insert(inst);
     }

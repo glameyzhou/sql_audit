@@ -6,6 +6,7 @@ import com.sqlaudit.storage.dao.AuditDao;
 import com.sqlaudit.storage.dao.CredentialDao;
 import com.sqlaudit.storage.dao.FlowRuleDao;
 import com.sqlaudit.storage.dao.InstanceDao;
+import com.sqlaudit.storage.dao.PermissionDao;
 import com.sqlaudit.storage.dao.RoleDao;
 import com.sqlaudit.storage.dao.RollbackDao;
 import com.sqlaudit.storage.dao.RuleDao;
@@ -17,6 +18,7 @@ import com.sqlaudit.storage.impl.memory.InMemoryAuditDao;
 import com.sqlaudit.storage.impl.memory.InMemoryCredentialDao;
 import com.sqlaudit.storage.impl.memory.InMemoryFlowRuleDao;
 import com.sqlaudit.storage.impl.memory.InMemoryInstanceDao;
+import com.sqlaudit.storage.impl.memory.InMemoryPermissionDao;
 import com.sqlaudit.storage.impl.memory.InMemoryRoleDao;
 import com.sqlaudit.storage.impl.memory.InMemoryRollbackDao;
 import com.sqlaudit.storage.impl.memory.InMemoryRuleDao;
@@ -73,6 +75,11 @@ public class MemoryStorageConfig {
     @Bean
     public RoleDao roleDao() {
         return new InMemoryRoleDao();
+    }
+
+    @Bean
+    public PermissionDao permissionDao() {
+        return new InMemoryPermissionDao();
     }
 
     @Bean

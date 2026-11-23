@@ -1,5 +1,8 @@
 package com.sqlaudit.common.enums;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonValue;
+
 import java.util.Set;
 
 /**
@@ -22,15 +25,36 @@ import java.util.Set;
  *   <li>{@code intent_written=1} 只能出现在 {@code executing/success/failed/needs_confirm}；</li>
  *   <li>{@code status=executing} 必然 {@code intent_written=1}。</li>
  * </ul>
+ *
+ * <p>存储码为小写（{@code t_ticket_unit.status}，§3.3），见 {@link CodedEnum}。</p>
  */
-public enum UnitStatus {
-    PENDING,
-    LEASED,
-    EXECUTING,
-    SUCCESS,
-    FAILED,
-    SKIPPED,
-    NEEDS_CONFIRM;
+public enum UnitStatus implements CodedEnum {
+    PENDING("pending"),
+    LEASED("leased"),
+    EXECUTING("executing"),
+    SUCCESS("success"),
+    FAILED("failed"),
+    SKIPPED("skipped"),
+    NEEDS_CONFIRM("needs_confirm");
+
+    private final String code;
+
+    UnitStatus(String code) {
+        this.code = code;
+    }
+
+    /** DB / JSON 存储码（小写）。 */
+    @Override
+    @JsonValue
+    public String getCode() {
+        return code;
+    }
+
+    /** 存储码 → 枚举（大小写不敏感；null 透传；未知取值抛 IllegalArgumentException）。 */
+    @JsonCreator
+    public static UnitStatus fromCode(String code) {
+        return CodedEnum.fromCode(UnitStatus.class, code);
+    }
 
     /** 是否允许从当前状态迁移到 {@code target}。 */
     public boolean canTransitionTo(UnitStatus target) {

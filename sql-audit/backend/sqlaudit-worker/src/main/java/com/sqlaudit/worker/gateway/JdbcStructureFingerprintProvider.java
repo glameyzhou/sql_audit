@@ -2,6 +2,7 @@ package com.sqlaudit.worker.gateway;
 
 import com.sqlaudit.common.crypto.CredentialCrypto;
 import com.sqlaudit.common.crypto.CredentialCryptoException;
+import com.sqlaudit.common.enums.AccountType;
 import com.sqlaudit.common.enums.Dialect;
 import com.sqlaudit.executor.gate.ExecutionGate;
 import com.sqlaudit.storage.dao.CredentialDao;
@@ -75,7 +76,7 @@ public class JdbcStructureFingerprintProvider implements ExecutionGate.Structure
         }
 
         // 2. RO_META 凭据（§3.5：结构指纹走只读元数据账号，与执行账号物理隔离）
-        Credential cred = credentialDao.findByInstanceAndType(instanceId, "RO_META");
+        Credential cred = credentialDao.findByInstanceAndType(instanceId, AccountType.RO_META);
         if (cred == null) {
             throw new IllegalStateException("实例缺少 RO_META 凭据: id=" + instanceId);
         }
@@ -168,20 +169,8 @@ public class JdbcStructureFingerprintProvider implements ExecutionGate.Structure
     }
 
     private static Dialect dialectOf(Instance inst) {
-        if (inst.getDialect() == null) {
-            return Dialect.MYSQL;
-        }
-        String dialect = inst.getDialect().trim().toUpperCase();
-        // 别名归一：UI/种子数据可能写入 POSTGRESQL/POSTGRES，统一映射枚举 PG，
-        // 避免未知字符串静默回落 MySQL（错方言会用错驱动连库）
-        if ("POSTGRESQL".equals(dialect) || "POSTGRES".equals(dialect)) {
-            return Dialect.PG;
-        }
-        try {
-            return Dialect.valueOf(dialect);
-        } catch (IllegalArgumentException e) {
-            return Dialect.MYSQL;
-        }
+        // 实例方言写入时已校验为 Dialect 枚举，未知取值到不了这里；仅保留 null 兜底
+        return inst.getDialect() == null ? Dialect.MYSQL : inst.getDialect();
     }
 
     private static String jdbcUrl(Instance inst, Dialect dialect) {

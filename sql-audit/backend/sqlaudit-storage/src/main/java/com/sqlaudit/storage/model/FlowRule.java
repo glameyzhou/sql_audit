@@ -1,5 +1,7 @@
 package com.sqlaudit.storage.model;
 
+import com.sqlaudit.common.enums.Environment;
+import com.sqlaudit.common.enums.RiskLevel;
 import java.time.LocalDateTime;
 
 /**
@@ -13,11 +15,11 @@ public class FlowRule {
     private Long id;
     private String name;
     /** prod / staging / ALL */
-    private String environment;
+    private Environment environment;
     /** NULL=全局默认 L1；非空=实例级覆盖 L2 */
     private Long instanceId;
     /** LOW / MEDIUM / HIGH / CRITICAL */
-    private String riskLevel;
+    private RiskLevel riskLevel;
     /** CRITICAL 不可被任何配置降级 */
     private Boolean nonOverridable;
     /** 同 risk_level 多条时取 priority 最高 */
@@ -43,11 +45,11 @@ public class FlowRule {
         this.name = name;
     }
 
-    public String getEnvironment() {
+    public Environment getEnvironment() {
         return environment;
     }
 
-    public void setEnvironment(String environment) {
+    public void setEnvironment(Environment environment) {
         this.environment = environment;
     }
 
@@ -59,11 +61,11 @@ public class FlowRule {
         this.instanceId = instanceId;
     }
 
-    public String getRiskLevel() {
+    public RiskLevel getRiskLevel() {
         return riskLevel;
     }
 
-    public void setRiskLevel(String riskLevel) {
+    public void setRiskLevel(RiskLevel riskLevel) {
         this.riskLevel = riskLevel;
     }
 

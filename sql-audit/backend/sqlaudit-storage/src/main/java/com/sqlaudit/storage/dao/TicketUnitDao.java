@@ -1,7 +1,7 @@
 package com.sqlaudit.storage.dao;
 
+import com.sqlaudit.common.enums.UnitStatus;
 import com.sqlaudit.storage.model.TicketUnit;
-
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -82,7 +82,7 @@ public interface TicketUnitDao {
     int updateDdlFingerprint(long id, String fingerprint);
 
     /** 执行监控：按执行单元状态列表（executing/success/failed/needs_confirm 等），按 id 排序。 */
-    List<TicketUnit> listByStatus(String status);
+    List<TicketUnit> listByStatus(UnitStatus status);
 
     /**
      * 插入执行单元（工单创建时由 workflow 写入，status='pending' 起点）。

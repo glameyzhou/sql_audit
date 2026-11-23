@@ -49,6 +49,14 @@
           >
             取消工单
           </el-button>
+          <el-button
+            v-if="canConfirmExecution"
+            type="warning"
+            :loading="acting"
+            @click="handleConfirmExecution"
+          >
+            确认执行
+          </el-button>
         </div>
       </div>
 
@@ -74,8 +82,30 @@
             </el-tag>
           </span></div>
           <div class="kv"><span class="k">创建时间</span><span class="v">{{ formatTime(ticket.createdAt) }}</span></div>
-          <div class="kv full"><span class="k">目标实例</span><span class="v">{{ instanceNames(ticket.instanceIds) }}</span></div>
+          <div class="kv full">
+            <span class="k">目标实例</span>
+            <div class="v inst-list">
+              <div v-for="inst in targetInstances" :key="inst.id" class="inst-item">
+                <span class="inst-name">{{ inst.name }}</span>
+                <span class="inst-meta mono">{{ inst.host }}{{ inst.port ? ':' + inst.port : '' }}</span>
+                <span class="inst-meta">默认库 {{ inst.defaultSchema || '-' }}</span>
+                <el-tag size="small" effect="plain" type="info">{{ inst.dialect || '?' }}</el-tag>
+              </div>
+              <span v-if="!targetInstances.length" class="v">-</span>
+            </div>
+          </div>
         </div>
+      </div>
+
+      <!-- 变更 SQL -->
+      <div class="card">
+        <div class="card-title">变更 SQL</div>
+        <div v-if="shardInfo" class="shard-banner">
+          <el-tag type="info" effect="light" size="small">分表执行</el-tag>
+          <span class="shard-banner-text">{{ shardInfo.count }} 张分表（{{ shardInfo.summary }}）</span>
+        </div>
+        <pre v-if="ticket.sqlText" class="sql-block mono">{{ ticket.sqlText }}</pre>
+        <div v-else class="rb-empty">暂无 SQL 内容</div>
       </div>
 
       <!-- 回滚清单 -->
@@ -88,6 +118,11 @@
               {{ coverageMeta(u.coverage).label }}
             </el-tag>
             <span v-if="u.note" class="rb-note">{{ u.note }}</span>
+            <router-link
+              v-if="rollbackOf(i)"
+              class="rb-link"
+              :to="{ path: '/rollback', query: { rollbackId: rollbackOf(i).id } }"
+            >查看回滚 #{{ rollbackOf(i).id }}</router-link>
           </div>
         </div>
         <div v-else class="rb-empty">暂无回滚清单</div>
@@ -109,20 +144,27 @@ const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
 
-// 开发期假实例（与 Submit / 列表保持一致）
-const INSTANCES = {
-  1: '生产 MySQL',
-  2: '预发 MySQL'
-}
-
 const loading = ref(false)
 const notFound = ref(false)
 const ticket = ref(null)
 const acting = ref(false)
 
+// 辅助信息：实例详情 / 执行单元 / 回滚记录（任一失败不影响主信息展示）
+const instances = ref([])
+const ticketUnits = ref([])
+const rollbacks = ref([])
+
 // 状态机：可取消（draft / submitted）
 const canCancel = computed(
   () => ticket.value && ['draft', 'submitted'].includes(ticket.value.status)
+)
+
+// 执行前二次确认：CRITICAL 高危单审批通过后，非提交人确认执行（§3.4）
+const canConfirmExecution = computed(
+  () => ticket.value
+    && ticket.value.status === 'approved'
+    && ticket.value.riskLevel === 'CRITICAL'
+    && ticket.value.creatorId !== session.user?.id
 )
 
 // 非操作态只读说明（auditing / draft / submitted 走按钮，其余只读）
@@ -169,6 +211,51 @@ const rollbackUnits = computed(() => {
   }
 })
 
+// 分表执行信息（审计可见「分表 DDL」语义）
+const shardInfo = computed(() => {
+  const raw = ticket.value?.shardConfig
+  if (!raw) return null
+  try {
+    const cfg = typeof raw === 'string' ? JSON.parse(raw) : raw
+    const suffixes = Array.isArray(cfg.suffixes) ? cfg.suffixes : []
+    const count = suffixes.length
+    if (!count) return null
+    const summary = count <= 5
+      ? suffixes.join(', ')
+      : `${suffixes.slice(0, 3).join(', ')} … ${suffixes[count - 1]}`
+    return { count, summary, template: cfg.template || '' }
+  } catch {
+    return null
+  }
+})
+
+// 实例 id → 实例详情（展示 name / host:port / 默认库 / 方言）
+const instanceMap = computed(() => {
+  const m = new Map()
+  for (const inst of instances.value) m.set(inst.id, inst)
+  return m
+})
+
+const targetInstances = computed(() =>
+  (ticket.value?.instanceIds || [])
+    .map((id) => instanceMap.value.get(id))
+    .filter(Boolean)
+)
+
+// 单元 id → 回滚主记录；rollbackSummary 的 unit 是 1-based 序号，
+// 与 listTicketUnits 的 unit_order 稳定排序对齐（下标 i 对应 unit_order i+1）
+const rollbackByUnitId = computed(() => {
+  const m = new Map()
+  for (const r of rollbacks.value) m.set(r.unitId, r)
+  return m
+})
+
+function rollbackOf(index) {
+  const unit = ticketUnits.value[index]
+  if (!unit) return null
+  return rollbackByUnitId.value.get(unit.id) || null
+}
+
 onMounted(load)
 
 async function load() {
@@ -178,9 +265,19 @@ async function load() {
   } catch (err) {
     ticket.value = null
     notFound.value = err?.response?.data?.code === 'TICKET_NOT_FOUND'
-  } finally {
     loading.value = false
+    return
   }
+  // 辅助信息（实例 / 单元 / 回滚）失败不阻断主信息展示
+  const [insts, units, rbs] = await Promise.all([
+    api.listUserInstances().catch(() => []),
+    api.listTicketUnits(route.params.id).catch(() => []),
+    api.listRollbacks().catch(() => [])
+  ])
+  instances.value = insts
+  ticketUnits.value = units
+  rollbacks.value = rbs
+  loading.value = false
 }
 
 async function handleSubmitApproval() {
@@ -218,13 +315,30 @@ async function handleCancel() {
   }
 }
 
-function goBack() {
-  router.push('/tickets')
+async function handleConfirmExecution() {
+  try {
+    await ElMessageBox.confirm(
+      '该高危工单执行前需二次确认，确认后 worker 将立即执行。确定确认执行吗？',
+      '执行前二次确认',
+      { confirmButtonText: '确认执行', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return // 用户取消
+  }
+  acting.value = true
+  try {
+    await api.confirmExecution(ticket.value.id)
+    ElMessage.success('已确认执行，等待 worker 执行')
+    await load()
+  } catch {
+    // 错误已由拦截器统一弹 message（含 SELF_CONFIRM_FORBIDDEN 防自审）
+  } finally {
+    acting.value = false
+  }
 }
 
-function instanceNames(ids) {
-  if (!Array.isArray(ids) || ids.length === 0) return '-'
-  return ids.map((id) => INSTANCES[id] || `实例 ${id}`).join('、')
+function goBack() {
+  router.push('/tickets')
 }
 
 function formatTime(value) {
@@ -277,4 +391,36 @@ function formatTime(value) {
 .rb-unit { font-size: 12px; font-weight: 700; color: var(--sa-brand-2); }
 .rb-note { font-size: 12px; color: var(--sa-text-2); }
 .rb-empty { font-size: 12px; color: var(--sa-text-3); }
+.rb-link { margin-left: auto; font-size: 12px; color: var(--sa-brand-2); }
+.rb-link:hover { text-decoration: underline; }
+
+.inst-list { display: flex; flex-direction: column; gap: 6px; }
+.inst-item { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.inst-name { font-size: 12.5px; font-weight: 600; color: var(--sa-text); }
+.inst-meta { font-size: 12px; color: var(--sa-text-2); }
+
+.sql-block {
+  margin: 0;
+  padding: 12px 14px;
+  background: var(--sa-surface-2);
+  border: 1px solid var(--sa-border);
+  border-radius: var(--sa-radius-sm);
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--sa-text);
+}
+
+.shard-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  background: var(--sa-info-soft);
+  border: 1px solid var(--sa-border);
+  border-radius: var(--sa-radius-sm);
+}
+.shard-banner-text { font-size: 12px; color: var(--sa-text-2); }
 </style>

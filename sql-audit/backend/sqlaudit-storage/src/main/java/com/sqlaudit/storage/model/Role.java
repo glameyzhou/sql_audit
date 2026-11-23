@@ -15,6 +15,8 @@ public class Role {
     private String code;
     private String name;
     private String description;
+    /** 审批链「取最严」权重（DEV=0/LEAD=1/DBA=2/ADMIN=3，自定义角色手工填） */
+    private Integer rank;
     private LocalDateTime createdAt;
 
     public Long getId() {
@@ -47,6 +49,14 @@ public class Role {
 
     public void setDescription(String description) {
         this.description = description;
+    }
+
+    public Integer getRank() {
+        return rank;
+    }
+
+    public void setRank(Integer rank) {
+        this.rank = rank;
     }
 
     public LocalDateTime getCreatedAt() {

@@ -2,6 +2,7 @@ package com.sqlaudit.worker.gateway;
 
 import com.sqlaudit.common.crypto.CredentialCrypto;
 import com.sqlaudit.common.crypto.CredentialCryptoException;
+import com.sqlaudit.common.enums.AccountType;
 import com.sqlaudit.common.enums.Dialect;
 import com.sqlaudit.rule.TableMetadataProvider;
 import com.sqlaudit.storage.dao.CredentialDao;
@@ -46,8 +47,6 @@ public class JdbcTableMetadataProvider implements TableMetadataProvider {
 
     private static final Logger log = LoggerFactory.getLogger(JdbcTableMetadataProvider.class);
 
-    private static final String ACCOUNT_TYPE_RO_META = "RO_META";
-
     private final InstanceDao instanceDao;
     private final CredentialDao credentialDao;
 
@@ -84,7 +83,7 @@ public class JdbcTableMetadataProvider implements TableMetadataProvider {
         }
         Credential cred;
         try {
-            cred = credentialDao.findByInstanceAndType(inst.getId(), ACCOUNT_TYPE_RO_META);
+            cred = credentialDao.findByInstanceAndType(inst.getId(), AccountType.RO_META);
             if (cred == null) {
                 log.warn("[metadata] 实例 {} 缺少 RO_META 凭据，元数据不可用（按表缺失处理）", inst.getId());
                 return null;
@@ -209,18 +208,8 @@ public class JdbcTableMetadataProvider implements TableMetadataProvider {
     }
 
     private static Dialect dialectOf(Instance inst) {
-        if (inst == null || inst.getDialect() == null) {
-            return Dialect.MYSQL;
-        }
-        String dialect = inst.getDialect().trim().toUpperCase();
-        if ("POSTGRESQL".equals(dialect) || "POSTGRES".equals(dialect)) {
-            return Dialect.PG;
-        }
-        try {
-            return Dialect.valueOf(dialect);
-        } catch (IllegalArgumentException e) {
-            return Dialect.MYSQL;
-        }
+        // 实例方言写入时已校验为 Dialect 枚举，未知取值到不了这里；仅保留 null 兜底
+        return inst == null || inst.getDialect() == null ? Dialect.MYSQL : inst.getDialect();
     }
 
     /** 剥离标识符外围引号（`name` / "name" → name）；无引号原样返回。 */

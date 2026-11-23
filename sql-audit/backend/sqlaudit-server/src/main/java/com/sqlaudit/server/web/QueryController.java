@@ -1,7 +1,11 @@
 package com.sqlaudit.server.web;
 
 import com.sqlaudit.audit.AuditWriter;
+import com.sqlaudit.common.enums.AuditAction;
+import com.sqlaudit.common.enums.AuditResult;
+import com.sqlaudit.common.enums.AuditTargetType;
 import com.sqlaudit.common.enums.Dialect;
+import com.sqlaudit.common.enums.RoleCode;
 import com.sqlaudit.common.model.AuditEvent;
 import com.sqlaudit.query.channel.QueryChannel;
 import com.sqlaudit.query.channel.QueryResult;
@@ -31,25 +35,25 @@ public class QueryController {
 
     @PostMapping
     public QueryResult execute(@RequestBody QueryRequest req) {
-        QueryResult result = queryChannel.execute(req.instanceId(), req.sql(),
-                Dialect.valueOf(req.dialect()));
+        QueryResult result = queryChannel.execute(req.instanceId(), req.sql(), req.dialect());
         auditWriter.append(AuditEvent.builder()
                 .actorId(req.userId())
                 .actorName(String.valueOf(req.userId()))
-                .actorRole("DEV")
-                .action("query.executed")
-                .targetType("instance")
+                .actorRole(RoleCode.DEV.getCode())
+                .action(AuditAction.QUERY_EXECUTED)
+                .targetType(AuditTargetType.INSTANCE)
                 .targetId(String.valueOf(req.instanceId()))
                 .instanceId(req.instanceId())
                 .detailPlaintext("{\"sql\":\"" + req.sql().replace("\\", "\\\\").replace("\"", "\\\"")
                         + "\",\"rowCount\":" + result.getRowCount() + "}")
-                .result(result.isSuccess() ? "SUCCESS" : "REJECTED")
+                .result(result.isSuccess() ? AuditResult.SUCCESS : AuditResult.REJECTED)
                 .traceId("query-inst" + req.instanceId())
                 .createdAt(OffsetDateTime.now())
                 .build());
         return result;
     }
 
-    public record QueryRequest(long instanceId, String sql, String dialect, long userId) {
+    /** dialect 按存储码（MYSQL / PG / IOTDB）反序列化，未知取值由统一错误出口转 400。 */
+    public record QueryRequest(long instanceId, String sql, Dialect dialect, long userId) {
     }
 }

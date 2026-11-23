@@ -1,6 +1,7 @@
 package com.sqlaudit.rule.risk;
 
 import com.sqlaudit.common.enums.RiskLevel;
+import com.sqlaudit.common.enums.RuleCode;
 import com.sqlaudit.common.enums.RuleSeverity;
 import com.sqlaudit.common.enums.StatementType;
 import com.sqlaudit.common.model.RuleHit;
@@ -18,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class RiskRouterTest {
 
-    private static RuleHit hit(String code, RuleSeverity severity) {
+    private static RuleHit hit(RuleCode code, RuleSeverity severity) {
         return new RuleHit(code, severity, "test");
     }
 
@@ -32,14 +33,14 @@ class RiskRouterTest {
 
         // 仅 WARN → MEDIUM
         assertEquals(RiskLevel.MEDIUM,
-                RiskAssessor.assess(List.of(hit("R_SELECT_STAR", RuleSeverity.WARN)), StatementType.INSERT, false));
+                RiskAssessor.assess(List.of(hit(RuleCode.R_SELECT_STAR, RuleSeverity.WARN)), StatementType.INSERT, false));
 
         // 一般 ERROR → HIGH
         assertEquals(RiskLevel.HIGH,
-                RiskAssessor.assess(List.of(hit("R_NO_WHERE", RuleSeverity.ERROR)), StatementType.UPDATE, false));
+                RiskAssessor.assess(List.of(hit(RuleCode.R_NO_WHERE, RuleSeverity.ERROR)), StatementType.UPDATE, false));
 
         // CRITICAL 码 → CRITICAL（逐个）
-        for (String code : RiskAssessor.CRITICAL_CODES) {
+        for (RuleCode code : RiskAssessor.CRITICAL_CODES) {
             assertEquals(RiskLevel.CRITICAL,
                     RiskAssessor.assess(List.of(hit(code, RuleSeverity.ERROR)), StatementType.DDL, false),
                     code + " 应定级 CRITICAL");
@@ -48,7 +49,7 @@ class RiskRouterTest {
         // 影响面未知 → 升一级（§4.4）
         assertEquals(RiskLevel.HIGH, RiskAssessor.assess(List.of(), StatementType.UPDATE, true));
         assertEquals(RiskLevel.CRITICAL,
-                RiskAssessor.assess(List.of(hit("R_NO_WHERE", RuleSeverity.ERROR)), StatementType.UPDATE, true));
+                RiskAssessor.assess(List.of(hit(RuleCode.R_NO_WHERE, RuleSeverity.ERROR)), StatementType.UPDATE, true));
     }
 
     // ---------------- 审批链映射表驱动 ----------------
@@ -90,7 +91,7 @@ class RiskRouterTest {
 
         // 命中 nonOverridable 规则（R_DDL_DESTRUCTIVE）→ 直接锁定 L3，任何配置不可降级
         ApprovalChain locked = router.route(RiskLevel.CRITICAL, 7,
-                List.of(hit("R_DDL_DESTRUCTIVE", RuleSeverity.ERROR)));
+                List.of(hit(RuleCode.R_DDL_DESTRUCTIVE, RuleSeverity.ERROR)));
         assertEquals(List.of("LEAD", "DBA", "ADMIN"), locked.nodes());
         assertTrue(locked.secondConfirm());
         assertEquals("L3_FALLBACK", locked.source());

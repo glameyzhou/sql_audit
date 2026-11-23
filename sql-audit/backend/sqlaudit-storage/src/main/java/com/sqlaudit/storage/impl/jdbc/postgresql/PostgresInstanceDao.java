@@ -1,15 +1,18 @@
 package com.sqlaudit.storage.impl.jdbc.postgresql;
 
+import com.sqlaudit.common.enums.CodedEnum;
+import com.sqlaudit.common.enums.Dialect;
+import com.sqlaudit.common.enums.Environment;
+import com.sqlaudit.common.enums.InstanceStatus;
 import com.sqlaudit.storage.dao.InstanceDao;
 import com.sqlaudit.storage.model.Instance;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
-
 import java.sql.PreparedStatement;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.LocalDateTime;
 import java.util.List;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
 
 /**
  * instance 的 PostgreSQL 真实现（DDL §4 t_instance 表；内存版语义基准
@@ -29,8 +32,8 @@ public class PostgresInstanceDao implements InstanceDao {
         Instance u = new Instance();
         u.setId(rs.getLong("id"));
         u.setName(rs.getString("name"));
-        u.setDialect(rs.getString("dialect"));
-        u.setEnvironment(rs.getString("environment"));
+        u.setDialect(Dialect.fromCode(rs.getString("dialect")));
+        u.setEnvironment(Environment.fromCode(rs.getString("environment")));
         long ownerId = rs.getLong("owner_id");
         u.setOwnerId(rs.wasNull() ? null : ownerId);
         u.setHost(rs.getString("host"));
@@ -40,7 +43,7 @@ public class PostgresInstanceDao implements InstanceDao {
         u.setReplicaDsn(rs.getString("replica_dsn"));
         long credentialId = rs.getLong("credential_id");
         u.setCredentialId(rs.wasNull() ? null : credentialId);
-        u.setStatus(rs.getString("status"));
+        u.setStatus(InstanceStatus.fromCode(rs.getString("status")));
         long createdBy = rs.getLong("created_by");
         u.setCreatedBy(rs.wasNull() ? null : createdBy);
         Timestamp created = rs.getTimestamp("created_at");
@@ -73,15 +76,15 @@ public class PostgresInstanceDao implements InstanceDao {
                             + "created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                             + "RETURNING id");
             ps.setString(1, instance.getName());
-            ps.setString(2, instance.getDialect());
-            ps.setString(3, instance.getEnvironment());
+            ps.setString(2, CodedEnum.code(instance.getDialect()));
+            ps.setString(3, CodedEnum.code(instance.getEnvironment()));
             ps.setLong(4, instance.getOwnerId());
             ps.setString(5, instance.getHost());
             ps.setInt(6, instance.getPort());
             ps.setString(7, instance.getDefaultSchema());
             ps.setString(8, instance.getReplicaDsn());
             setNullableLong(ps, 9, instance.getCredentialId());
-            ps.setString(10, instance.getStatus() != null ? instance.getStatus() : "ACTIVE");
+            ps.setString(10, CodedEnum.code(instance.getStatus() != null ? instance.getStatus() : InstanceStatus.ACTIVE));
             ps.setLong(11, instance.getCreatedBy());
             ps.setTimestamp(12, Timestamp.valueOf(instance.getCreatedAt() != null
                     ? instance.getCreatedAt() : LocalDateTime.now()));
@@ -106,15 +109,15 @@ public class PostgresInstanceDao implements InstanceDao {
                         + "default_schema=?, replica_dsn=?, credential_id=?, status=?, updated_at=? "
                         + "WHERE id=? AND deleted_at IS NULL",
                 instance.getName(),
-                instance.getDialect(),
-                instance.getEnvironment(),
+                CodedEnum.code(instance.getDialect()),
+                CodedEnum.code(instance.getEnvironment()),
                 instance.getOwnerId(),
                 instance.getHost(),
                 instance.getPort(),
                 instance.getDefaultSchema(),
                 instance.getReplicaDsn(),
                 instance.getCredentialId(),
-                instance.getStatus(),
+                CodedEnum.code(instance.getStatus()),
                 Timestamp.valueOf(LocalDateTime.now()),
                 instance.getId());
     }

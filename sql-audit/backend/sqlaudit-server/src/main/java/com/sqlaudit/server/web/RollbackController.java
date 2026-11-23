@@ -1,6 +1,10 @@
 package com.sqlaudit.server.web;
 
-import com.sqlaudit.server.auth.RequireRole;
+import com.sqlaudit.common.enums.RollbackCoverage;
+import com.sqlaudit.common.enums.RollbackGenerator;
+import com.sqlaudit.common.enums.PermissionCode;
+import com.sqlaudit.common.enums.RollbackStatus;
+import com.sqlaudit.server.auth.RequirePermission;
 import com.sqlaudit.server.auth.RoleAuthInterceptor;
 import com.sqlaudit.server.service.RollbackExecutor;
 import com.sqlaudit.storage.dao.RollbackDao;
@@ -40,7 +44,7 @@ public class RollbackController {
 
     /** 执行回滚（ADMIN/DBA）：把反向语句真正应用到生产库。 */
     @PostMapping("/{id}/execute")
-    @RequireRole({"ADMIN", "DBA"})
+    @RequirePermission(PermissionCode.EXECUTE)
     public RollbackExecutor.Result execute(@PathVariable long id, HttpServletRequest request) {
         long operatorId = currentUserId(request);
         return rollbackExecutor.executeRollback(id, operatorId);
@@ -59,9 +63,9 @@ public class RollbackController {
         return userId == null ? 0L : userId;
     }
 
-    /** 回滚主记录投影：仅暴露前端所需关键字段。 */
-    public record RollbackDto(Long id, Long unitId, String generator, String status,
-                              String coverage, LocalDateTime expiresAt, LocalDateTime createdAt) {
+    /** 回滚主记录投影：仅暴露前端所需关键字段（generator / status / coverage 按存储码序列化）。 */
+    public record RollbackDto(Long id, Long unitId, RollbackGenerator generator, RollbackStatus status,
+                              RollbackCoverage coverage, LocalDateTime expiresAt, LocalDateTime createdAt) {
         static RollbackDto from(RollbackSql r) {
             return new RollbackDto(r.getId(), r.getUnitId(), r.getGenerator(), r.getStatus(),
                     r.getCoverage(), r.getExpiresAt(), r.getCreatedAt());

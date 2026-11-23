@@ -7,6 +7,8 @@ import com.alibaba.druid.sql.ast.statement.SQLReplaceStatement;
 import com.alibaba.druid.sql.dialect.mysql.ast.statement.MySqlInsertStatement;
 import com.sqlaudit.common.enums.Dialect;
 import com.sqlaudit.common.enums.RollbackCoverage;
+import com.sqlaudit.common.enums.RollbackGenerator;
+import com.sqlaudit.common.enums.RuleCode;
 import com.sqlaudit.common.enums.StatementType;
 import com.sqlaudit.common.enums.UnavailableReason;
 import com.sqlaudit.common.model.ParsedStatement;
@@ -45,7 +47,7 @@ public class RollbackCapabilityAssessor {
 
         // IoTDB：不承诺自动回滚（§5.7，快照恢复 SOP）
         if (ps.getDialect() == Dialect.IOTDB) {
-            return plan(RollbackCoverage.NONE, UnavailableReason.IOTDB_UNSUPPORTED, "SNAPSHOT",
+            return plan(RollbackCoverage.NONE, UnavailableReason.IOTDB_UNSUPPORTED, RollbackGenerator.SNAPSHOT,
                     "IoTDB 无行级反向操作，走元数据快照 + 恢复 SOP");
         }
 
@@ -64,22 +66,22 @@ public class RollbackCapabilityAssessor {
 
     private RollbackPlan assessUpdateDelete(List<RuleHit> hits) {
         // 规则命中转译为不可回滚原因（顺序即优先级）
-        if (has(hits, "R_NO_PK")) {
+        if (has(hits, RuleCode.R_NO_PK)) {
             return none(UnavailableReason.NO_PRIMARY_KEY, "目标表无主键，无法生成反向 DML（硬拒绝）");
         }
-        if (has(hits, "R_MULTI_TABLE_DML")) {
+        if (has(hits, RuleCode.R_MULTI_TABLE_DML)) {
             return none(UnavailableReason.MULTI_TABLE_DML, "多表 JOIN 的 DML，前镜像行集无法与语句对齐");
         }
-        if (has(hits, "R_LIMIT_ORDER_DML")) {
+        if (has(hits, RuleCode.R_LIMIT_ORDER_DML)) {
             return none(UnavailableReason.LIMIT_ORDER_DML, "带 LIMIT/ORDER BY 的 DML，回滚不可靠");
         }
-        if (has(hits, "R_NONDETERMINISTIC_SET")) {
+        if (has(hits, RuleCode.R_NONDETERMINISTIC_SET)) {
             return none(UnavailableReason.NONDETERMINISTIC, "SET 值非确定性（函数/自增/子查询），前镜像失效");
         }
 
         // 有主键 + 确定性 SET + 单表 → FULL（MySQL/PG 一致，§5.2 第 1、2 行）。
         // 单表前提：多表已由 R_MULTI_TABLE_DML 捕获；无主键由 R_NO_PK 捕获。
-        return plan(RollbackCoverage.FULL, null, "MIRROR",
+        return plan(RollbackCoverage.FULL, null, RollbackGenerator.MIRROR,
                 "前镜像 → 每行一条反向 DML");
     }
 
@@ -114,7 +116,7 @@ public class RollbackCapabilityAssessor {
 
         // 显式主键的单条 INSERT → FULL（反向 DELETE WHERE pk=?）
         if (valueRowCount == 1 && explicitPkValue(insert, ctx.metadata())) {
-            return plan(RollbackCoverage.FULL, null, "MIRROR",
+            return plan(RollbackCoverage.FULL, null, RollbackGenerator.MIRROR,
                     "单条 INSERT 且显式主键 → 反向 DELETE WHERE pk=?");
         }
 
@@ -124,13 +126,13 @@ public class RollbackCapabilityAssessor {
             String note = ps.getDialect() == Dialect.MYSQL
                     ? "单条自增 INSERT → 执行后同连接 SELECT LAST_INSERT_ID() 取主键，反向 DELETE"
                     : "单条自增 INSERT → 执行期改写 INSERT ... RETURNING pk 取主键，反向 DELETE";
-            return plan(RollbackCoverage.FULL, null, "MIRROR", note);
+            return plan(RollbackCoverage.FULL, null, RollbackGenerator.MIRROR, note);
         }
 
         // 批量 INSERT：MySQL ❌；PG ⚠️ RETURNING 多行可覆盖（PARTIAL，§5.2 第 4 行）
         if (valueRowCount > 1) {
             if (ps.getDialect() == Dialect.PG) {
-                return plan(RollbackCoverage.PARTIAL, null, "MIRROR",
+                return plan(RollbackCoverage.PARTIAL, null, RollbackGenerator.MIRROR,
                         "批量 INSERT：执行期改写 RETURNING pk 返回全部主键，逐行反向 DELETE"
                                 + "（S2 spike 验证驱动多行 RETURNING 行为）");
             }
@@ -172,13 +174,13 @@ public class RollbackCapabilityAssessor {
 
     private RollbackPlan assessDdl(List<RuleHit> hits) {
         // 破坏性 DDL：影子表 / 列投影备份，不生成反向 SQL（§5.6）
-        if (has(hits, "R_DDL_DESTRUCTIVE")) {
-            return plan(RollbackCoverage.NONE, UnavailableReason.DESTRUCTIVE_DDL, "SNAPSHOT",
+        if (has(hits, RuleCode.R_DDL_DESTRUCTIVE)) {
+            return plan(RollbackCoverage.NONE, UnavailableReason.DESTRUCTIVE_DDL, RollbackGenerator.SNAPSHOT,
                     "破坏性 DDL 走影子表（整表级）/ 列投影备份（列级），不生成反向 SQL");
         }
         // 其余 DDL 按可逆向候选处理；具体映射（CREATE TABLE/ADD COLUMN/CREATE INDEX/RENAME
         // → 反向 DDL）由 DdlReverseMapper 产出，不认识的形态在那里标 not_available
-        return plan(RollbackCoverage.FULL, null, "REVERSE_DDL",
+        return plan(RollbackCoverage.FULL, null, RollbackGenerator.REVERSE_DDL,
                 "可逆向 DDL → 反向 DDL（带有效期与前置条件，§5.6）");
     }
 
@@ -186,12 +188,12 @@ public class RollbackCapabilityAssessor {
     // 工具
     // ------------------------------------------------------------------
 
-    private static boolean has(List<RuleHit> hits, String code) {
-        return hits.stream().anyMatch(h -> code.equals(h.getCode()));
+    private static boolean has(List<RuleHit> hits, RuleCode code) {
+        return hits.stream().anyMatch(h -> h.getCode() == code);
     }
 
     private static RollbackPlan plan(RollbackCoverage coverage, UnavailableReason reason,
-                                     String generator, String note) {
+                                     RollbackGenerator generator, String note) {
         RollbackPlan p = new RollbackPlan();
         p.setCoverage(coverage);
         p.setUnavailableReason(reason);
@@ -201,6 +203,6 @@ public class RollbackCapabilityAssessor {
     }
 
     private static RollbackPlan none(UnavailableReason reason, String note) {
-        return plan(RollbackCoverage.NONE, reason, "NONE", note);
+        return plan(RollbackCoverage.NONE, reason, RollbackGenerator.NONE, note);
     }
 }

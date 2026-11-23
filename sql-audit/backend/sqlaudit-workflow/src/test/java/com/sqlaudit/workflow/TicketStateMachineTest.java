@@ -1,5 +1,7 @@
 package com.sqlaudit.workflow;
 
+import com.sqlaudit.common.enums.Environment;
+import com.sqlaudit.common.enums.RiskLevel;
 import com.sqlaudit.common.enums.TicketStatus;
 import com.sqlaudit.common.exception.IllegalStateTransitionException;
 import com.sqlaudit.common.exception.SqlauditException;
@@ -13,8 +15,6 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
-import static com.sqlaudit.workflow.TicketStateMachine.dbValue;
-import static com.sqlaudit.workflow.TicketStateMachine.parse;
 import static java.util.Map.entry;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -86,9 +86,9 @@ class TicketStateMachineTest {
         ticket.setTitle("state-machine-test");
         ticket.setCreatorId(1L);
         ticket.setInstanceIds(new ArrayList<>(List.of(1L)));
-        ticket.setEnvironment("prod");
-        ticket.setRiskLevel("HIGH");
-        ticket.setStatus(dbValue(TicketStatus.DRAFT));
+        ticket.setEnvironment(Environment.PROD);
+        ticket.setRiskLevel(RiskLevel.HIGH);
+        ticket.setStatus(TicketStatus.DRAFT);
         ticket.setTraceId("trace-sm");
         LocalDateTime now = LocalDateTime.now();
         ticket.setCreatedAt(now);
@@ -103,7 +103,7 @@ class TicketStateMachineTest {
         for (TicketStatus step : PATHS.get(target)) {
             stateMachine.transition(ticket, step, "tester");
         }
-        assertEquals(dbValue(target), ticket.getStatus(), "前置路径应到达 " + target);
+        assertEquals(target, ticket.getStatus(), "前置路径应到达 " + target);
         return ticket;
     }
 
@@ -127,9 +127,9 @@ class TicketStateMachineTest {
         for (Map.Entry<TicketStatus, TicketStatus> edge : LEGAL_EDGES) {
             Ticket ticket = atStatus(edge.getKey());
             stateMachine.transition(ticket, edge.getValue(), "tester");
-            assertEquals(dbValue(edge.getValue()), ticket.getStatus(),
+            assertEquals(edge.getValue(), ticket.getStatus(),
                     "边 " + edge.getKey() + " → " + edge.getValue() + " 迁移后内存状态");
-            assertEquals(dbValue(edge.getValue()), ticketDao.findById(ticket.getId()).getStatus(),
+            assertEquals(edge.getValue(), ticketDao.findById(ticket.getId()).getStatus(),
                     "边 " + edge.getKey() + " → " + edge.getValue() + " 迁移后落库状态");
         }
     }
@@ -150,7 +150,7 @@ class TicketStateMachineTest {
                         "异常消息应含迁移两端：" + ex.getMessage());
             }
             // 非法迁移不得改变状态（不是静默忽略，也不是部分生效）
-            assertEquals(dbValue(from), ticketDao.findById(ticket.getId()).getStatus(),
+            assertEquals(from, ticketDao.findById(ticket.getId()).getStatus(),
                     from + " 经历全部非法迁移尝试后状态不变");
         }
     }
@@ -187,21 +187,22 @@ class TicketStateMachineTest {
         Ticket ticket = atStatus(TicketStatus.DRAFT);
 
         // 模拟并发：另一个调用方先把 draft → submitted 落库
-        assertEquals(1, ticketDao.updateStatus(ticket.getId(), "draft", "submitted", LocalDateTime.now()));
+        assertEquals(1, ticketDao.updateStatus(ticket.getId(), TicketStatus.DRAFT, TicketStatus.SUBMITTED,
+                LocalDateTime.now()));
 
         // 手里的快照仍是 draft：canTransitionTo 通过，但条件更新影响行数 0 → 冲突异常
         SqlauditException ex = assertThrows(SqlauditException.class,
                 () -> stateMachine.transition(ticket, TicketStatus.SUBMITTED, "u1"));
         assertEquals("TICKET_STATE_CONFLICT", ex.getCode());
-        assertEquals("submitted", ticketDao.findById(ticket.getId()).getStatus());
+        assertEquals(TicketStatus.SUBMITTED, ticketDao.findById(ticket.getId()).getStatus());
     }
 
     @Test
-    void 编解码_dbValue小写parse往返() {
+    void 编解码_存储码fromCode往返() {
         for (TicketStatus status : TicketStatus.values()) {
-            assertEquals(status, parse(dbValue(status)));
+            assertEquals(status, TicketStatus.fromCode(status.getCode()));
         }
-        SqlauditException ex = assertThrows(SqlauditException.class, () -> parse("no_such_status"));
-        assertEquals("UNKNOWN_TICKET_STATUS", ex.getCode());
+        // 未知取值在编解码入口即抛异常，不会被静默吞掉
+        assertThrows(IllegalArgumentException.class, () -> TicketStatus.fromCode("no_such_status"));
     }
 }

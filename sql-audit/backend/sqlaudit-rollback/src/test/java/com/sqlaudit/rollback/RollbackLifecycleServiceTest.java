@@ -1,6 +1,9 @@
 package com.sqlaudit.rollback;
 
 import com.sqlaudit.common.enums.Dialect;
+import com.sqlaudit.common.enums.RollbackCoverage;
+import com.sqlaudit.common.enums.RollbackGenerator;
+import com.sqlaudit.common.enums.RollbackStatus;
 import com.sqlaudit.parser.SqlParserService;
 import com.sqlaudit.rollback.lifecycle.RollbackLifecycleService;
 import com.sqlaudit.rollback.reverse.ReverseStatement;
@@ -35,14 +38,14 @@ class RollbackLifecycleServiceTest {
                 new ReverseStatement("UPDATE t SET a = ? WHERE id = ?", List.of(10, 1)),
                 new ReverseStatement("UPDATE t SET a = ? WHERE id = ?", List.of(20, 2)));
 
-        long id = service.persistAndVerify(100L, "MIRROR", "FULL",
+        long id = service.persistAndVerify(100L, RollbackGenerator.MIRROR, RollbackCoverage.FULL,
                 List.of("row1", "row2"), statements, Dialect.MYSQL,
                 NOW, Duration.ofHours(24));
 
         // 主记录：verified（语法自检通过）、子表逐条（v2 单行 VARBINARY 错误已修正）
         RollbackSql master = dao.findByUnitId(100L);
         assertNotNull(master);
-        assertEquals("verified", master.getStatus());
+        assertEquals(RollbackStatus.VERIFIED, master.getStatus());
         assertEquals(2, master.getStmtCount());
         assertEquals(NOW.plusHours(24), master.getExpiresAt());
         assertNotNull(master.getPreimageHash());
@@ -59,11 +62,11 @@ class RollbackLifecycleServiceTest {
         List<ReverseStatement> bad = List.of(
                 new ReverseStatement("UPDATE t SET WHERE ???", List.of()));
 
-        service.persistAndVerify(101L, "MIRROR", "FULL", null, bad, Dialect.MYSQL,
+        service.persistAndVerify(101L, RollbackGenerator.MIRROR, RollbackCoverage.FULL, null, bad, Dialect.MYSQL,
                 NOW, Duration.ofHours(24));
 
         RollbackSql master = dao.findByUnitId(101L);
-        assertEquals("not_available", master.getStatus());
+        assertEquals(RollbackStatus.NOT_AVAILABLE, master.getStatus());
         assertTrue(master.getUnavailableReason().startsWith("SYNTAX_CHECK_FAILED"));
     }
 
@@ -71,7 +74,7 @@ class RollbackLifecycleServiceTest {
     void dependencyCheck_hashMismatch_rejected() {
         List<ReverseStatement> stmts = List.of(
                 new ReverseStatement("UPDATE t SET a = ? WHERE id = ?", List.of(10, 1)));
-        service.persistAndVerify(102L, "MIRROR", "FULL",
+        service.persistAndVerify(102L, RollbackGenerator.MIRROR, RollbackCoverage.FULL,
                 List.of("row1|a=10"), stmts, Dialect.MYSQL, NOW, Duration.ofHours(24));
 
         // 数据未动：hash 一致 → 可回滚
@@ -85,7 +88,7 @@ class RollbackLifecycleServiceTest {
         // INSERT 反向无前镜像 → 不适用依赖检测，放行
         List<ReverseStatement> stmts = List.of(
                 new ReverseStatement("DELETE FROM t WHERE id = ?", List.of(42)));
-        service.persistAndVerify(103L, "MIRROR", "FULL", null, stmts,
+        service.persistAndVerify(103L, RollbackGenerator.MIRROR, RollbackCoverage.FULL, null, stmts,
                 Dialect.MYSQL, NOW, Duration.ofHours(24));
         assertTrue(service.dependencyCheck(103L, null));
     }
@@ -97,7 +100,7 @@ class RollbackLifecycleServiceTest {
             tooMany.add(new ReverseStatement("UPDATE t SET a = ? WHERE id = ?", List.of(i, i)));
         }
         try {
-            service.persistAndVerify(104L, "MIRROR", "FULL", null, tooMany,
+            service.persistAndVerify(104L, RollbackGenerator.MIRROR, RollbackCoverage.FULL, null, tooMany,
                     Dialect.MYSQL, NOW, Duration.ofHours(24));
             org.junit.jupiter.api.Assertions.fail("超阈值应拒绝落平台库（转对象存储）");
         } catch (IllegalStateException expected) {
@@ -109,7 +112,7 @@ class RollbackLifecycleServiceTest {
     void markStatementApplied_idempotent() {
         List<ReverseStatement> stmts = List.of(
                 new ReverseStatement("UPDATE t SET a = ? WHERE id = ?", List.of(10, 1)));
-        long id = service.persistAndVerify(105L, "MIRROR", "FULL",
+        long id = service.persistAndVerify(105L, RollbackGenerator.MIRROR, RollbackCoverage.FULL,
                 List.of("r"), stmts, Dialect.MYSQL, NOW, Duration.ofHours(24));
 
         RollbackStatement row = dao.listStatements(id, 0, 10).get(0);

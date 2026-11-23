@@ -26,7 +26,7 @@
       </template>
 
       <div v-loading="loading" class="table-wrap">
-        <el-table v-if="rows.length" :data="rows" class="rollback-table">
+        <el-table v-if="rows.length" :data="rows" class="rollback-table" :row-class-name="rowClassName">
           <el-table-column label="回滚单号" width="120">
             <template #default="{ row }">
               <span class="cell-mono mono">{{ row.id }}</span>
@@ -87,6 +87,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { coverageMeta } from '../../constants'
@@ -94,6 +95,13 @@ import { api } from '../../api'
 import { useSessionStore } from '../../stores/session'
 
 const session = useSessionStore()
+const route = useRoute()
+
+/** 从工单详情跳转带 rollbackId 查询参数时，高亮对应行 */
+const highlightId = computed(() => Number(route.query.rollbackId) || null)
+function rowClassName({ row }) {
+  return highlightId.value && row.id === highlightId.value ? 'highlight-row' : ''
+}
 /** 执行回滚需 ADMIN/DBA（真实鉴权以后端为准，此处仅控制可见性） */
 const canExecute = computed(() => session.roles.includes('ADMIN') || session.roles.includes('DBA'))
 
@@ -184,4 +192,8 @@ onMounted(load)
 
 .cell-mono { font-family: var(--sa-font-mono); font-size: 12px; color: var(--sa-text); font-weight: 600; }
 .cell-dim { color: var(--sa-text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+/* 从工单详情跳转定位的回滚行高亮 */
+:deep(.highlight-row) { background: var(--sa-brand-soft); }
+:deep(.highlight-row > td) { background: var(--sa-brand-soft) !important; }
 </style>

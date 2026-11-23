@@ -1,5 +1,8 @@
 package com.sqlaudit.storage.model;
 
+import com.sqlaudit.common.enums.Environment;
+import com.sqlaudit.common.enums.RiskLevel;
+import com.sqlaudit.common.enums.TicketStatus;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -11,11 +14,13 @@ import java.util.List;
  *
  * <p>关键字段约定：</p>
  * <ul>
- *   <li>{@code status} 为小写字符串（§3.2 状态机），与 {@link TicketUnit#getStatus()} 风格一致；</li>
- *   <li>{@code riskLevel} 存枚举名（LOW/MEDIUM/HIGH/CRITICAL，§4.5）；</li>
+ *   <li>{@code status} 为 {@link TicketStatus} 枚举，DB 中存其小写存储码（§3.2 状态机），
+ *       转换只在 DAO 边界做（{@code getCode()} / {@code fromCode}）；</li>
+ *   <li>{@code riskLevel} 为 {@link RiskLevel} 枚举，DB 中存枚举名（LOW/MEDIUM/HIGH/CRITICAL，§4.5）；</li>
  *   <li>{@code instanceIds} 对应 DDL 的 JSON 列（多实例工单），内存模型用 {@code List}，
  *       W2 换 MyBatis 时做 JSON 序列化；</li>
- *   <li>{@code rollbackSummary} 为提交预览时的「可回滚 / 不可回滚」清单（JSON 原样透传，§5.1）。</li>
+ *   <li>{@code rollbackSummary} 为提交预览时的「可回滚 / 不可回滚」清单（JSON 原样透传，§5.1）；</li>
+ *   <li>{@code environment} 为 {@link Environment} 枚举（存储码 prod / test / dev）。</li>
  * </ul>
  */
 public class Ticket {
@@ -26,17 +31,26 @@ public class Ticket {
     /** 目标实例列表（JSON 列），第一个为主实例 */
     private List<Long> instanceIds;
     /** prod/staging */
-    private String environment;
+    private Environment environment;
     /** LOW/MEDIUM/HIGH/CRITICAL（枚举名） */
-    private String riskLevel;
+    private RiskLevel riskLevel;
     /** draft/submitted/auditing/... （小写，见 TicketStatus） */
-    private String status;
+    private TicketStatus status;
     private String rollbackSummary;
+    /** 工单提交的原始 SQL（工单详情 / 审批视图展示用） */
+    private String sqlText;
+    /** 分表执行配置（JSON：template/suffixes，审计可见「分表 DDL」语义） */
+    private String shardConfig;
     /** 低峰执行窗口 */
     private LocalDateTime scheduledAt;
     private String traceId;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+    /** 是否需要执行前二次确认（§3.4 CRITICAL 链 secondConfirm） */
+    private boolean needsSecondConfirm;
+    /** 执行前二次确认人（user_id） */
+    private Long confirmedBy;
+    private LocalDateTime confirmedAt;
 
     public Long getId() {
         return id;
@@ -70,27 +84,27 @@ public class Ticket {
         this.instanceIds = instanceIds;
     }
 
-    public String getEnvironment() {
+    public Environment getEnvironment() {
         return environment;
     }
 
-    public void setEnvironment(String environment) {
+    public void setEnvironment(Environment environment) {
         this.environment = environment;
     }
 
-    public String getRiskLevel() {
+    public RiskLevel getRiskLevel() {
         return riskLevel;
     }
 
-    public void setRiskLevel(String riskLevel) {
+    public void setRiskLevel(RiskLevel riskLevel) {
         this.riskLevel = riskLevel;
     }
 
-    public String getStatus() {
+    public TicketStatus getStatus() {
         return status;
     }
 
-    public void setStatus(String status) {
+    public void setStatus(TicketStatus status) {
         this.status = status;
     }
 
@@ -100,6 +114,22 @@ public class Ticket {
 
     public void setRollbackSummary(String rollbackSummary) {
         this.rollbackSummary = rollbackSummary;
+    }
+
+    public String getSqlText() {
+        return sqlText;
+    }
+
+    public void setSqlText(String sqlText) {
+        this.sqlText = sqlText;
+    }
+
+    public String getShardConfig() {
+        return shardConfig;
+    }
+
+    public void setShardConfig(String shardConfig) {
+        this.shardConfig = shardConfig;
     }
 
     public LocalDateTime getScheduledAt() {
@@ -132,5 +162,29 @@ public class Ticket {
 
     public void setUpdatedAt(LocalDateTime updatedAt) {
         this.updatedAt = updatedAt;
+    }
+
+    public boolean isNeedsSecondConfirm() {
+        return needsSecondConfirm;
+    }
+
+    public void setNeedsSecondConfirm(boolean needsSecondConfirm) {
+        this.needsSecondConfirm = needsSecondConfirm;
+    }
+
+    public Long getConfirmedBy() {
+        return confirmedBy;
+    }
+
+    public void setConfirmedBy(Long confirmedBy) {
+        this.confirmedBy = confirmedBy;
+    }
+
+    public LocalDateTime getConfirmedAt() {
+        return confirmedAt;
+    }
+
+    public void setConfirmedAt(LocalDateTime confirmedAt) {
+        this.confirmedAt = confirmedAt;
     }
 }

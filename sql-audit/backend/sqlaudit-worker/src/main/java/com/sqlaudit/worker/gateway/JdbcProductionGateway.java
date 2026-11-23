@@ -2,6 +2,7 @@ package com.sqlaudit.worker.gateway;
 
 import com.sqlaudit.common.crypto.CredentialCrypto;
 import com.sqlaudit.common.crypto.CredentialCryptoException;
+import com.sqlaudit.common.enums.AccountType;
 import com.sqlaudit.common.enums.Dialect;
 import com.sqlaudit.executor.gateway.ProductionGateway;
 import com.sqlaudit.storage.dao.InstanceDao;
@@ -240,32 +241,20 @@ public class JdbcProductionGateway implements ProductionGateway {
     private Credential loadCredential(long instanceId) {
         List<Credential> creds = platformJdbc.query(
                 "SELECT username, password_enc FROM t_credential "
-                        + "WHERE instance_id=? AND account_type='RW_EXEC' LIMIT 1",
+                        + "WHERE instance_id=? AND account_type=? LIMIT 1",
                 (rs, i) -> {
                     String username = rs.getString("username");
                     byte[] enc = rs.getBytes("password_enc");
                     String encrypted = enc == null ? null : new String(enc, StandardCharsets.UTF_8);
                     String password = encrypted == null ? null : CredentialCrypto.decrypt(encrypted);
                     return new Credential(username, password);
-                }, instanceId);
+                }, instanceId, AccountType.RW_EXEC.getCode());
         return creds.isEmpty() ? null : creds.get(0);
     }
 
     private static Dialect dialectOf(Instance inst) {
-        if (inst.getDialect() == null) {
-            return Dialect.MYSQL;
-        }
-        String dialect = inst.getDialect().trim().toUpperCase();
-        // 别名归一：UI/种子数据可能写入 POSTGRESQL/POSTGRES，统一映射枚举 PG，
-        // 避免未知字符串静默回落 MySQL（错方言会用错驱动连库）
-        if ("POSTGRESQL".equals(dialect) || "POSTGRES".equals(dialect)) {
-            return Dialect.PG;
-        }
-        try {
-            return Dialect.valueOf(dialect);
-        } catch (IllegalArgumentException e) {
-            return Dialect.MYSQL;
-        }
+        // 实例方言写入时已校验为 Dialect 枚举，未知取值到不了这里；仅保留 null 兜底
+        return inst.getDialect() == null ? Dialect.MYSQL : inst.getDialect();
     }
 
     private static String jdbcUrl(Instance inst, Dialect dialect) {

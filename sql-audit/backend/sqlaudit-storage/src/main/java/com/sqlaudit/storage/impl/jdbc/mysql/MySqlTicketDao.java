@@ -2,13 +2,12 @@ package com.sqlaudit.storage.impl.jdbc.mysql;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sqlaudit.common.enums.CodedEnum;
+import com.sqlaudit.common.enums.Environment;
+import com.sqlaudit.common.enums.RiskLevel;
+import com.sqlaudit.common.enums.TicketStatus;
 import com.sqlaudit.storage.dao.TicketDao;
 import com.sqlaudit.storage.model.Ticket;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
-import org.springframework.jdbc.support.GeneratedKeyHolder;
-import org.springframework.jdbc.support.KeyHolder;
-
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -16,6 +15,10 @@ import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
 
 /**
  * ticket 的 MySQL 真实现（DDL §5 ticket 表；内存版语义基准 {@code InMemoryTicketDao}）。
@@ -56,10 +59,12 @@ public class MySqlTicketDao implements TicketDao {
         t.setTitle(rs.getString("title"));
         t.setCreatorId(rs.getLong("creator_id"));
         t.setInstanceIds(readInstanceIds(rs.getString("instance_ids")));
-        t.setEnvironment(rs.getString("environment"));
-        t.setRiskLevel(rs.getString("risk_level"));
-        t.setStatus(rs.getString("status"));
+        t.setEnvironment(Environment.fromCode(rs.getString("environment")));
+        t.setRiskLevel(RiskLevel.fromCode(rs.getString("risk_level")));
+        t.setStatus(TicketStatus.fromCode(rs.getString("status")));
         t.setRollbackSummary(rs.getString("rollback_summary"));
+        t.setSqlText(rs.getString("sql_text"));
+        t.setShardConfig(rs.getString("shard_config"));
         Timestamp scheduled = rs.getTimestamp("scheduled_at");
         t.setScheduledAt(scheduled == null ? null : scheduled.toLocalDateTime());
         t.setTraceId(rs.getString("trace_id"));
@@ -67,6 +72,10 @@ public class MySqlTicketDao implements TicketDao {
         t.setCreatedAt(created == null ? null : created.toLocalDateTime());
         Timestamp updated = rs.getTimestamp("updated_at");
         t.setUpdatedAt(updated == null ? null : updated.toLocalDateTime());
+        t.setNeedsSecondConfirm(rs.getBoolean("needs_second_confirm"));
+        t.setConfirmedBy(rs.getObject("confirmed_by", Long.class));
+        Timestamp confirmedAt = rs.getTimestamp("confirmed_at");
+        t.setConfirmedAt(confirmedAt == null ? null : confirmedAt.toLocalDateTime());
         return t;
     };
 
@@ -76,16 +85,16 @@ public class MySqlTicketDao implements TicketDao {
         jdbc.update(conn -> {
             PreparedStatement ps = conn.prepareStatement(
                     "INSERT INTO t_ticket (title, creator_id, instance_ids, environment, risk_level, status, "
-                            + "rollback_summary, scheduled_at, trace_id, created_at, updated_at) "
-                            + "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                            + "rollback_summary, scheduled_at, trace_id, created_at, updated_at, sql_text, shard_config) "
+                            + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     Statement.RETURN_GENERATED_KEYS);
             ps.setString(1, ticket.getTitle());
             ps.setLong(2, ticket.getCreatorId());
             // JSON 列：List<Long> 序列化为 JSON 文本；instanceIds 为 null 时 MySQL NOT NULL 约束报错
             ps.setString(3, writeInstanceIds(ticket.getInstanceIds()));
-            ps.setString(4, ticket.getEnvironment());
-            ps.setString(5, ticket.getRiskLevel());
-            ps.setString(6, ticket.getStatus());
+            ps.setString(4, CodedEnum.code(ticket.getEnvironment()));
+            ps.setString(5, CodedEnum.code(ticket.getRiskLevel()));
+            ps.setString(6, CodedEnum.code(ticket.getStatus()));
             // rollback_summary 模型即 JSON 字符串，原样透传（可 null）
             ps.setString(7, ticket.getRollbackSummary());
             ps.setTimestamp(8, ticket.getScheduledAt() == null ? null : Timestamp.valueOf(ticket.getScheduledAt()));
@@ -94,6 +103,8 @@ public class MySqlTicketDao implements TicketDao {
                     ? ticket.getCreatedAt() : LocalDateTime.now()));
             ps.setTimestamp(11, Timestamp.valueOf(ticket.getUpdatedAt() != null
                     ? ticket.getUpdatedAt() : LocalDateTime.now()));
+            ps.setString(12, ticket.getSqlText());
+            ps.setString(13, ticket.getShardConfig());
             return ps;
         }, kh);
         long id = kh.getKey().longValue();
@@ -108,12 +119,12 @@ public class MySqlTicketDao implements TicketDao {
     }
 
     @Override
-    public int updateStatus(long id, String fromStatus, String toStatus, LocalDateTime changedAt) {
+    public int updateStatus(long id, TicketStatus fromStatus, TicketStatus toStatus, LocalDateTime changedAt) {
         // 条件 UPDATE（乐观并发）：fromStatus 不匹配 → 0；updated_at 显式置为 changedAt
         // （approval_ttl 基准，显式赋值不会被 ON UPDATE CURRENT_TIMESTAMP 覆盖）
         return jdbc.update(
                 "UPDATE t_ticket SET status=?, updated_at=? WHERE id=? AND status=?",
-                toStatus, Timestamp.valueOf(changedAt), id, fromStatus);
+                CodedEnum.code(toStatus), Timestamp.valueOf(changedAt), id, CodedEnum.code(fromStatus));
     }
 
     @Override
@@ -124,8 +135,19 @@ public class MySqlTicketDao implements TicketDao {
     }
 
     @Override
-    public List<Ticket> listByStatus(String status) {
-        return jdbc.query("SELECT * FROM t_ticket WHERE status=? ORDER BY id", MAPPER, status);
+    public List<Ticket> listByStatus(TicketStatus status) {
+        return jdbc.query("SELECT * FROM t_ticket WHERE status=? ORDER BY id", MAPPER, CodedEnum.code(status));
+    }
+
+    @Override
+    public int markNeedsSecondConfirm(long id, boolean required) {
+        return jdbc.update("UPDATE t_ticket SET needs_second_confirm=? WHERE id=?", required, id);
+    }
+
+    @Override
+    public int updateSecondConfirm(long id, Long confirmedBy, LocalDateTime confirmedAt) {
+        return jdbc.update("UPDATE t_ticket SET confirmed_by=?, confirmed_at=? WHERE id=?",
+                confirmedBy, confirmedAt == null ? null : Timestamp.valueOf(confirmedAt), id);
     }
 
     // ---- JSON 列转换 ----

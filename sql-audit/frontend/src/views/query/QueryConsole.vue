@@ -24,6 +24,29 @@
               />
             </el-select>
           </el-form-item>
+          <el-form-item label="数据库">
+            <div class="db-picker">
+              <el-select
+                v-model="selectedDb"
+                placeholder="选择数据库"
+                style="width: 200px"
+                filterable
+                :loading="dbLoading"
+                :disabled="instanceId == null"
+              >
+                <el-option v-for="db in databases" :key="db" :label="db" :value="db" />
+              </el-select>
+              <el-button
+                :icon="Refresh"
+                link
+                size="small"
+                title="刷新库列表"
+                :loading="dbLoading"
+                :disabled="instanceId == null"
+                @click="loadDatabases"
+              />
+            </div>
+          </el-form-item>
           <el-form-item label="连接信息">
             <div v-if="currentInstance" class="inst-meta">
               <el-tag size="small" effect="light" type="info">{{ currentInstance.dialect || '?' }}</el-tag>
@@ -41,66 +64,45 @@
           当前环境（{{ globalEnv }}）下没有可用实例，已展示全部实例
         </div>
 
-        <!-- 库 / 表两列浏览（实例选定后显示） -->
-        <div v-if="instanceId != null" class="browser-row">
-          <div class="browser-col">
-            <div class="browser-head">
-              <span>数据库</span>
+        <!-- 工作台：左「数据表」+ 右「SQL 编辑 + 结果预览」 -->
+        <div class="workbench">
+          <div class="table-col">
+            <div class="pane-head">
+              <span>数据表</span>
               <el-button
                 :icon="Refresh"
                 link
                 size="small"
-                title="刷新"
-                :loading="dbLoading"
-                @click="loadDatabases"
-              />
-            </div>
-            <div v-loading="dbLoading" class="browser-body">
-              <div v-if="dbError" class="browser-state err">加载失败，点击上方刷新重试</div>
-              <div v-else-if="!databases.length" class="browser-state">（空）</div>
-              <div v-else class="browser-list">
-                <div
-                  v-for="db in databases"
-                  :key="db"
-                  class="browser-item mono"
-                  :class="{ active: db === selectedDb }"
-                  @click="pickDb(db)"
-                >{{ db }}</div>
-              </div>
-            </div>
-          </div>
-
-          <div class="browser-col">
-            <div class="browser-head">
-              <span>表</span>
-              <el-button
-                :icon="Refresh"
-                link
-                size="small"
-                title="刷新"
+                title="刷新表列表"
                 :loading="tableLoading"
                 :disabled="!selectedDb"
                 @click="loadTables"
               />
             </div>
-            <div v-loading="tableLoading" class="browser-body">
-              <div v-if="tableError" class="browser-state err">加载失败，点击上方刷新重试</div>
-              <div v-else-if="!selectedDb" class="browser-state">先选择左侧数据库</div>
+            <div v-loading="tableLoading" class="pane-body">
+              <div v-if="instanceId == null" class="browser-state">先选择上方实例</div>
+              <div v-else-if="dbError" class="browser-state err">库列表加载失败，点「数据库」旁刷新重试</div>
+              <div v-else-if="!selectedDb" class="browser-state">先选择上方数据库</div>
+              <div v-else-if="tableError" class="browser-state err">加载失败，点击刷新重试</div>
               <div v-else-if="!tables.length" class="browser-state">（空）</div>
               <div v-else class="browser-list">
                 <div
                   v-for="t in tables"
                   :key="t"
                   class="browser-item mono"
-                  title="点击生成 SELECT 并执行"
+                  title="点击生成 SELECT 并预览最近 20 行"
                   @click="pickTable(t)"
                 >{{ t }}</div>
               </div>
             </div>
           </div>
-        </div>
 
-        <el-form-item label="SQL 语句">
+          <div class="editor-col">
+            <div class="pane-head">
+              <span>SQL 工作台</span>
+              <span class="pane-hint">点表名 → 生成 SELECT，并在下方预览最近 20 行</span>
+            </div>
+
           <!-- textarea 透明文字 + 背后 <pre> 高亮层（同字体同 padding，滚动同步） -->
           <div ref="editorRef" class="sql-editor">
             <pre ref="hlRef" class="hl-layer" aria-hidden="true" v-html="highlightedSql"></pre>
@@ -133,32 +135,32 @@
               </div>
             </div>
           </div>
-        </el-form-item>
 
-        <div class="form-actions">
-          <el-button
-            type="primary"
-            :loading="running"
-            :disabled="!canRun"
-            @click="run"
-          >执行</el-button>
-          <span class="run-hint">查询经 LIMIT 三层保护并写入审计链</span>
-        </div>
-      </el-form>
-    </div>
+            <div class="form-actions">
+              <el-button
+                type="primary"
+                :loading="running"
+                :disabled="!canRun"
+                @click="runFromButton"
+              >执行</el-button>
+              <span class="run-hint">查询经 LIMIT 三层保护并写入审计链</span>
+            </div>
 
-    <!-- 失败 -->
-    <el-alert
-      v-if="result && result.success === false"
-      type="error"
-      :closable="false"
-      show-icon
-      class="result-alert"
-      :title="result.reason || '查询失败'"
-    />
+            <!-- 失败 -->
+            <el-alert
+              v-if="result && result.success === false"
+              type="error"
+              :closable="false"
+              show-icon
+              class="result-alert"
+              :title="result.reason || '查询失败'"
+            />
 
-    <!-- 成功 -->
-    <div v-if="result && result.success" class="card result-card">
+            <!-- 成功：结果紧贴编辑器下方展示（点表预览与手动查询共用） -->
+            <div v-if="result && result.success" class="result-inline">
+              <div class="result-head">
+                <span class="result-title">{{ previewMode ? '数据预览（最近 20 行）' : '查询结果' }}</span>
+              </div>
       <div class="info-bar">
         <div class="info-item">
           <span class="info-k">返回行数</span>
@@ -211,6 +213,10 @@
           </template>
         </el-table-column>
       </el-table>
+            </div>
+          </div>
+        </div>
+      </el-form>
     </div>
   </div>
 </template>
@@ -295,6 +301,9 @@ const tableError = ref(false)
 let dbSeq = 0
 let tableSeq = 0
 
+// 列名缓存：表标识符 → 列名数组（随库/表切换失效）
+const columnCache = new Map()
+
 async function loadDatabases() {
   const id = instanceId.value
   if (id == null) return
@@ -303,11 +312,17 @@ async function loadDatabases() {
   dbError.value = false
   selectedDb.value = ''
   tables.value = []
+  columnCache.clear()
   tableError.value = false
   try {
     const list = await api.listDatabases(id)
     if (seq !== dbSeq) return
     databases.value = list || []
+    // 默认选中实例的默认库（存在时），否则取第一个，省去一次点击
+    const preferred = currentInstance.value?.defaultSchema
+    selectedDb.value = preferred && databases.value.includes(preferred)
+      ? preferred
+      : (databases.value[0] || '')
   } catch {
     if (seq !== dbSeq) return
     dbError.value = true
@@ -328,6 +343,7 @@ async function loadTables() {
     const list = await api.listTables(id, db)
     if (seq !== tableSeq) return
     tables.value = list || []
+    columnCache.clear()
   } catch {
     if (seq !== tableSeq) return
     tableError.value = true
@@ -337,18 +353,20 @@ async function loadTables() {
   }
 }
 
-function pickDb(db) {
-  if (selectedDb.value === db) return
-  selectedDb.value = db
-  loadTables()
-}
+// 数据库切换（下拉）→ 重新拉表清单；空值（清空 / 切实例）时清空表列表
+watch(selectedDb, (db) => {
+  tables.value = []
+  tableError.value = false
+  closeSuggests()
+  if (db) loadTables()
+})
 
 // 标识符引用符：MySQL 反引号 / PG 双引号
 function quoteIdent(name) {
   return currentDialect.value.toUpperCase() === 'PG' ? `"${name}"` : `\`${name}\``
 }
 
-// 点表 → 生成 SELECT 并自动执行
+// 点表 → 生成 SELECT，并在编辑器下方预览最近 20 行
 function pickTable(t) {
   if (!selectedDb.value) return
   if (currentDialect.value.toUpperCase() === 'PG') {
@@ -356,13 +374,13 @@ function pickTable(t) {
     // 拆成 "schema"."table" 分别引用，避免 "库"."schema.table" 这类非法限定
     const dot = t.indexOf('.')
     form.sql = dot > 0
-      ? `SELECT * FROM ${quoteIdent(t.slice(0, dot))}.${quoteIdent(t.slice(dot + 1))} LIMIT 10`
-      : `SELECT * FROM ${quoteIdent(t)} LIMIT 10`
+      ? `SELECT * FROM ${quoteIdent(t.slice(0, dot))}.${quoteIdent(t.slice(dot + 1))} LIMIT 20`
+      : `SELECT * FROM ${quoteIdent(t)} LIMIT 20`
   } else {
-    form.sql = `SELECT * FROM ${quoteIdent(selectedDb.value)}.${quoteIdent(t)} LIMIT 10`
+    form.sql = `SELECT * FROM ${quoteIdent(selectedDb.value)}.${quoteIdent(t)} LIMIT 20`
   }
   nextTick(() => taRef.value?.focus())
-  run()
+  run(true)
 }
 
 // 实例切换：重置库表并加载新实例的库
@@ -387,9 +405,17 @@ const canRun = computed(() =>
 
 const running = ref(false)
 const result = ref(null)
+/** 结果区标题口径：点表触发的 20 行预览 vs 手动执行 */
+const previewMode = ref(false)
 
-async function run() {
+function runFromButton() {
+  previewMode.value = false
+  run()
+}
+
+async function run(preview = false) {
   if (!canRun.value || running.value) return
+  previewMode.value = preview
   running.value = true
   try {
     result.value = await api.runQuery(instanceId.value, form.sql, currentDialect.value, session.user?.id)
@@ -480,7 +506,7 @@ const suggestList = ref([])
 const suggestIdx = ref(0)
 const suggestStyle = ref({})
 const PANEL_WIDTH = 260
-const PANEL_EST_H = 250 // 面板估算高度（8 条上限），用于决定向上/向下展开
+let suggestSeq = 0 // 异步列加载的序号守卫（丢弃过期响应）
 
 // 光标前一个「词」（[A-Za-z0-9_] 连续段）的起点与文本
 function wordPrefixAtCaret(value, caret) {
@@ -503,6 +529,82 @@ function buildSuggestions(prefix) {
     if (name.toLowerCase().startsWith(low)) out.push({ text: name, kind: '表', insert: name })
   }
   return out.slice(0, 8)
+}
+
+// 检测光标是否处于「别名/表名.列前缀」上下文（如 t. 或 t.na）；返回 { qualifier, colPrefix } 或 null。
+// 仅匹配未加引号、未加空格的「词.词」形态，最后一个 . 之前是限定名、之后是列前缀。
+function dotContextAtCaret(value, caret) {
+  const m = value.slice(0, caret).match(/([A-Za-z0-9_]+)\.([A-Za-z0-9_]*)$/)
+  if (!m) return null
+  return { qualifier: m[1], colPrefix: m[2] }
+}
+
+// 解析 FROM/JOIN 子句，建立「别名 / 裸表名 → 表标识符（tables.value 里的确切字符串）」映射。
+// 覆盖逗号分隔多表与 [AS] 别名；子查询 / CTE 不做展开（遇括号保守放弃该段）。
+function buildTableAliasMap(sql) {
+  const bareToFull = new Map()
+  for (const t of tables.value || []) {
+    const full = String(t)
+    const bare = full.split('.').pop().replace(/[`"]/g, '')
+    if (bare && !bareToFull.has(bare)) bareToFull.set(bare, full)
+  }
+  // 去引号 + 去尾部点号（尾部点号是「t.」正在输入的中间态）
+  const clean = (s) => s.replace(/[`"]/g, '').replace(/\.+$/, '')
+  const resolve = (ref) => {
+    const stripped = clean(ref)
+    return bareToFull.get(stripped.split('.').pop()) || stripped
+  }
+  const map = new Map()
+  const JOIN_KW = new Set(['JOIN', 'LEFT', 'RIGHT', 'INNER', 'OUTER', 'FULL', 'CROSS'])
+  const CLAUSE_END = new Set(['WHERE', 'GROUP', 'ORDER', 'HAVING', 'LIMIT', 'OFFSET', 'UNION',
+    'SELECT', 'ON', 'SET', 'VALUES', 'RETURNING', 'INTO'])
+  const tokens = sql.match(/[`"]?[A-Za-z_][A-Za-z0-9_.]*[`"]?|[,()]/g) || []
+  let inFrom = false
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i]
+    const up = tok.toUpperCase()
+    if (up === 'FROM' || JOIN_KW.has(up)) { inFrom = true; continue }
+    if (!inFrom) continue
+    if (CLAUSE_END.has(up)) { inFrom = false; continue }
+    if (tok === '(' || tok === ')') { inFrom = false; continue } // 子查询：放弃该段
+    if (tok === ',') continue
+    // 表引用：其后可选 [AS] 别名
+    let alias = null
+    let j = i + 1
+    if (tokens[j] && tokens[j].toUpperCase() === 'AS') j++
+    const next = tokens[j]
+    if (next && next !== ',' && next !== '(' && next !== ')'
+        && !CLAUSE_END.has(next.toUpperCase()) && !JOIN_KW.has(next.toUpperCase())) {
+      alias = clean(next).split('.')[0] // 别名是单标识符，. 之后是列引用，丢弃
+      i = j
+    }
+    const full = resolve(tok)
+    const key = alias || clean(tok).split('.').pop()
+    if (!map.has(key)) map.set(key, full)
+  }
+  return map
+}
+
+// 按表标识符取列名（带缓存 + 序号守卫）；请求失败返回空数组并缓存，避免反复弹错
+async function loadColumns(fullTable, seq) {
+  if (columnCache.has(fullTable)) return columnCache.get(fullTable)
+  let list
+  try {
+    list = await api.listColumns(instanceId.value, selectedDb.value, fullTable)
+  } catch {
+    list = []
+  }
+  if (seq !== suggestSeq) return null
+  columnCache.set(fullTable, list || [])
+  return columnCache.get(fullTable)
+}
+
+// 展示提示面板（统一入口：填充列表 + 定位）
+function showSuggest(list) {
+  suggestList.value = list
+  suggestIdx.value = 0
+  suggestVisible.value = true
+  updateSuggestPosition()
 }
 
 // —— 光标像素位置：mirror div 复刻 textarea 的盒模型/字体（标准 textarea-caret 技法） ——
@@ -534,35 +636,48 @@ function caretPixelPos(ta) {
   return coords
 }
 
-// 面板定位：光标下方一行；放不下则翻到上方；水平方向夹在编辑器内
+// 面板定位：始终显示在光标所在行的下一行，避免覆盖正在输入的字符；水平方向夹在编辑器内。
+// 面板可溢出编辑器底部（.sql-editor 无 overflow 裁剪），像常规下拉一样盖在结果区上方。
 function updateSuggestPosition() {
   const ta = taRef.value
   const wrap = editorRef.value
   if (!ta || !wrap) return
   const coords = caretPixelPos(ta)
   const lineH = parseFloat(window.getComputedStyle(ta).lineHeight) || 20
-  let left = ta.clientLeft + coords.left
-  let top = ta.clientTop + coords.top + lineH + 4
-  left = Math.min(Math.max(left, 4), Math.max(wrap.clientWidth - PANEL_WIDTH - 4, 4))
-  if (top + PANEL_EST_H > wrap.clientHeight) {
-    top = Math.max(ta.clientTop + coords.top - 4, 4)
-  }
+  const left = Math.min(Math.max(ta.clientLeft + coords.left, 4), Math.max(wrap.clientWidth - PANEL_WIDTH - 4, 4))
+  const top = ta.clientTop + coords.top + lineH + 4
   suggestStyle.value = { left: left + 'px', top: top + 'px', width: PANEL_WIDTH + 'px' }
 }
 
-function refreshSuggest() {
+async function refreshSuggest() {
   const ta = taRef.value
   if (!ta) return
-  const { text } = wordPrefixAtCaret(ta.value, ta.selectionStart)
-  const list = buildSuggestions(text)
-  if (list.length) {
-    suggestList.value = list
-    suggestIdx.value = 0
-    suggestVisible.value = true
-    updateSuggestPosition()
-  } else {
-    closeSuggests()
+  const seq = ++suggestSeq
+  const value = ta.value
+  const caret = ta.selectionStart
+
+  // 1) 「别名/表名.列」上下文 → 列补全
+  const dot = dotContextAtCaret(value, caret)
+  if (dot) {
+    const full = buildTableAliasMap(value).get(dot.qualifier)
+    if (!full) { closeSuggests(); return }
+    const cols = await loadColumns(full, seq)
+    if (seq !== suggestSeq) return
+    const prefix = dot.colPrefix.toLowerCase()
+    const list = (cols || [])
+      .filter((c) => String(c).toLowerCase().startsWith(prefix))
+      .map((c) => ({ text: String(c), kind: '列', insert: String(c) }))
+      .slice(0, 50)
+    if (list.length) showSuggest(list)
+    else closeSuggests()
+    return
   }
+
+  // 2) 关键字 / 表名
+  const { text } = wordPrefixAtCaret(value, caret)
+  const list = buildSuggestions(text)
+  if (list.length) showSuggest(list)
+  else closeSuggests()
 }
 
 function closeSuggests() {
@@ -688,7 +803,7 @@ onBeforeUnmount(() => {
 .card-title { font-size: 13px; font-weight: 650; color: var(--sa-text); }
 
 .q-form { margin-top: 16px; }
-.form-row { display: flex; align-items: flex-start; gap: 24px; }
+.form-row { display: flex; align-items: flex-start; gap: 20px; flex-wrap: wrap; }
 
 .inst-meta { display: flex; align-items: center; gap: 10px; min-height: 32px; }
 .meta-text { font-size: 12px; color: var(--sa-text-2); }
@@ -703,33 +818,38 @@ onBeforeUnmount(() => {
   margin-bottom: 14px;
 }
 
-/* ---- 库 / 表两列浏览 ---- */
-.browser-row {
+/* ---- 工作台：左表列表 + 右编辑器/结果 ---- */
+.workbench {
   display: grid;
-  grid-template-columns: 220px 220px;
-  gap: 16px;
-  margin-bottom: 16px;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
 }
-.browser-col { display: flex; flex-direction: column; min-width: 0; }
-.browser-head {
+.table-col { min-width: 0; }
+.editor-col { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.pane-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   font-size: 12px;
   font-weight: 600;
   color: var(--sa-text-3);
   margin-bottom: 6px;
   padding: 0 2px;
+  min-height: 24px;
 }
-.browser-body {
+.pane-hint { font-size: 11.5px; font-weight: 400; color: var(--sa-text-3); }
+.pane-body {
   border: 1px solid var(--sa-border);
   border-radius: var(--sa-radius-sm);
   background: var(--sa-surface-2);
   min-height: 120px;
-  max-height: 200px;
+  max-height: 360px;
   overflow: auto;
   padding: 4px;
 }
+.db-picker { display: flex; align-items: center; gap: 6px; }
 .browser-list { display: flex; flex-direction: column; gap: 1px; }
 .browser-item {
   padding: 5px 10px;
@@ -783,7 +903,9 @@ onBeforeUnmount(() => {
   color: var(--sa-text-3);
   -webkit-text-fill-color: var(--sa-text-3);
 }
-.sql-editor textarea::selection { background: var(--sa-brand-soft); }
+/* textarea 文字透明、位于 .hl-layer 之上；选区背景必须半透明，
+   否则不透明选区会整块盖住下方的高亮文字，导致选中后看不清内容 */
+.sql-editor textarea::selection { background: rgba(15, 168, 183, 0.2); }
 
 /* 高亮层：与 textarea 同字体/字号/行高/padding，overflow 隐藏靠滚动同步 */
 .hl-layer {
@@ -840,7 +962,23 @@ onBeforeUnmount(() => {
 
 .result-alert { border-radius: var(--sa-radius-sm); }
 
-.result-card { display: flex; flex-direction: column; gap: 14px; }
+/* 结果紧贴编辑器下方（不再单独一张大卡片） */
+.result-inline {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid var(--sa-border);
+  border-radius: var(--sa-radius-sm);
+  background: var(--sa-surface);
+  padding: 12px 14px;
+}
+.result-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.result-title { font-size: 12.5px; font-weight: 650; color: var(--sa-text); }
 
 .info-bar {
   display: flex;

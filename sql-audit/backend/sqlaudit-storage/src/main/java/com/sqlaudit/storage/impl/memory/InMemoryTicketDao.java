@@ -1,8 +1,8 @@
 package com.sqlaudit.storage.impl.memory;
 
+import com.sqlaudit.common.enums.TicketStatus;
 import com.sqlaudit.storage.dao.TicketDao;
 import com.sqlaudit.storage.model.Ticket;
-
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -42,13 +42,13 @@ public class InMemoryTicketDao implements TicketDao {
     }
 
     @Override
-    public synchronized int updateStatus(long id, String fromStatus, String toStatus, LocalDateTime changedAt) {
+    public synchronized int updateStatus(long id, TicketStatus fromStatus, TicketStatus toStatus, LocalDateTime changedAt) {
         Ticket ticket = store.get(id);
         if (ticket == null) {
             return 0;
         }
         // 条件更新：fromStatus 不匹配（已被并发修改）→ 影响行数 0
-        if (fromStatus != null && fromStatus.equals(ticket.getStatus())) {
+        if (fromStatus != null && fromStatus == ticket.getStatus()) {
             ticket.setStatus(toStatus);
             ticket.setUpdatedAt(changedAt);
             return 1;
@@ -71,15 +71,36 @@ public class InMemoryTicketDao implements TicketDao {
     }
 
     @Override
-    public synchronized List<Ticket> listByStatus(String status) {
+    public synchronized List<Ticket> listByStatus(TicketStatus status) {
         List<Ticket> result = new ArrayList<>();
         for (Ticket ticket : store.values()) {
-            if (status == null ? ticket.getStatus() == null : status.equals(ticket.getStatus())) {
+            if (status == ticket.getStatus()) {
                 result.add(copy(ticket));
             }
         }
         result.sort(Comparator.comparing(Ticket::getId));
         return result;
+    }
+
+    @Override
+    public synchronized int markNeedsSecondConfirm(long id, boolean required) {
+        Ticket ticket = store.get(id);
+        if (ticket == null) {
+            return 0;
+        }
+        ticket.setNeedsSecondConfirm(required);
+        return 1;
+    }
+
+    @Override
+    public synchronized int updateSecondConfirm(long id, Long confirmedBy, LocalDateTime confirmedAt) {
+        Ticket ticket = store.get(id);
+        if (ticket == null) {
+            return 0;
+        }
+        ticket.setConfirmedBy(confirmedBy);
+        ticket.setConfirmedAt(confirmedAt);
+        return 1;
     }
 
     /** 深拷贝：返回给调用方的是快照，防止绕过条件更新直接改内存状态。 */
@@ -93,10 +114,15 @@ public class InMemoryTicketDao implements TicketDao {
         dest.setRiskLevel(src.getRiskLevel());
         dest.setStatus(src.getStatus());
         dest.setRollbackSummary(src.getRollbackSummary());
+        dest.setSqlText(src.getSqlText());
+        dest.setShardConfig(src.getShardConfig());
         dest.setScheduledAt(src.getScheduledAt());
         dest.setTraceId(src.getTraceId());
         dest.setCreatedAt(src.getCreatedAt());
         dest.setUpdatedAt(src.getUpdatedAt());
+        dest.setNeedsSecondConfirm(src.isNeedsSecondConfirm());
+        dest.setConfirmedBy(src.getConfirmedBy());
+        dest.setConfirmedAt(src.getConfirmedAt());
         return dest;
     }
 }

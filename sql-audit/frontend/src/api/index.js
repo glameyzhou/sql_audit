@@ -5,7 +5,7 @@ import { STORAGE_KEYS } from '../constants'
 /**
  * API client——契约已冻结（对齐后端 sqlaudit-server 已实现的端点）。
  *
- * - baseURL 走 vite proxy（/api → localhost:8080），无跨域；
+ * - baseURL 走 vite proxy（/api → localhost:8888），无跨域；
  * - 后端错误统一返回 { code, message }（HTTP 400/409/500），此处统一弹 ElMessage.error；
  * - 成功响应直接返回业务数据（拦截器剥掉 axios 包装）；
  * - 受保护接口需 Authorization: Bearer <token>，由请求拦截器统一附加。
@@ -67,12 +67,15 @@ export const api = {
   // ---- 审批 ----
   /** 待审批列表（W2 后段按角色过滤） */
   listPendingApprovals: () => http.get('/approvals/pending'),
-  /** 审批决策（防自审在后端硬校验；ticketId 为工单号） */
-  decide: (ticketId, approverId, approve, comment) =>
-    http.post(`/approvals/${ticketId}/decide`, { approverId, approve, comment }),
-  /** CRITICAL 工单执行前二次确认 */
-  confirmExecution: (ticketId, confirmerId) =>
-    http.post(`/approvals/${ticketId}/confirm-execution`, { confirmerId }),
+  /** 审批决策（审批人身份取 JWT；防自审+角色校验在后端硬校验） */
+  decide: (ticketId, approve, comment) =>
+    http.post(`/approvals/${ticketId}/decide`, { approve, comment }),
+  /** CRITICAL 工单执行前二次确认（确认人身份取 JWT） */
+  confirmExecution: (ticketId) =>
+    http.post(`/approvals/${ticketId}/confirm-execution`),
+  /** 审批转交（代理人；转交人身份取 JWT） */
+  transfer: (ticketId, toUserId) =>
+    http.post(`/approvals/${ticketId}/transfer`, { toUserId }),
 
   // ---- 查询通道 ----
   /** 线上查询（LIMIT 三层保护 + 进审计链） */
@@ -118,6 +121,8 @@ export const api = {
   createInstance: (payload) => http.post('/config/instances', payload),
   updateInstance: (id, payload) => http.put(`/config/instances/${id}`, payload),
   deleteInstance: (id) => http.delete(`/config/instances/${id}`),
+  /** 实例凭据概要（仅账号名，不回显密码；编辑回填用） */
+  getInstanceCredentials: (id) => http.get(`/config/instances/${id}/credentials`),
 
   // ---- 实例（用户视角 / 连接助手）----
   /** 当前用户可见的实例列表（后端按登录用户过滤） */
@@ -128,10 +133,23 @@ export const api = {
   listDatabases: (id) => http.get(`/instances/${id}/databases`),
   /** 指定库下的表列表（库名需 URL 编码） */
   listTables: (id, db) => http.get(`/instances/${id}/databases/${encodeURIComponent(db)}/tables`),
+  /** 指定库某表的列名清单（table 走 query 参数，PG 为 schema.table 限定名） */
+  listColumns: (id, db, table) =>
+    http.get(`/instances/${id}/databases/${encodeURIComponent(db)}/columns`, { params: { table } }),
   createRule: (payload) => http.post('/config/rules', payload),
   updateRule: (id, payload) => http.put(`/config/rules/${id}`, payload),
   deleteRule: (id) => http.delete(`/config/rules/${id}`),
   createFlow: (payload) => http.post('/config/flows', payload),
   updateFlow: (id, payload) => http.put(`/config/flows/${id}`, payload),
-  deleteFlow: (id) => http.delete(`/config/flows/${id}`)
+  deleteFlow: (id) => http.delete(`/config/flows/${id}`),
+
+  // ---- 权限配置（ADMIN，元权限 PERMISSION_ADMIN）----
+  listPermissions: () => http.get('/permissions'),
+  savePermissions: (items) => http.post('/permissions', items),
+
+  // ---- 角色管理（ADMIN）----
+  listRoles: () => http.get('/roles'),
+  createRole: (payload) => http.post('/roles', payload),
+  updateRole: (id, payload) => http.put(`/roles/${id}`, payload),
+  deleteRole: (id) => http.delete(`/roles/${id}`)
 }

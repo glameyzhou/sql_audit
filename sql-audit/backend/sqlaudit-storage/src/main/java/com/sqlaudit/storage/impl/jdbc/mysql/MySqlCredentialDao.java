@@ -1,18 +1,19 @@
 package com.sqlaudit.storage.impl.jdbc.mysql;
 
+import com.sqlaudit.common.enums.AccountType;
+import com.sqlaudit.common.enums.CodedEnum;
 import com.sqlaudit.storage.dao.CredentialDao;
 import com.sqlaudit.storage.model.Credential;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
-import org.springframework.jdbc.support.GeneratedKeyHolder;
-import org.springframework.jdbc.support.KeyHolder;
-
 import java.nio.charset.StandardCharsets;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
 
 /**
  * credential 的 MySQL 真实现（DDL §5 t_credential 表；内存版语义基准 {@code InMemoryCredentialDao}）。
@@ -33,7 +34,7 @@ public class MySqlCredentialDao implements CredentialDao {
         c.setId(rs.getLong("id"));
         long instanceId = rs.getLong("instance_id");
         c.setInstanceId(rs.wasNull() ? null : instanceId);
-        c.setAccountType(rs.getString("account_type"));
+        c.setAccountType(AccountType.fromCode(rs.getString("account_type")));
         c.setUsername(rs.getString("username"));
         byte[] enc = rs.getBytes("password_enc");
         c.setPasswordEnc(enc == null ? null : new String(enc, StandardCharsets.UTF_8));
@@ -51,10 +52,10 @@ public class MySqlCredentialDao implements CredentialDao {
     };
 
     @Override
-    public Credential findByInstanceAndType(long instanceId, String accountType) {
+    public Credential findByInstanceAndType(long instanceId, AccountType accountType) {
         List<Credential> result = jdbc.query(
                 "SELECT * FROM t_credential WHERE instance_id=? AND account_type=? LIMIT 1",
-                MAPPER, instanceId, accountType);
+                MAPPER, instanceId, CodedEnum.code(accountType));
         return result.isEmpty() ? null : result.get(0);
     }
 
@@ -68,7 +69,7 @@ public class MySqlCredentialDao implements CredentialDao {
                             + "VALUES (?,?,?,?,?,?,?,?,?)",
                     Statement.RETURN_GENERATED_KEYS);
             ps.setLong(1, credential.getInstanceId());
-            ps.setString(2, credential.getAccountType());
+            ps.setString(2, CodedEnum.code(credential.getAccountType()));
             ps.setString(3, credential.getUsername());
             ps.setBytes(4, credential.getPasswordEnc().getBytes(StandardCharsets.UTF_8));
             ps.setInt(5, credential.getKeyVersion() != null ? credential.getKeyVersion() : 1);
@@ -85,6 +86,24 @@ public class MySqlCredentialDao implements CredentialDao {
         long id = kh.getKey().longValue();
         credential.setId(id);
         return id;
+    }
+
+    @Override
+    public int update(Credential credential) {
+        return jdbc.update(conn -> {
+            PreparedStatement ps = conn.prepareStatement(
+                    "UPDATE t_credential SET username=?, password_enc=?, key_version=?, "
+                            + "last_rotated_at=?, updated_at=? WHERE id=?");
+            ps.setString(1, credential.getUsername());
+            ps.setBytes(2, credential.getPasswordEnc().getBytes(StandardCharsets.UTF_8));
+            ps.setInt(3, credential.getKeyVersion() != null ? credential.getKeyVersion() : 1);
+            ps.setTimestamp(4, credential.getLastRotatedAt() == null
+                    ? null : Timestamp.valueOf(credential.getLastRotatedAt()));
+            ps.setTimestamp(5, Timestamp.valueOf(credential.getUpdatedAt() != null
+                    ? credential.getUpdatedAt() : LocalDateTime.now()));
+            ps.setLong(6, credential.getId());
+            return ps;
+        });
     }
 
     @Override

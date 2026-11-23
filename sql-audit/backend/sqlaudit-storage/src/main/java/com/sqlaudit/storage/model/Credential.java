@@ -1,11 +1,13 @@
 package com.sqlaudit.storage.model;
 
+import com.sqlaudit.common.enums.AccountType;
 import java.time.LocalDateTime;
 
 /**
  * 生产库加密凭据（对应 t_credential 表，设计文档 §5 生产实例与凭据）。
  *
- * <p>唯一写入方：sqlaudit-auth；查看凭据须写审计，绝不回显明文。{@code passwordEnc}
+ * <p>唯一写入方：sqlaudit-server（实例新增 / 编辑时随实例保存，见
+ * {@code InstanceCredentialService}）；查看凭据须写审计，绝不回显明文。{@code passwordEnc}
  * 存 {@code CredentialCrypto} 加密后的 {@code <ivBase64>.<ciphertextBase64>} 文本。</p>
  */
 public class Credential {
@@ -14,7 +16,7 @@ public class Credential {
     /** 所属实例 id（t_instance.id） */
     private Long instanceId;
     /** RO_META / RO_DATA / RW_EXEC 三类生产账号物理隔离 */
-    private String accountType;
+    private AccountType accountType;
     private String username;
     /** AES-GCM 密文（base64），绝不明文落库 */
     private String passwordEnc;
@@ -41,11 +43,11 @@ public class Credential {
         this.instanceId = instanceId;
     }
 
-    public String getAccountType() {
+    public AccountType getAccountType() {
         return accountType;
     }
 
-    public void setAccountType(String accountType) {
+    public void setAccountType(AccountType accountType) {
         this.accountType = accountType;
     }
 

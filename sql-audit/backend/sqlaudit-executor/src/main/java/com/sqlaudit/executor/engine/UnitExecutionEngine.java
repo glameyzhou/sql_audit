@@ -114,8 +114,8 @@ public class UnitExecutionEngine {
             if (!gateResult.isPassed()) {
                 gateContext.onGateFailure(unit, gateResult);   // 补偿动作（如 TTL 超时置工单 expired）
                 ticketUnitDao.confirmFailed(unit.getId(),
-                        gateResult.failedGate() + ": " + gateResult.reason(), now);
-                return EngineResult.gated(gateResult.failedGate(), gateResult.reason());
+                        gateResult.failedGate().getCode() + ": " + gateResult.reason(), now);
+                return EngineResult.gated(gateResult.failedGate().getCode(), gateResult.reason());
             }
 
             // 4. 生产库单事务执行（前镜像 → DML → 对账）
@@ -190,8 +190,13 @@ public class UnitExecutionEngine {
             return new EngineResult(Status.INTENT_REJECTED, 0, null);
         }
 
-        static EngineResult gated(String gate, String reason) {
-            return new EngineResult(Status.GATED, 0, gate + ": " + reason);
+        /**
+         * 门禁拦截结局。{@code gateCode} 是门禁码的字符串形式（只做 message 前缀，
+         * 形如 {@code R_SCHEMA_DRIFT: 原因}），不是门禁身份——门禁身份在
+         * {@code ExecutionGate.GateResult.failedGate()} 上。
+         */
+        static EngineResult gated(String gateCode, String reason) {
+            return new EngineResult(Status.GATED, 0, gateCode + ": " + reason);
         }
 
         static EngineResult success(long affectedRows) {

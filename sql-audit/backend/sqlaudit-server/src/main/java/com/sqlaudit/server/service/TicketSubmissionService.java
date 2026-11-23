@@ -1,9 +1,14 @@
 package com.sqlaudit.server.service;
 
+import com.sqlaudit.common.enums.CodedEnum;
 import com.sqlaudit.common.enums.Dialect;
-import com.sqlaudit.worker.gateway.JdbcTableMetadataProvider.InstanceContext;
+import com.sqlaudit.common.enums.Environment;
+import com.sqlaudit.common.enums.ErrorCode;
+import com.sqlaudit.common.enums.RollbackCoverage;
+import com.sqlaudit.common.enums.RollbackGenerator;
 import com.sqlaudit.common.enums.RiskLevel;
 import com.sqlaudit.common.enums.StatementType;
+import com.sqlaudit.worker.gateway.JdbcTableMetadataProvider.InstanceContext;
 import com.sqlaudit.common.model.ParsedStatement;
 import com.sqlaudit.common.model.RollbackPlan;
 import com.sqlaudit.common.model.RuleHit;
@@ -55,11 +60,11 @@ public class TicketSubmissionService {
         this.ticketService = ticketService;
     }
 
-    /** 一个 unit 的预览视图（前端提交页展示）。 */
+    /** 一个 unit 的预览视图（前端提交页展示；statementType 按存储码序列化）。 */
     public record UnitPreview(
             int unitIndex,
             String statement,
-            String statementType,
+            StatementType statementType,
             boolean readOnly,
             List<String> objects,
             List<RuleHitView> ruleHits,
@@ -68,20 +73,22 @@ public class TicketSubmissionService {
 
     public record RuleHitView(String code, String severity, String message) {
         static RuleHitView from(RuleHit h) {
-            return new RuleHitView(h.getCode(), h.getSeverity().name(), h.getMessage());
+            // RuleHit.code 已是 RuleCode 枚举，对外仍给存储码字符串
+            return new RuleHitView(h.getCode().getCode(), h.getSeverity().name(), h.getMessage());
         }
     }
 
-    public record RollbackPlanView(String coverage, String generator, String unavailableReason,
-                                   String note) {
+    /** 回滚能力预判视图（coverage / generator 按存储码序列化，与此前传字符串时的 JSON 一致）。 */
+    public record RollbackPlanView(RollbackCoverage coverage, RollbackGenerator generator,
+                                   String unavailableReason, String note) {
         static RollbackPlanView from(RollbackPlan p) {
-            return new RollbackPlanView(p.getCoverage().name(), p.getGenerator(),
+            return new RollbackPlanView(p.getCoverage(), p.getGenerator(),
                     p.getUnavailableReason() == null ? null : p.getUnavailableReason().name(),
                     p.getReverseStatementPreview().isEmpty() ? null : p.getReverseStatementPreview().get(0));
         }
     }
 
-    /** 预览结果。 */
+    /** 预览结果（dialect 为存储码字符串；riskLevel 按存储码序列化）。 */
     public record PreviewResult(
             String dialect,
             int unitCount,
@@ -107,26 +114,26 @@ public class TicketSubmissionService {
      *
      * @throws com.sqlaudit.common.exception.SqlauditException ERROR_RULE_BLOCKED（不建单）
      */
-    public long submit(String title, long creatorId, List<Long> instanceIds, String environment,
-                       String sql, Dialect dialect) {
+    public long submit(String title, long creatorId, List<Long> instanceIds, Environment environment,
+                       String sql, String shardConfig, Dialect dialect) {
         // 元数据路由上下文（单默认实例语义，见 defaultInstanceId）：
         // 预览判定与建单审计都在同一实例上下文内取真实表元数据
         InstanceContext.set(instanceIds == null || instanceIds.isEmpty()
                 ? null : instanceIds.get(0));
         try {
-            return doSubmit(title, creatorId, instanceIds, environment, sql, dialect);
+            return doSubmit(title, creatorId, instanceIds, environment, sql, shardConfig, dialect);
         } finally {
             InstanceContext.set(null);
         }
     }
 
-    private long doSubmit(String title, long creatorId, List<Long> instanceIds, String environment,
-                          String sql, Dialect dialect) {
+    private long doSubmit(String title, long creatorId, List<Long> instanceIds, Environment environment,
+                          String sql, String shardConfig, Dialect dialect) {
         PreviewResult preview = doPreview(sql, dialect);
 
         // ERROR 阻断在入口拒绝（§4.3）——不产生 draft，前端拿到 400 + 命中明细
         if (preview.errorBlocked()) {
-            throw new com.sqlaudit.common.exception.SqlauditException("ERROR_RULE_BLOCKED",
+            throw new com.sqlaudit.common.exception.SqlauditException(ErrorCode.ERROR_RULE_BLOCKED,
                     "存在 ERROR 级规则命中，禁止提交（预览详情见 ruleHits）");
         }
 
@@ -137,7 +144,7 @@ public class TicketSubmissionService {
         }
 
         var ticket = ticketService.createTicket(title, creatorId, instanceIds, environment,
-                preview.riskLevel(), preview.rollbackSummary(), units);
+                preview.riskLevel(), preview.rollbackSummary(), sql, shardConfig, units);
 
         AuditOutcome outcome = ruleEngine.audit(parsed);
         ticketService.submitForAudit(ticket.getId(), outcome);
@@ -161,17 +168,18 @@ public class TicketSubmissionService {
             unitViews.add(new UnitPreview(
                     i + 1,
                     ps.getOriginalSql(),
-                    ps.getStatementType().name(),
+                    ps.getStatementType(),
                     ps.isReadOnly(),
                     ps.getObjects().stream().map(SqlObject::toString).toList(),
                     hits.stream().map(RuleHitView::from).toList(),
                     RollbackPlanView.from(plan)));
 
-            // rollback_summary 是 JSON 列（§9）：结构化可回滚清单，不存自由文本
+            // rollback_summary 是 JSON 列（§9）：结构化可回滚清单，不存自由文本。
+            // 这里用裸 ObjectMapper 序列化，枚举一律显式转成存储码字符串，保证落库文本不变
             Map<String, Object> entry = new LinkedHashMap<>();
             entry.put("unit", i + 1);
-            entry.put("coverage", plan.getCoverage().name());
-            entry.put("generator", plan.getGenerator());
+            entry.put("coverage", CodedEnum.code(plan.getCoverage()));
+            entry.put("generator", CodedEnum.code(plan.getGenerator()));
             if (plan.getUnavailableReason() != null) {
                 entry.put("unavailableReason", plan.getUnavailableReason().name());
             }
@@ -206,7 +214,7 @@ public class TicketSubmissionService {
         unit.setInstanceId(instanceId);
         unit.setStatement(ps.getOriginalSql().getBytes(StandardCharsets.UTF_8));
         unit.setStatementHash(sha256(ps.getOriginalSql()));
-        unit.setStatementType(ps.getStatementType().name());
+        unit.setStatementType(ps.getStatementType());
         if (!ps.getObjects().isEmpty()) {
             SqlObject obj = ps.getObjects().get(0);
             unit.setObjectName(obj.getName());

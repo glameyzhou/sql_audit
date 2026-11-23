@@ -1,5 +1,8 @@
 package com.sqlaudit.storage.impl.memory;
 
+import com.sqlaudit.common.enums.Environment;
+import com.sqlaudit.common.enums.RiskLevel;
+import com.sqlaudit.common.enums.TicketStatus;
 import com.sqlaudit.storage.model.Ticket;
 import org.junit.jupiter.api.Test;
 
@@ -29,9 +32,9 @@ class InMemoryTicketDaoTest {
         ticket.setTitle("t-" + creatorId);
         ticket.setCreatorId(creatorId);
         ticket.setInstanceIds(new ArrayList<>(List.of(1L)));
-        ticket.setEnvironment("prod");
-        ticket.setRiskLevel("HIGH");
-        ticket.setStatus("draft");
+        ticket.setEnvironment(Environment.PROD);
+        ticket.setRiskLevel(RiskLevel.HIGH);
+        ticket.setStatus(TicketStatus.DRAFT);
         ticket.setTraceId("trace-" + creatorId);
         ticket.setCreatedAt(createdAt);
         ticket.setUpdatedAt(createdAt);
@@ -48,8 +51,8 @@ class InMemoryTicketDaoTest {
         assertEquals("t-100", found.getTitle());
         assertEquals(100L, found.getCreatorId());
         assertEquals(List.of(1L), found.getInstanceIds());
-        assertEquals("HIGH", found.getRiskLevel());
-        assertEquals("draft", found.getStatus());
+        assertEquals(RiskLevel.HIGH, found.getRiskLevel());
+        assertEquals(TicketStatus.DRAFT, found.getStatus());
         assertEquals("trace-100", found.getTraceId());
         assertEquals(now, found.getCreatedAt());
     }
@@ -64,9 +67,9 @@ class InMemoryTicketDaoTest {
         long id = insertDraftTicket(100L, LocalDateTime.now());
         LocalDateTime changedAt = LocalDateTime.now().plusMinutes(5);
 
-        assertEquals(1, dao.updateStatus(id, "draft", "submitted", changedAt));
+        assertEquals(1, dao.updateStatus(id, TicketStatus.DRAFT, TicketStatus.SUBMITTED, changedAt));
         Ticket found = dao.findById(id);
-        assertEquals("submitted", found.getStatus());
+        assertEquals(TicketStatus.SUBMITTED, found.getStatus());
         assertEquals(changedAt, found.getUpdatedAt());
     }
 
@@ -75,16 +78,16 @@ class InMemoryTicketDaoTest {
         long id = insertDraftTicket(100L, LocalDateTime.now());
 
         // 状态已被并发推进为 submitted，以 draft 为条件更新必然失败（乐观并发）
-        assertEquals(1, dao.updateStatus(id, "draft", "submitted", LocalDateTime.now()));
-        assertEquals(0, dao.updateStatus(id, "draft", "auditing", LocalDateTime.now()));
+        assertEquals(1, dao.updateStatus(id, TicketStatus.DRAFT, TicketStatus.SUBMITTED, LocalDateTime.now()));
+        assertEquals(0, dao.updateStatus(id, TicketStatus.DRAFT, TicketStatus.AUDITING, LocalDateTime.now()));
 
         Ticket found = dao.findById(id);
-        assertEquals("submitted", found.getStatus());
+        assertEquals(TicketStatus.SUBMITTED, found.getStatus());
     }
 
     @Test
     void updateStatus_工单不存在返回0() {
-        assertEquals(0, dao.updateStatus(999L, "draft", "submitted", LocalDateTime.now()));
+        assertEquals(0, dao.updateStatus(999L, TicketStatus.DRAFT, TicketStatus.SUBMITTED, LocalDateTime.now()));
     }
 
     @Test
@@ -100,7 +103,7 @@ class InMemoryTicketDaoTest {
             pool.submit(() -> {
                 try {
                     startGate.await();
-                    success.addAndGet(dao.updateStatus(id, "draft", "submitted", LocalDateTime.now()));
+                    success.addAndGet(dao.updateStatus(id, TicketStatus.DRAFT, TicketStatus.SUBMITTED, LocalDateTime.now()));
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 } finally {
@@ -113,7 +116,7 @@ class InMemoryTicketDaoTest {
         pool.shutdown();
 
         assertEquals(1, success.get(), "并发竞争下同一 fromStatus 只能有一个影响行数 1");
-        assertEquals("submitted", dao.findById(id).getStatus());
+        assertEquals(TicketStatus.SUBMITTED, dao.findById(id).getStatus());
     }
 
     @Test
@@ -134,12 +137,12 @@ class InMemoryTicketDaoTest {
     @Test
     void listByStatus_仅返回匹配状态() {
         long id = insertDraftTicket(100L, LocalDateTime.now());
-        dao.updateStatus(id, "draft", "submitted", LocalDateTime.now());
+        dao.updateStatus(id, TicketStatus.DRAFT, TicketStatus.SUBMITTED, LocalDateTime.now());
         insertDraftTicket(200L, LocalDateTime.now());
 
-        assertEquals(1, dao.listByStatus("submitted").size());
-        assertEquals(1, dao.listByStatus("draft").size());
-        assertEquals(0, dao.listByStatus("closed").size());
+        assertEquals(1, dao.listByStatus(TicketStatus.SUBMITTED).size());
+        assertEquals(1, dao.listByStatus(TicketStatus.DRAFT).size());
+        assertEquals(0, dao.listByStatus(TicketStatus.CLOSED).size());
     }
 
     @Test
@@ -148,11 +151,11 @@ class InMemoryTicketDaoTest {
         List<Long> instances = new ArrayList<>(List.of(1L));
 
         Ticket snapshot = dao.findById(id);
-        snapshot.setStatus("closed");
+        snapshot.setStatus(TicketStatus.CLOSED);
         snapshot.getInstanceIds().add(999L);
 
         Ticket fresh = dao.findById(id);
-        assertEquals("draft", fresh.getStatus());
+        assertEquals(TicketStatus.DRAFT, fresh.getStatus());
         assertEquals(List.of(1L), fresh.getInstanceIds());
     }
 }

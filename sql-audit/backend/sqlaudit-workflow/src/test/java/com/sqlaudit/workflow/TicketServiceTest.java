@@ -1,7 +1,12 @@
 package com.sqlaudit.workflow;
 
+import com.sqlaudit.common.enums.Environment;
 import com.sqlaudit.common.enums.RiskLevel;
+import com.sqlaudit.common.enums.RuleCode;
 import com.sqlaudit.common.enums.RuleSeverity;
+import com.sqlaudit.common.enums.StatementType;
+import com.sqlaudit.common.enums.TicketStatus;
+import com.sqlaudit.common.enums.UnitStatus;
 import com.sqlaudit.common.exception.IllegalStateTransitionException;
 import com.sqlaudit.common.exception.SqlauditException;
 import com.sqlaudit.common.model.RuleHit;
@@ -56,13 +61,13 @@ class TicketServiceTest {
         unit.setObjectName("t_user");
         unit.setStatement(sql.getBytes(StandardCharsets.UTF_8));
         unit.setStatementHash("hash-" + sql.hashCode());
-        unit.setStatementType("UPDATE");
+        unit.setStatementType(StatementType.UPDATE);
         return unit;
     }
 
     private long createTicket(RiskLevel riskLevel, List<Long> instanceIds) {
-        Ticket ticket = service.createTicket("标题", CREATOR, instanceIds, "prod", riskLevel,
-                "{\"rollbackable\":[]}", List.of(unit("UPDATE t_user SET name='a' WHERE id=1")));
+        Ticket ticket = service.createTicket("标题", CREATOR, instanceIds, Environment.PROD, riskLevel,
+                "{\"rollbackable\":[]}", null, null, List.of(unit("UPDATE t_user SET name='a' WHERE id=1")));
         return ticket.getId();
     }
 
@@ -71,11 +76,11 @@ class TicketServiceTest {
     }
 
     private AuditOutcome errorBlockedOutcome() {
-        RuleHit noWhere = new RuleHit("R_NO_WHERE", RuleSeverity.ERROR, "UPDATE/DELETE 无 WHERE");
+        RuleHit noWhere = new RuleHit(RuleCode.R_NO_WHERE, RuleSeverity.ERROR, "UPDATE/DELETE 无 WHERE");
         return new AuditOutcome(Map.of(0, List.of(noWhere)), true, RuleSeverity.ERROR);
     }
 
-    private String statusOf(long ticketId) {
+    private TicketStatus statusOf(long ticketId) {
         return service.getTicket(ticketId).getStatus();
     }
 
@@ -85,25 +90,27 @@ class TicketServiceTest {
     void createTicket_草稿工单与units落库() {
         TicketUnit u1 = unit("ALTER TABLE t ADD c INT");
         TicketUnit u2 = unit("UPDATE t SET c=1 WHERE id=1");
-        Ticket ticket = service.createTicket("加列", CREATOR, List.of(1L), "prod", RiskLevel.HIGH,
-                "{\"rollbackable\":[\"unit1\"]}", List.of(u1, u2));
+        Ticket ticket = service.createTicket("加列", CREATOR, List.of(1L), Environment.PROD, RiskLevel.HIGH,
+                "{\"rollbackable\":[\"unit1\"]}", "ALTER TABLE t ADD c INT", null, List.of(u1, u2));
 
-        assertEquals("draft", ticket.getStatus());
+        assertEquals(TicketStatus.DRAFT, ticket.getStatus());
         assertNotNull(ticket.getTraceId());
         assertEquals("{\"rollbackable\":[\"unit1\"]}", ticket.getRollbackSummary());
-        assertEquals(RiskLevel.HIGH.name(), ticket.getRiskLevel());
+        assertEquals("ALTER TABLE t ADD c INT", ticket.getSqlText());
+        assertEquals(RiskLevel.HIGH, ticket.getRiskLevel());
 
         // units 落库：ticketId 回填、unit_order 1..n、创建态 pending（§3.1）
         assertEquals(ticket.getId(), u1.getTicketId());
         assertEquals(1, u1.getUnitOrder());
         assertEquals(2, u2.getUnitOrder());
-        assertEquals(2, unitDao.countByStatus("pending"));
+        assertEquals(2, unitDao.countByStatus(UnitStatus.PENDING));
     }
 
     @Test
     void createTicket_无语句抛异常() {
         SqlauditException ex = assertThrows(SqlauditException.class,
-                () -> service.createTicket("空", CREATOR, List.of(1L), "prod", RiskLevel.LOW, null, List.of()));
+                () -> service.createTicket("空", CREATOR, List.of(1L), Environment.PROD, RiskLevel.LOW, null,
+                        null, null, List.of()));
         assertEquals("EMPTY_UNITS", ex.getCode());
     }
 
@@ -116,14 +123,14 @@ class TicketServiceTest {
         SqlauditException ex = assertThrows(SqlauditException.class,
                 () -> service.submitForAudit(ticketId, errorBlockedOutcome()));
         assertEquals("ERROR_RULE_BLOCKED", ex.getCode());
-        assertEquals("draft", statusOf(ticketId), "ERROR 命中的工单必须停留 draft");
+        assertEquals(TicketStatus.DRAFT, statusOf(ticketId), "ERROR 命中的工单必须停留 draft");
     }
 
     @Test
     void submitForAudit_干净工单进入auditing() {
         long ticketId = createTicket(RiskLevel.HIGH, List.of(1L));
         service.submitForAudit(ticketId, cleanOutcome());
-        assertEquals("auditing", statusOf(ticketId));
+        assertEquals(TicketStatus.AUDITING, statusOf(ticketId));
     }
 
     // ---- submitForApproval：影响面评估（§4.4 验收硬性要求） ----
@@ -154,12 +161,12 @@ class TicketServiceTest {
 
         List<Approval> nodes = approvalDao.listByTicket(ticketId);
         assertEquals(2, nodes.size(), "HIGH L1 链 = 主管 + DBA");
-        assertEquals("auditing", statusOf(ticketId), "审批期间工单保持 auditing");
+        assertEquals(TicketStatus.AUDITING, statusOf(ticketId), "审批期间工单保持 auditing");
 
         // 两级顺序审批 → approved
-        approvalEngine.submitDecision(ticketId, 2L, true, "lead ok");
-        approvalEngine.submitDecision(ticketId, 3L, true, "dba ok");
-        assertEquals("approved", statusOf(ticketId));
+        approvalEngine.submitDecision(ticketId, 2L, List.of("LEAD"), true, "lead ok");
+        approvalEngine.submitDecision(ticketId, 3L, List.of("DBA"), true, "dba ok");
+        assertEquals(TicketStatus.APPROVED, statusOf(ticketId));
     }
 
     @Test
@@ -168,7 +175,7 @@ class TicketServiceTest {
         service.submitForAudit(ticketId, cleanOutcome());
         service.submitForApproval(ticketId, true);
 
-        assertEquals("approved", statusOf(ticketId), "LOW 自动通过（§4.5）");
+        assertEquals(TicketStatus.APPROVED, statusOf(ticketId), "LOW 自动通过（§4.5）");
         assertTrue(approvalDao.listByTicket(ticketId).isEmpty(), "空链无审批节点");
     }
 
@@ -181,7 +188,8 @@ class TicketServiceTest {
 
         assertFalse(chain.nodes().isEmpty(), "漏配实例必须落 L1 全局链，绝不无审批");
         assertEquals("L1_GLOBAL", chain.source());
-        assertTrue(chain.atLeastAsStrictAs(new ApprovalChain(List.of("LEAD"), false, "L1_GLOBAL", RiskLevel.MEDIUM)));
+        assertTrue(chain.atLeastAsStrictAs(new ApprovalChain(List.of("LEAD"), false, "L1_GLOBAL", RiskLevel.MEDIUM),
+                router.roleRanks()));
 
         // workflow 端到端：漏配实例（999 无任何 flow 配置）的工单照常生成审批节点
         long ticketId = createTicket(RiskLevel.MEDIUM, List.of(999L));
@@ -189,8 +197,8 @@ class TicketServiceTest {
         service.submitForApproval(ticketId, true);
 
         assertEquals(1, approvalDao.listByTicket(ticketId).size(), "MEDIUM L1 链 = 主管 1 人");
-        approvalEngine.submitDecision(ticketId, 2L, true, "ok");
-        assertEquals("approved", statusOf(ticketId));
+        approvalEngine.submitDecision(ticketId, 2L, List.of("LEAD"), true, "ok");
+        assertEquals(TicketStatus.APPROVED, statusOf(ticketId));
     }
 
     // ---- cancel / checkExpiry ----
@@ -199,12 +207,12 @@ class TicketServiceTest {
     void cancel_非终态可取消_终态抛非法迁移异常() {
         long draft = createTicket(RiskLevel.HIGH, List.of(1L));
         service.cancel(draft, "u1");
-        assertEquals("cancelled", statusOf(draft));
+        assertEquals(TicketStatus.CANCELLED, statusOf(draft));
 
         long auditing = createTicket(RiskLevel.HIGH, List.of(1L));
         service.submitForAudit(auditing, cleanOutcome());
         service.cancel(auditing, "u1");
-        assertEquals("cancelled", statusOf(auditing));
+        assertEquals(TicketStatus.CANCELLED, statusOf(auditing));
 
         // 终态再取消 → 状态机非法迁移异常（不是静默忽略）
         assertThrows(IllegalStateTransitionException.class, () -> service.cancel(draft, "u1"));
@@ -215,22 +223,22 @@ class TicketServiceTest {
         long ticketId = createTicket(RiskLevel.LOW, List.of(1L));
         service.submitForAudit(ticketId, cleanOutcome());
         service.submitForApproval(ticketId, true); // LOW → approved
-        assertEquals("approved", statusOf(ticketId));
+        assertEquals(TicketStatus.APPROVED, statusOf(ticketId));
 
         // 未超时：保持 approved
         assertFalse(service.checkExpiry(ticketId, Instant.now().plus(Duration.ofHours(1)), Duration.ofHours(24)));
-        assertEquals("approved", statusOf(ticketId));
+        assertEquals(TicketStatus.APPROVED, statusOf(ticketId));
 
         // 超过 approval_ttl（§3.5 默认 24h）→ expired（需重新审批，走新工单）
         assertTrue(service.checkExpiry(ticketId, Instant.now().plus(Duration.ofHours(25)), Duration.ofHours(24)));
-        assertEquals("expired", statusOf(ticketId));
+        assertEquals(TicketStatus.EXPIRED, statusOf(ticketId));
     }
 
     @Test
     void checkExpiry_非approved态直接返回false() {
         long ticketId = createTicket(RiskLevel.HIGH, List.of(1L));
         assertFalse(service.checkExpiry(ticketId, Instant.now().plus(Duration.ofHours(48)), Duration.ofHours(24)));
-        assertEquals("draft", statusOf(ticketId));
+        assertEquals(TicketStatus.DRAFT, statusOf(ticketId));
     }
 
     // ---- 监听器（W2 接 AuditWriter 的审计钩子） ----
@@ -244,8 +252,8 @@ class TicketServiceTest {
         TicketService svc = new TicketService(ticketDao, unitDao::insert, sm, engine,
                 new ApprovalRouter(new FlowConfig()));
 
-        long ticketId = svc.createTicket("审计", CREATOR, List.of(1L), "prod", RiskLevel.MEDIUM,
-                null, List.of(unit("UPDATE t SET a=1 WHERE id=1"))).getId();
+        long ticketId = svc.createTicket("审计", CREATOR, List.of(1L), Environment.PROD, RiskLevel.MEDIUM,
+                null, null, null, List.of(unit("UPDATE t SET a=1 WHERE id=1"))).getId();
         svc.submitForAudit(ticketId, cleanOutcome());
 
         assertEquals(List.of("DRAFT>SUBMITTED:1", "SUBMITTED>AUDITING:1"), events);

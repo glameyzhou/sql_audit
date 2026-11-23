@@ -2,6 +2,8 @@ package com.sqlaudit.rollback;
 
 import com.sqlaudit.common.enums.Dialect;
 import com.sqlaudit.common.enums.RollbackCoverage;
+import com.sqlaudit.common.enums.RollbackGenerator;
+import com.sqlaudit.common.enums.RuleCode;
 import com.sqlaudit.common.enums.StatementType;
 import com.sqlaudit.common.enums.UnavailableReason;
 import com.sqlaudit.common.model.ParsedStatement;
@@ -63,7 +65,7 @@ class RollbackCapabilityAssessorTest {
         return assessor.assess(new CapabilityContext(units.get(0), List.of(hits), meta));
     }
 
-    private static RuleHit hit(String code) {
+    private static RuleHit hit(RuleCode code) {
         return new RuleHit(code, com.sqlaudit.common.enums.RuleSeverity.ERROR, "test");
     }
 
@@ -75,7 +77,7 @@ class RollbackCapabilityAssessorTest {
         meta.withTable("t", "id");
         RollbackPlan plan = assessMySql("UPDATE t SET a = 1, b = 'x' WHERE id = 1", meta);
         assertEquals(RollbackCoverage.FULL, plan.getCoverage());
-        assertEquals("MIRROR", plan.getGenerator());
+        assertEquals(RollbackGenerator.MIRROR, plan.getGenerator());
         assertNull(plan.getUnavailableReason());
 
         RollbackPlan pg = assessPg("UPDATE t SET a = 1 WHERE id = 1", meta);
@@ -90,7 +92,7 @@ class RollbackCapabilityAssessorTest {
         meta.withTable("t", "id");
         RollbackPlan plan = assessMySql("DELETE FROM t WHERE id = 1", meta);
         assertEquals(RollbackCoverage.FULL, plan.getCoverage());
-        assertEquals("MIRROR", plan.getGenerator());
+        assertEquals(RollbackGenerator.MIRROR, plan.getGenerator());
     }
 
     // ---------- §5.2 第 3 行：INSERT 单条 ----------
@@ -101,7 +103,7 @@ class RollbackCapabilityAssessorTest {
         meta.withTable("t", "id");
         RollbackPlan plan = assessMySql("INSERT INTO t (id, a, b) VALUES (1, 2, 'x')", meta);
         assertEquals(RollbackCoverage.FULL, plan.getCoverage());
-        assertEquals("MIRROR", plan.getGenerator());
+        assertEquals(RollbackGenerator.MIRROR, plan.getGenerator());
     }
 
     @Test
@@ -167,7 +169,7 @@ class RollbackCapabilityAssessorTest {
     void matrix_noPk_none() {
         Meta meta = new Meta();
         meta.withTable("t"); // 无主键
-        RollbackPlan plan = assessMySql("UPDATE t SET a = 1 WHERE b = 2", meta, hit("R_NO_PK"));
+        RollbackPlan plan = assessMySql("UPDATE t SET a = 1 WHERE b = 2", meta, hit(RuleCode.R_NO_PK));
         assertEquals(RollbackCoverage.NONE, plan.getCoverage());
         assertEquals(UnavailableReason.NO_PRIMARY_KEY, plan.getUnavailableReason());
     }
@@ -179,7 +181,7 @@ class RollbackCapabilityAssessorTest {
         Meta meta = new Meta();
         meta.withTable("t", "id");
         RollbackPlan plan = assessMySql("UPDATE t SET a = a + 1 WHERE id = 1", meta,
-                hit("R_NONDETERMINISTIC_SET"));
+                hit(RuleCode.R_NONDETERMINISTIC_SET));
         assertEquals(RollbackCoverage.NONE, plan.getCoverage());
         assertEquals(UnavailableReason.NONDETERMINISTIC, plan.getUnavailableReason());
     }
@@ -191,10 +193,10 @@ class RollbackCapabilityAssessorTest {
         meta.withTable("t2", "id");
         assertEquals(UnavailableReason.MULTI_TABLE_DML,
                 assessMySql("UPDATE t1 JOIN t2 ON t1.id = t2.id SET t1.a = 1", meta,
-                        hit("R_MULTI_TABLE_DML")).getUnavailableReason());
+                        hit(RuleCode.R_MULTI_TABLE_DML)).getUnavailableReason());
         assertEquals(UnavailableReason.LIMIT_ORDER_DML,
                 assessMySql("DELETE FROM t1 WHERE id = 1 LIMIT 10", meta,
-                        hit("R_LIMIT_ORDER_DML")).getUnavailableReason());
+                        hit(RuleCode.R_LIMIT_ORDER_DML)).getUnavailableReason());
     }
 
     // ---------- §5.2 DDL 行 ----------
@@ -205,7 +207,7 @@ class RollbackCapabilityAssessorTest {
         meta.withTable("t", "id");
         RollbackPlan create = assessMySql("CREATE TABLE t (id INT PRIMARY KEY)", meta);
         assertEquals(RollbackCoverage.FULL, create.getCoverage());
-        assertEquals("REVERSE_DDL", create.getGenerator());
+        assertEquals(RollbackGenerator.REVERSE_DDL, create.getGenerator());
 
         RollbackPlan addCol = assessMySql("ALTER TABLE t ADD COLUMN c INT", meta);
         assertEquals(RollbackCoverage.FULL, addCol.getCoverage());
@@ -215,10 +217,10 @@ class RollbackCapabilityAssessorTest {
     void matrix_destructiveDdl_none() {
         Meta meta = new Meta();
         meta.withTable("t", "id");
-        RollbackPlan drop = assessMySql("DROP TABLE t", meta, hit("R_DDL_DESTRUCTIVE"));
+        RollbackPlan drop = assessMySql("DROP TABLE t", meta, hit(RuleCode.R_DDL_DESTRUCTIVE));
         assertEquals(RollbackCoverage.NONE, drop.getCoverage());
         assertEquals(UnavailableReason.DESTRUCTIVE_DDL, drop.getUnavailableReason());
-        assertEquals("SNAPSHOT", drop.getGenerator());
+        assertEquals(RollbackGenerator.SNAPSHOT, drop.getGenerator());
     }
 
     // ---------- §5.2 IoTDB 行 ----------

@@ -1,5 +1,6 @@
 package com.sqlaudit.common.crypto;
 
+import com.sqlaudit.common.enums.ErrorCode;
 import com.sqlaudit.common.exception.SqlauditException;
 
 /**
@@ -11,10 +12,10 @@ import com.sqlaudit.common.exception.SqlauditException;
 public class CredentialCryptoException extends SqlauditException {
 
     public CredentialCryptoException(String message) {
-        super("CREDENTIAL_CRYPTO", message);
+        super(ErrorCode.CREDENTIAL_CRYPTO, message);
     }
 
     public CredentialCryptoException(String message, Throwable cause) {
-        super("CREDENTIAL_CRYPTO", message, cause);
+        super(ErrorCode.CREDENTIAL_CRYPTO, message, cause);
     }
 }

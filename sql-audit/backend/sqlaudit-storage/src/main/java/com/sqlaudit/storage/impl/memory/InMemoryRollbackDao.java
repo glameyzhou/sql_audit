@@ -1,9 +1,9 @@
 package com.sqlaudit.storage.impl.memory;
 
+import com.sqlaudit.common.enums.RollbackStatus;
 import com.sqlaudit.storage.dao.RollbackDao;
 import com.sqlaudit.storage.model.RollbackSql;
 import com.sqlaudit.storage.model.RollbackStatement;
-
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -91,7 +91,7 @@ public class InMemoryRollbackDao implements RollbackDao {
     }
 
     @Override
-    public synchronized int updateStatus(long id, String status, String unavailableReason) {
+    public synchronized int updateStatus(long id, RollbackStatus status, String unavailableReason) {
         RollbackSql rollbackSql = rollbackStore.get(id);
         if (rollbackSql == null) {
             return 0;

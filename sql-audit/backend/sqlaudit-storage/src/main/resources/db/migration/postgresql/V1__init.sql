@@ -436,9 +436,9 @@ CREATE TABLE t_audit_log (
 COMMENT ON TABLE t_audit_log IS '全量审计（append-only + hash 链，禁逻辑删除） 唯一写入方：sqlaudit-audit';
 COMMENT ON COLUMN t_audit_log.id IS '物理主键，不参与 hash 链';
 COMMENT ON COLUMN t_audit_log.seq IS '链序号，由 chain_head 行锁内分配（见 §7.3）';
-COMMENT ON COLUMN t_audit_log.action IS 'LOGIN/TICKET_APPROVE/UNIT_EXEC/...';
+COMMENT ON COLUMN t_audit_log.action IS 'LOGIN/QUERY_EXECUTED/TICKET_STATE_CHANGE/UNIT_EXEC/ROLLBACK_EXECUTE/...';
 COMMENT ON COLUMN t_audit_log.detail IS '加密；摘要 + SQL 全文（如有）';
-COMMENT ON COLUMN t_audit_log.result IS 'SUCCESS/FAIL/DENIED';
+COMMENT ON COLUMN t_audit_log.result IS 'SUCCESS/REJECTED/FAILED/PARTIAL';
 COMMENT ON COLUMN t_audit_log.client_ip IS '取可信 X-Forwarded-For 链';
 
 CREATE INDEX idx_actor_time ON t_audit_log (actor_id, created_at);

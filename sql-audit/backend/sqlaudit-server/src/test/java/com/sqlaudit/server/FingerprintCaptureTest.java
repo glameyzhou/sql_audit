@@ -1,5 +1,8 @@
 package com.sqlaudit.server;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sqlaudit.common.enums.StatementType;
 import com.sqlaudit.storage.dao.TicketUnitDao;
 import com.sqlaudit.storage.model.TicketUnit;
 import org.junit.jupiter.api.Test;
@@ -37,6 +40,8 @@ class FingerprintCaptureTest {
     @Autowired
     private TicketUnitDao ticketUnitDao;
 
+    private final ObjectMapper mapper = new ObjectMapper();
+
     /**
      * DML 工单（带 schema/object）审批通过 → unit 的 ddl_fingerprint 等于 stub provider 的
      * {@code SHA-256("stub:db1.t_user")}。
@@ -51,8 +56,9 @@ class FingerprintCaptureTest {
                 .andExpect(status().isOk());
 
         mvc.perform(post("/api/approvals/{id}/decide", ticketId)
+                        .header("Authorization", "Bearer " + login())
                         .contentType(APPLICATION_JSON)
-                        .content("{\"approverId\":200,\"approve\":true,\"comment\":\"同意\"}"))
+                        .content("{\"approve\":true,\"comment\":\"同意\"}"))
                 .andExpect(status().isOk());
 
         List<TicketUnit> units = ticketUnitDao.listByTicket(ticketId);
@@ -75,13 +81,14 @@ class FingerprintCaptureTest {
                 .andExpect(status().isOk());
 
         mvc.perform(post("/api/approvals/{id}/decide", ticketId)
+                        .header("Authorization", "Bearer " + login())
                         .contentType(APPLICATION_JSON)
-                        .content("{\"approverId\":200,\"approve\":true,\"comment\":\"同意\"}"))
+                        .content("{\"approve\":true,\"comment\":\"同意\"}"))
                 .andExpect(status().isOk());
 
         List<TicketUnit> units = ticketUnitDao.listByTicket(ticketId);
         assertEquals(1, units.size());
-        assertEquals("DDL", units.get(0).getStatementType());
+        assertEquals(StatementType.DDL, units.get(0).getStatementType());
         assertNull(units.get(0).getDdlFingerprint(),
                 "DDL unit 审批时点对象尚不存在，应跳过采集、指纹留空");
     }
@@ -102,6 +109,17 @@ class FingerprintCaptureTest {
         String rest = body.substring(idx + 11);
         int end = rest.indexOf('}');
         return Long.parseLong(rest.substring(0, end).trim());
+    }
+
+    /** 登录 admin（持有 LEAD 角色，且非本测试工单的提交人 100），返回 token。 */
+    private String login() throws Exception {
+        MvcResult result = mvc.perform(post("/api/auth/login")
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"username\":\"admin\",\"password\":\"admin12345\"}"))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode node = mapper.readTree(result.getResponse().getContentAsString());
+        return node.get("token").asText();
     }
 
     private static String sha256(String s) {

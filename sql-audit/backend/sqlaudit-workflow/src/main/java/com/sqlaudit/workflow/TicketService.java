@@ -1,7 +1,10 @@
 package com.sqlaudit.workflow;
 
+import com.sqlaudit.common.enums.Environment;
+import com.sqlaudit.common.enums.ErrorCode;
 import com.sqlaudit.common.enums.RiskLevel;
 import com.sqlaudit.common.enums.TicketStatus;
+import com.sqlaudit.common.enums.UnitStatus;
 import com.sqlaudit.common.exception.IllegalStateTransitionException;
 import com.sqlaudit.common.exception.SqlauditException;
 import com.sqlaudit.rule.engine.AuditOutcome;
@@ -59,16 +62,18 @@ public class TicketService {
      * <p>风险等级由提交前的预览链路（解析 → 规则检查 → RiskAssessor，§3.1 时序）给出；
      * rollbackSummary 为提交预览时的「可回滚 / 不可回滚」清单（§5.1）。</p>
      *
-     * @param units 语句列表（一条语句 = 一个 unit），非空
+     * @param environment 目标环境（prod / test / dev，见 {@link Environment}）
+     * @param units       语句列表（一条语句 = 一个 unit），非空
      * @throws SqlauditException code=EMPTY_UNITS / EMPTY_INSTANCES
      */
-    public Ticket createTicket(String title, long creatorId, List<Long> instanceIds, String environment,
-                               RiskLevel riskLevel, String rollbackSummary, List<TicketUnit> units) {
+    public Ticket createTicket(String title, long creatorId, List<Long> instanceIds, Environment environment,
+                               RiskLevel riskLevel, String rollbackSummary, String sqlText, String shardConfig,
+                               List<TicketUnit> units) {
         if (units == null || units.isEmpty()) {
-            throw new SqlauditException("EMPTY_UNITS", "工单至少包含一条语句（§3.1：一条语句 = 一个 unit）");
+            throw new SqlauditException(ErrorCode.EMPTY_UNITS, "工单至少包含一条语句（§3.1：一条语句 = 一个 unit）");
         }
         if (instanceIds == null || instanceIds.isEmpty()) {
-            throw new SqlauditException("EMPTY_INSTANCES", "工单必须指定目标实例");
+            throw new SqlauditException(ErrorCode.EMPTY_INSTANCES, "工单必须指定目标实例");
         }
 
         LocalDateTime now = LocalDateTime.now();
@@ -77,9 +82,11 @@ public class TicketService {
         ticket.setCreatorId(creatorId);
         ticket.setInstanceIds(new ArrayList<>(instanceIds));
         ticket.setEnvironment(environment);
-        ticket.setRiskLevel(riskLevel.name());
-        ticket.setStatus(TicketStateMachine.dbValue(TicketStatus.DRAFT));
+        ticket.setRiskLevel(riskLevel);
+        ticket.setStatus(TicketStatus.DRAFT);
         ticket.setRollbackSummary(rollbackSummary);
+        ticket.setSqlText(sqlText);
+        ticket.setShardConfig(shardConfig);
         ticket.setTraceId(UUID.randomUUID().toString());
         ticket.setCreatedAt(now);
         ticket.setUpdatedAt(now);
@@ -89,7 +96,7 @@ public class TicketService {
             TicketUnit unit = units.get(i);
             unit.setTicketId(ticketId);
             unit.setUnitOrder(i + 1);
-            unit.setStatus("pending");
+            unit.setStatus(UnitStatus.PENDING);
             unit.setIntentWritten(false);
             if (unit.getCreatedAt() == null) {
                 unit.setCreatedAt(now);
@@ -111,7 +118,7 @@ public class TicketService {
 
         // §4.3：ERROR 阻断提交（如 R_NO_WHERE），工单停留 draft，不允许进入审核
         if (outcome.errorBlocked()) {
-            throw new SqlauditException("ERROR_RULE_BLOCKED",
+            throw new SqlauditException(ErrorCode.ERROR_RULE_BLOCKED,
                     "存在 ERROR 级规则命中（如 R_NO_WHERE），禁止提交，ticket=" + ticketId);
         }
 
@@ -138,14 +145,14 @@ public class TicketService {
 
         // §4.4：影响面评估未完成的工单不允许提交审批（验收硬性要求）
         if (!impactAssessmentDone) {
-            throw new SqlauditException("IMPACT_ASSESSMENT_INCOMPLETE",
+            throw new SqlauditException(ErrorCode.IMPACT_ASSESSMENT_INCOMPLETE,
                     "影响面评估未完成，不允许提交审批（§4.4），ticket=" + ticketId);
         }
 
-        TicketStatus status = TicketStateMachine.parse(ticket.getStatus());
+        TicketStatus status = ticket.getStatus();
         if (status != TicketStatus.AUDITING) {
-            throw new IllegalStateTransitionException(ticket.getStatus(),
-                    TicketStateMachine.dbValue(TicketStatus.APPROVED), "仅 auditing 态可提交审批");
+            throw new IllegalStateTransitionException(ticket.getStatus().getCode(),
+                    TicketStatus.APPROVED.getCode(), "仅 auditing 态可提交审批");
         }
 
         ApprovalChain chain = routeStrictestChain(ticket);
@@ -174,7 +181,7 @@ public class TicketService {
      */
     public boolean checkExpiry(long ticketId, Instant now, Duration ttl) {
         Ticket ticket = requireTicket(ticketId);
-        if (TicketStateMachine.parse(ticket.getStatus()) != TicketStatus.APPROVED) {
+        if (ticket.getStatus() != TicketStatus.APPROVED) {
             return false;
         }
         LocalDateTime approvedAt = ticket.getUpdatedAt() != null ? ticket.getUpdatedAt() : ticket.getCreatedAt();
@@ -196,13 +203,14 @@ public class TicketService {
 
     /** 多实例逐一路由后取最严链（§4.5 取最严，不取命中第一条）。 */
     private ApprovalChain routeStrictestChain(Ticket ticket) {
-        RiskLevel riskLevel = RiskLevel.valueOf(ticket.getRiskLevel());
+        RiskLevel riskLevel = ticket.getRiskLevel();
+        java.util.Map<String, Integer> rank = approvalRouter.roleRanks();
         ApprovalChain strictest = null;
         for (Long instanceId : ticket.getInstanceIds()) {
             ApprovalChain chain = approvalRouter.route(riskLevel, instanceId, null);
             if (strictest == null
-                    || chain.strictness() > strictest.strictness()
-                    || chain.strictness() == strictest.strictness() && chain.secondConfirm()) {
+                    || chain.strictness(rank) > strictest.strictness(rank)
+                    || chain.strictness(rank) == strictest.strictness(rank) && chain.secondConfirm()) {
                 strictest = chain;
             }
         }
@@ -212,7 +220,7 @@ public class TicketService {
     private Ticket requireTicket(long ticketId) {
         Ticket ticket = ticketDao.findById(ticketId);
         if (ticket == null) {
-            throw new SqlauditException("TICKET_NOT_FOUND", "工单不存在：" + ticketId);
+            throw new SqlauditException(ErrorCode.TICKET_NOT_FOUND, "工单不存在：" + ticketId);
         }
         return ticket;
     }

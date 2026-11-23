@@ -105,3 +105,10 @@
   /* 禁用透明度（对齐原型 .btn:disabled） */
   --el-disabled-opacity: 0.45;
 }
+
+/* 开关：打开态 = 成功绿（启用/停用语义）。
+   element-plus 把 --el-switch-on-color 定义在 .el-switch 组件本身（非 :root），
+   只在 :root 覆盖会被组件自身的直接声明盖掉，故这里同层覆盖。 */
+.el-switch {
+  --el-switch-on-color: var(--sa-success);
+}

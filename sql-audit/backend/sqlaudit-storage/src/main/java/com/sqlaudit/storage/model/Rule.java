@@ -1,5 +1,8 @@
 package com.sqlaudit.storage.model;
 
+import com.sqlaudit.common.enums.RuleDialect;
+import com.sqlaudit.common.enums.RuleSeverity;
+import com.sqlaudit.common.enums.RuleStatementType;
 import java.time.LocalDateTime;
 
 /**
@@ -14,12 +17,12 @@ public class Rule {
     private Long id;
     /** 规则码，如 R_MYSQL_NO_WHERE，唯一 */
     private String code;
-    /** MYSQL / PG / IOTDB / ALL */
-    private String dialect;
-    /** INSERT / UPDATE / DELETE / DDL / SELECT / ALL */
-    private String statementType;
+    /** 适用方言（{@link RuleDialect#ALL} 表示不限） */
+    private RuleDialect dialect;
+    /** 适用语句类型（{@link RuleStatementType#ALL} 表示不限） */
+    private RuleStatementType statementType;
     /** ERROR 阻断 / WARN 提示 */
-    private String severity;
+    private RuleSeverity severity;
     /** 是否启用 */
     private Boolean enabled;
     /** 阈值等 JSON */
@@ -43,27 +46,27 @@ public class Rule {
         this.code = code;
     }
 
-    public String getDialect() {
+    public RuleDialect getDialect() {
         return dialect;
     }
 
-    public void setDialect(String dialect) {
+    public void setDialect(RuleDialect dialect) {
         this.dialect = dialect;
     }
 
-    public String getStatementType() {
+    public RuleStatementType getStatementType() {
         return statementType;
     }
 
-    public void setStatementType(String statementType) {
+    public void setStatementType(RuleStatementType statementType) {
         this.statementType = statementType;
     }
 
-    public String getSeverity() {
+    public RuleSeverity getSeverity() {
         return severity;
     }
 
-    public void setSeverity(String severity) {
+    public void setSeverity(RuleSeverity severity) {
         this.severity = severity;
     }
 

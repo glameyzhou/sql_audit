@@ -5,6 +5,7 @@ import com.sqlaudit.storage.dao.AuditDao;
 import com.sqlaudit.storage.dao.CredentialDao;
 import com.sqlaudit.storage.dao.FlowRuleDao;
 import com.sqlaudit.storage.dao.InstanceDao;
+import com.sqlaudit.storage.dao.PermissionDao;
 import com.sqlaudit.storage.dao.RoleDao;
 import com.sqlaudit.storage.dao.RuleDao;
 import com.sqlaudit.storage.dao.TicketDao;
@@ -15,6 +16,7 @@ import com.sqlaudit.storage.impl.jdbc.h2.H2CredentialDao;
 import com.sqlaudit.storage.impl.jdbc.h2.H2ExecLockDao;
 import com.sqlaudit.storage.impl.jdbc.h2.H2FlowRuleDao;
 import com.sqlaudit.storage.impl.jdbc.h2.H2InstanceDao;
+import com.sqlaudit.storage.impl.jdbc.h2.H2PermissionDao;
 import com.sqlaudit.storage.impl.jdbc.h2.H2RoleDao;
 import com.sqlaudit.storage.impl.jdbc.h2.H2RollbackDao;
 import com.sqlaudit.storage.impl.jdbc.h2.H2RuleDao;
@@ -78,6 +80,11 @@ public class H2ProfileConfig {
     @Bean
     public RoleDao roleDao(JdbcTemplate jdbcTemplate) {
         return new H2RoleDao(jdbcTemplate);
+    }
+
+    @Bean
+    public PermissionDao permissionDao(JdbcTemplate jdbcTemplate) {
+        return new H2PermissionDao(jdbcTemplate);
     }
 
     @Bean

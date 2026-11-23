@@ -1,5 +1,7 @@
 package com.sqlaudit.storage.model;
 
+import com.sqlaudit.common.enums.UserSource;
+import com.sqlaudit.common.enums.UserStatus;
 import java.time.LocalDateTime;
 
 /**
@@ -17,7 +19,7 @@ public class User {
     private String displayName;
     private String email;
     /** WEWORK / LOCAL */
-    private String source;
+    private UserSource source;
     /** 企微 userid/openid；source=WEWORK 时非空 */
     private String weworkOpenid;
     /** 本地账号 bcrypt 哈希；source=LOCAL 时非空 */
@@ -25,7 +27,7 @@ public class User {
     /** 本地账号 TOTP 密钥（加密） */
     private String totpSecret;
     /** ACTIVE / DISABLED */
-    private String status;
+    private UserStatus status;
     private LocalDateTime lastLoginAt;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -63,11 +65,11 @@ public class User {
         this.email = email;
     }
 
-    public String getSource() {
+    public UserSource getSource() {
         return source;
     }
 
-    public void setSource(String source) {
+    public void setSource(UserSource source) {
         this.source = source;
     }
 
@@ -95,11 +97,11 @@ public class User {
         this.totpSecret = totpSecret;
     }
 
-    public String getStatus() {
+    public UserStatus getStatus() {
         return status;
     }
 
-    public void setStatus(String status) {
+    public void setStatus(UserStatus status) {
         this.status = status;
     }
 

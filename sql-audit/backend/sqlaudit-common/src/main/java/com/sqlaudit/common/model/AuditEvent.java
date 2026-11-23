@@ -2,6 +2,11 @@ package com.sqlaudit.common.model;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+import com.sqlaudit.common.enums.AuditAction;
+import com.sqlaudit.common.enums.AuditResult;
+import com.sqlaudit.common.enums.AuditTargetType;
+import com.sqlaudit.common.enums.CodedEnum;
+import com.sqlaudit.common.enums.RoleCode;
 
 import java.time.OffsetDateTime;
 
@@ -30,6 +35,15 @@ import java.time.OffsetDateTime;
         "instanceId", "detailPlaintext", "result", "clientIp", "userAgent", "traceId", "createdAt"
 })
 public class AuditEvent {
+
+    /**
+     * 系统动作的审计角色：状态机自动迁移（LOW 空链自动通过、审批超时置 expired 等）没有人类操作人时
+     * 写 {@code SYSTEM}。它不是可授予的角色（不在 {@link RoleCode} 内），也不是错误码——
+     * 历史数据就是这个取值，集中定义在这里避免各处手写。
+     */
+    public static final String SYSTEM_ACTOR_ROLE = "SYSTEM";
+    /** 系统动作的 actor_name（无人类操作人时）。 */
+    public static final String SYSTEM_ACTOR_NAME = "system";
 
     /** 链序号，由 chain_head 行锁内分配（非 AUTO_INCREMENT id） */
     private final long seq;
@@ -168,8 +182,20 @@ public class AuditEvent {
             return this;
         }
 
+        /** 代码里手写的动作一律走本重载（见 {@link AuditAction}）；String 重载只用于回放库里的历史值。 */
+        public Builder action(AuditAction action) {
+            this.action = CodedEnum.code(action);
+            return this;
+        }
+
         public Builder targetType(String targetType) {
             this.targetType = targetType;
+            return this;
+        }
+
+        /** 代码里手写的对象类型一律走本重载（见 {@link AuditTargetType}）。 */
+        public Builder targetType(AuditTargetType targetType) {
+            this.targetType = CodedEnum.code(targetType);
             return this;
         }
 
@@ -190,6 +216,12 @@ public class AuditEvent {
 
         public Builder result(String result) {
             this.result = result;
+            return this;
+        }
+
+        /** 代码里手写的结果一律走本重载（见 {@link AuditResult}）。 */
+        public Builder result(AuditResult result) {
+            this.result = CodedEnum.code(result);
             return this;
         }
 

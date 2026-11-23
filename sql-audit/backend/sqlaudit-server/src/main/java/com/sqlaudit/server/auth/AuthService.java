@@ -1,6 +1,7 @@
 package com.sqlaudit.server.auth;
 
 import com.sqlaudit.auth.JwtService;
+import com.sqlaudit.common.enums.UserStatus;
 import com.sqlaudit.storage.dao.RoleDao;
 import com.sqlaudit.storage.dao.UserDao;
 import com.sqlaudit.storage.model.Role;
@@ -42,7 +43,7 @@ public class AuthService {
                 || !passwordEncoder.matches(password, user.getPasswordHash())) {
             throw new AuthenticationException("用户名或密码错误");
         }
-        if (!"ACTIVE".equals(user.getStatus())) {
+        if (user.getStatus() != UserStatus.ACTIVE) {
             throw new AuthenticationException("账号已停用");
         }
         List<String> roles = roleDao.listByUserId(user.getId()).stream()

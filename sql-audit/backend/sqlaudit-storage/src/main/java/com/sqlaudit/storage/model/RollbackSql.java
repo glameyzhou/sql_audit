@@ -1,5 +1,8 @@
 package com.sqlaudit.storage.model;
 
+import com.sqlaudit.common.enums.RollbackCoverage;
+import com.sqlaudit.common.enums.RollbackGenerator;
+import com.sqlaudit.common.enums.RollbackStatus;
 import java.time.LocalDateTime;
 
 /**
@@ -13,11 +16,11 @@ public class RollbackSql {
     private Integer stmtCount;
     private Long totalBytes;
     /** MIRROR/REVERSE_DDL/BINLOG/SNAPSHOT */
-    private String generator;
+    private RollbackGenerator generator;
     /** generated/verified/applied/expired/not_available，见 RollbackStatus */
-    private String status;
+    private RollbackStatus status;
     /** FULL/PARTIAL/NONE，见 RollbackCoverage */
-    private String coverage;
+    private RollbackCoverage coverage;
     private String unavailableReason;
     /** 前镜像指纹，用于依赖检测 */
     private String preimageHash;
@@ -60,27 +63,27 @@ public class RollbackSql {
         this.totalBytes = totalBytes;
     }
 
-    public String getGenerator() {
+    public RollbackGenerator getGenerator() {
         return generator;
     }
 
-    public void setGenerator(String generator) {
+    public void setGenerator(RollbackGenerator generator) {
         this.generator = generator;
     }
 
-    public String getStatus() {
+    public RollbackStatus getStatus() {
         return status;
     }
 
-    public void setStatus(String status) {
+    public void setStatus(RollbackStatus status) {
         this.status = status;
     }
 
-    public String getCoverage() {
+    public RollbackCoverage getCoverage() {
         return coverage;
     }
 
-    public void setCoverage(String coverage) {
+    public void setCoverage(RollbackCoverage coverage) {
         this.coverage = coverage;
     }
 

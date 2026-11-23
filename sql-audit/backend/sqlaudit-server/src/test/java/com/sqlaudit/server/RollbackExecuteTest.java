@@ -2,6 +2,9 @@ package com.sqlaudit.server;
 
 import com.sqlaudit.audit.AuditWriter;
 import com.sqlaudit.audit.NoopDetailCipher;
+import com.sqlaudit.common.enums.RollbackCoverage;
+import com.sqlaudit.common.enums.RollbackGenerator;
+import com.sqlaudit.common.enums.RollbackStatus;
 import com.sqlaudit.common.exception.SqlauditException;
 import com.sqlaudit.executor.gateway.ProductionGateway;
 import com.sqlaudit.server.service.RollbackExecutor;
@@ -54,7 +57,7 @@ class RollbackExecuteTest {
     @Test
     void executeRollback_allStatementsApplied() {
         long unitId = newUnit(7L);
-        long rollbackId = newRollback(unitId, "verified", LocalDateTime.now().plusHours(1), 2);
+        long rollbackId = newRollback(unitId, RollbackStatus.VERIFIED, LocalDateTime.now().plusHours(1), 2);
         newStatement(rollbackId, 0, "UPDATE t SET a=? WHERE id=?", "[10,1]");
         newStatement(rollbackId, 1, "DELETE FROM t WHERE id=?", "[2]");
 
@@ -62,7 +65,7 @@ class RollbackExecuteTest {
 
         assertEquals("applied", result.status());
         assertEquals(2, result.applied());
-        assertEquals("applied", rollbackDao.findById(rollbackId).getStatus());
+        assertEquals(RollbackStatus.APPLIED, rollbackDao.findById(rollbackId).getStatus());
         assertEquals(2, countApplied(rollbackId));
         // 反向语句按序执行，字面量已拼接
         List<String> executed = lastExecutedSql;
@@ -77,14 +80,14 @@ class RollbackExecuteTest {
     @Test
     void executeRollback_expired_rejected() {
         long unitId = newUnit(7L);
-        long rollbackId = newRollback(unitId, "verified", LocalDateTime.now().minusSeconds(1), 1);
+        long rollbackId = newRollback(unitId, RollbackStatus.VERIFIED, LocalDateTime.now().minusSeconds(1), 1);
         newStatement(rollbackId, 0, "UPDATE t SET a=? WHERE id=?", "[10,1]");
 
         SqlauditException e = assertThrows(SqlauditException.class,
                 () -> executor.executeRollback(rollbackId, 100L));
 
         assertEquals("ROLLBACK_EXPIRED", e.getCode());
-        assertEquals("expired", rollbackDao.findById(rollbackId).getStatus());
+        assertEquals(RollbackStatus.EXPIRED, rollbackDao.findById(rollbackId).getStatus());
         // 过期拒绝不执行任何语句
         assertTrue(lastExecutedSql.isEmpty());
     }
@@ -92,7 +95,7 @@ class RollbackExecuteTest {
     @Test
     void executeRollback_midwayFailure_partial() {
         long unitId = newUnit(7L);
-        long rollbackId = newRollback(unitId, "verified", LocalDateTime.now().plusHours(1), 2);
+        long rollbackId = newRollback(unitId, RollbackStatus.VERIFIED, LocalDateTime.now().plusHours(1), 2);
         newStatement(rollbackId, 0, "UPDATE t SET a=? WHERE id=?", "[10,1]");
         newStatement(rollbackId, 1, "UPDATE t SET a=? WHERE id=?", "[20,2]");
 
@@ -117,7 +120,7 @@ class RollbackExecuteTest {
     @Test
     void executeRollback_zeroAffected_fails() {
         long unitId = newUnit(7L);
-        long rollbackId = newRollback(unitId, "verified", LocalDateTime.now().plusHours(1), 1);
+        long rollbackId = newRollback(unitId, RollbackStatus.VERIFIED, LocalDateTime.now().plusHours(1), 1);
         newStatement(rollbackId, 0, "UPDATE t SET a=? WHERE id=?", "[10,1]");
 
         executor = new RollbackExecutor(rollbackDao, ticketUnitDao,
@@ -150,12 +153,12 @@ class RollbackExecuteTest {
         return ticketUnitDao.insert(unit);
     }
 
-    private long newRollback(long unitId, String status, LocalDateTime expiresAt, int stmtCount) {
+    private long newRollback(long unitId, RollbackStatus status, LocalDateTime expiresAt, int stmtCount) {
         RollbackSql r = new RollbackSql();
         r.setUnitId(unitId);
-        r.setGenerator("MIRROR");
+        r.setGenerator(RollbackGenerator.MIRROR);
         r.setStatus(status);
-        r.setCoverage("full");
+        r.setCoverage(RollbackCoverage.FULL);
         r.setStmtCount(stmtCount);
         r.setExpiresAt(expiresAt);
         rollbackDao.insertRollbackSql(r);

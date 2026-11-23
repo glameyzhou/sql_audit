@@ -1,5 +1,6 @@
 package com.sqlaudit.storage.impl.memory;
 
+import com.sqlaudit.common.enums.UnitStatus;
 import com.sqlaudit.storage.model.TicketUnit;
 import org.junit.jupiter.api.Test;
 
@@ -22,7 +23,7 @@ class InMemoryTicketUnitDaoTest {
 
     private final InMemoryTicketUnitDao dao = new InMemoryTicketUnitDao();
 
-    private long insertUnit(String status, Boolean intentWritten, LocalDateTime leaseUntil) {
+    private long insertUnit(UnitStatus status, Boolean intentWritten, LocalDateTime leaseUntil) {
         TicketUnit unit = new TicketUnit();
         unit.setStatus(status);
         unit.setIntentWritten(intentWritten);
@@ -34,24 +35,24 @@ class InMemoryTicketUnitDaoTest {
 
     @Test
     void 全生命周期_pending到claim到writeIntent到confirmSuccess() {
-        long id = insertUnit("pending", false, null);
+        long id = insertUnit(UnitStatus.PENDING, false, null);
         LocalDateTime now = LocalDateTime.now();
 
         assertEquals(1, dao.claimUnit(id, "worker-1", now.plusSeconds(30), now));
         TicketUnit leased = dao.findById(id);
-        assertEquals("leased", leased.getStatus());
+        assertEquals(UnitStatus.LEASED, leased.getStatus());
         assertEquals("worker-1", leased.getLeaseOwner());
         assertNotNull(leased.getLeaseUntil());
         assertNotNull(leased.getHeartbeatAt());
 
         assertEquals(1, dao.writeIntent(id, now));
         TicketUnit executing = dao.findById(id);
-        assertEquals("executing", executing.getStatus());
+        assertEquals(UnitStatus.EXECUTING, executing.getStatus());
         assertEquals(Boolean.TRUE, executing.getIntentWritten());
 
         assertEquals(1, dao.confirmSuccess(id, 42L, now.plusSeconds(2)));
         TicketUnit success = dao.findById(id);
-        assertEquals("success", success.getStatus());
+        assertEquals(UnitStatus.SUCCESS, success.getStatus());
         assertEquals(42L, success.getAffectedRows());
         assertNotNull(success.getExecutedAt());
 
@@ -65,38 +66,38 @@ class InMemoryTicketUnitDaoTest {
 
         // pending + intent_written=1：抢不到
         TicketUnit pendingButWritten = new TicketUnit();
-        pendingButWritten.setStatus("pending");
+        pendingButWritten.setStatus(UnitStatus.PENDING);
         pendingButWritten.setIntentWritten(true);
         long id1 = dao.insert(pendingButWritten);
         assertEquals(0, dao.claimUnit(id1, "worker-1", now.plusSeconds(30), now));
 
         // 租约已过期的 leased + intent_written=1：同样抢不到（硬条件优先于租约过期）
         TicketUnit leasedExpiredButWritten = new TicketUnit();
-        leasedExpiredButWritten.setStatus("leased");
+        leasedExpiredButWritten.setStatus(UnitStatus.LEASED);
         leasedExpiredButWritten.setIntentWritten(true);
         leasedExpiredButWritten.setLeaseUntil(now.minusSeconds(1));
         long id2 = dao.insert(leasedExpiredButWritten);
         assertEquals(0, dao.claimUnit(id2, "worker-1", now.plusSeconds(30), now));
 
-        assertEquals("pending", dao.findById(id1).getStatus());
-        assertEquals("leased", dao.findById(id2).getStatus());
+        assertEquals(UnitStatus.PENDING, dao.findById(id1).getStatus());
+        assertEquals(UnitStatus.LEASED, dao.findById(id2).getStatus());
     }
 
     @Test
     void claimUnit_租约未过期的leased不可抢占_过期可抢占() {
         LocalDateTime now = LocalDateTime.now();
-        long id = insertUnit("leased", false, now.plusSeconds(30));
+        long id = insertUnit(UnitStatus.LEASED, false, now.plusSeconds(30));
         assertEquals(0, dao.claimUnit(id, "worker-2", now.plusSeconds(30), now));
 
-        long expiredId = insertUnit("leased", false, now.minusSeconds(1));
+        long expiredId = insertUnit(UnitStatus.LEASED, false, now.minusSeconds(1));
         assertEquals(1, dao.claimUnit(expiredId, "worker-2", now.plusSeconds(30), now));
-        assertEquals("leased", dao.findById(expiredId).getStatus());
+        assertEquals(UnitStatus.LEASED, dao.findById(expiredId).getStatus());
         assertEquals("worker-2", dao.findById(expiredId).getLeaseOwner());
     }
 
     @Test
     void 并发抢占_两线程只有一个claim成功() throws Exception {
-        long id = insertUnit("pending", false, null);
+        long id = insertUnit(UnitStatus.PENDING, false, null);
         LocalDateTime now = LocalDateTime.now();
         int threads = 8;
         CountDownLatch startGate = new CountDownLatch(1);
@@ -126,29 +127,29 @@ class InMemoryTicketUnitDaoTest {
             totalClaimed += r;
         }
         assertEquals(1, totalClaimed, "同一个 unit 只能被一个 worker 抢到");
-        assertEquals("leased", dao.findById(id).getStatus());
+        assertEquals(UnitStatus.LEASED, dao.findById(id).getStatus());
     }
 
     @Test
     void reclaimExpiredLease_只回收intent未预写的() {
         LocalDateTime now = LocalDateTime.now();
         // 可回收：leased + 过期 + intent_written=0
-        long reclaimable = insertUnit("leased", false, now.minusSeconds(1));
+        long reclaimable = insertUnit(UnitStatus.LEASED, false, now.minusSeconds(1));
         // 不可回收：intent_written=1（即使租约过期）
-        long written = insertUnit("leased", true, now.minusSeconds(1));
+        long written = insertUnit(UnitStatus.LEASED, true, now.minusSeconds(1));
         // 不可回收：未过期
-        long fresh = insertUnit("leased", false, now.plusSeconds(60));
+        long fresh = insertUnit(UnitStatus.LEASED, false, now.plusSeconds(60));
 
         assertEquals(1, dao.reclaimExpiredLease(now));
 
         TicketUnit reclaimed = dao.findById(reclaimable);
-        assertEquals("pending", reclaimed.getStatus());
+        assertEquals(UnitStatus.PENDING, reclaimed.getStatus());
         assertNull(reclaimed.getLeaseOwner());
         assertNull(reclaimed.getLeaseUntil());
         assertNull(reclaimed.getHeartbeatAt());
 
-        assertEquals("leased", dao.findById(written).getStatus(), "intent 已预写的不回收");
-        assertEquals("leased", dao.findById(fresh).getStatus(), "租约未过期的不回收");
+        assertEquals(UnitStatus.LEASED, dao.findById(written).getStatus(), "intent 已预写的不回收");
+        assertEquals(UnitStatus.LEASED, dao.findById(fresh).getStatus(), "租约未过期的不回收");
     }
 
     @Test
@@ -162,7 +163,7 @@ class InMemoryTicketUnitDaoTest {
         dao.insert(makeExecuting(now.minusSeconds(300), now));
 
         assertEquals(0, dao.reclaimExpiredLease(now), "executing 状态不走租约回收");
-        assertEquals("executing", dao.findById(staleId).getStatus());
+        assertEquals(UnitStatus.EXECUTING, dao.findById(staleId).getStatus());
 
         // 由 listExecutingWithStaleHeartbeat 分流（转 needs_confirm 由 reaper 决策）
         List<TicketUnit> staleList = dao.listExecutingWithStaleHeartbeat(now.minusSeconds(60));
@@ -172,7 +173,7 @@ class InMemoryTicketUnitDaoTest {
 
     private TicketUnit makeExecuting(LocalDateTime heartbeatAt, LocalDateTime executedAt) {
         TicketUnit unit = new TicketUnit();
-        unit.setStatus("executing");
+        unit.setStatus(UnitStatus.EXECUTING);
         unit.setIntentWritten(true);
         unit.setHeartbeatAt(heartbeatAt);
         unit.setExecutedAt(executedAt);
@@ -182,12 +183,12 @@ class InMemoryTicketUnitDaoTest {
     @Test
     void releaseLeaseToPending_清空租约字段() {
         LocalDateTime now = LocalDateTime.now();
-        long id = insertUnit("pending", false, null);
+        long id = insertUnit(UnitStatus.PENDING, false, null);
         assertEquals(1, dao.claimUnit(id, "worker-1", now.plusSeconds(30), now));
 
         assertEquals(1, dao.releaseLeaseToPending(id));
         TicketUnit unit = dao.findById(id);
-        assertEquals("pending", unit.getStatus());
+        assertEquals(UnitStatus.PENDING, unit.getStatus());
         assertNull(unit.getLeaseOwner());
         assertNull(unit.getLeaseUntil());
         assertNull(unit.getHeartbeatAt());
@@ -199,23 +200,23 @@ class InMemoryTicketUnitDaoTest {
     @Test
     void confirmFailed_executing状态置failed() {
         LocalDateTime now = LocalDateTime.now();
-        long id = insertUnit("pending", false, null);
+        long id = insertUnit(UnitStatus.PENDING, false, null);
         dao.claimUnit(id, "worker-1", now.plusSeconds(30), now);
         dao.writeIntent(id, now);
 
         assertEquals(1, dao.confirmFailed(id, "connection lost", now.plusSeconds(1)));
         TicketUnit unit = dao.findById(id);
-        assertEquals("failed", unit.getStatus());
+        assertEquals(UnitStatus.FAILED, unit.getStatus());
         assertEquals("connection lost", unit.getErrorMessage());
         assertNotNull(unit.getExecutedAt());
     }
 
     @Test
     void markNeedsConfirm_置状态与原因() {
-        long id = insertUnit("executing", true, null);
+        long id = insertUnit(UnitStatus.EXECUTING, true, null);
         assertEquals(1, dao.markNeedsConfirm(id, "heartbeat stale, SQL may have been executed"));
         TicketUnit unit = dao.findById(id);
-        assertEquals("needs_confirm", unit.getStatus());
+        assertEquals(UnitStatus.NEEDS_CONFIRM, unit.getStatus());
         assertEquals("heartbeat stale, SQL may have been executed", unit.getErrorMessage());
     }
 
@@ -223,19 +224,19 @@ class InMemoryTicketUnitDaoTest {
     void listByFingerprintSince_按指纹与时间窗过滤() {
         LocalDateTime now = LocalDateTime.now();
         TicketUnit inWindow = new TicketUnit();
-        inWindow.setStatus("success");
+        inWindow.setStatus(UnitStatus.SUCCESS);
         inWindow.setExecFingerprint("fp-x");
         inWindow.setCreatedAt(now.minusMinutes(10));
         dao.insert(inWindow);
 
         TicketUnit outOfWindow = new TicketUnit();
-        outOfWindow.setStatus("success");
+        outOfWindow.setStatus(UnitStatus.SUCCESS);
         outOfWindow.setExecFingerprint("fp-x");
         outOfWindow.setCreatedAt(now.minusHours(2));
         dao.insert(outOfWindow);
 
         TicketUnit otherFingerprint = new TicketUnit();
-        otherFingerprint.setStatus("success");
+        otherFingerprint.setStatus(UnitStatus.SUCCESS);
         otherFingerprint.setExecFingerprint("fp-y");
         otherFingerprint.setCreatedAt(now.minusMinutes(1));
         dao.insert(otherFingerprint);

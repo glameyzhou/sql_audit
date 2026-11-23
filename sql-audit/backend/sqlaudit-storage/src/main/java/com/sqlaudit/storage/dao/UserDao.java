@@ -1,7 +1,7 @@
 package com.sqlaudit.storage.dao;
 
+import com.sqlaudit.common.enums.UserStatus;
 import com.sqlaudit.storage.model.User;
-
 import java.util.List;
 
 /**
@@ -29,8 +29,8 @@ public interface UserDao {
     /** 重置本地账号密码（bcrypt 哈希），并刷新 updated_at。 */
     int updatePassword(long id, String passwordHash);
 
-    /** 启用/停用（ACTIVE/DISABLED），并刷新 updated_at。 */
-    int updateStatus(long id, String status);
+    /** 启用/停用（{@link UserStatus#ACTIVE} / {@link UserStatus#DISABLED}），并刷新 updated_at。 */
+    int updateStatus(long id, UserStatus status);
 
     /** 更新显示名/邮箱，并刷新 updated_at。 */
     int updateProfile(long id, String displayName, String email);

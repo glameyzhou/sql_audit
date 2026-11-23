@@ -1,5 +1,8 @@
 package com.sqlaudit.storage.model;
 
+import com.sqlaudit.common.enums.ApprovalMode;
+import com.sqlaudit.common.enums.ApprovalResult;
+import com.sqlaudit.common.enums.ApproverType;
 import java.time.LocalDateTime;
 
 /**
@@ -9,8 +12,8 @@ import java.time.LocalDateTime;
  *
  * <p>关键字段约定：</p>
  * <ul>
- *   <li>{@code mode}：AND 会签 / OR 或签（大写字符串）；</li>
- *   <li>{@code result}：PENDING / APPROVED / REJECTED / TRANSFERRED（大写字符串）；</li>
+ *   <li>{@code mode}：{@link com.sqlaudit.common.enums.ApprovalMode}，AND 会签 / OR 或签（存储码 = 枚举名）；</li>
+ *   <li>{@code result}：{@link com.sqlaudit.common.enums.ApprovalResult}，PENDING / APPROVED / REJECTED / TRANSFERRED；</li>
  *   <li>{@code approverId}：B-3 阶段审批链节点为 ROLE 占位，取 {@code 0} 表示「按角色解析」，
  *       W2 装配时由 workflow 补角色 → 用户解析（§8.2 flow_node.approver_type=ROLE）；
  *       决策时 updateResult 会把实际决策人写入本字段。</li>
@@ -26,10 +29,14 @@ public class Approval {
     private Integer nodeOrder;
     /** 审批人；ROLE 占位节点为 0（按角色解析） */
     private Long approverId;
+    /** 节点审批人类型（ROLE/USER/INSTANCE_OWNER，§8.2） */
+    private ApproverType approverType;
+    /** 审批人 ref（ROLE=角色码，USER=用户id，INSTANCE_OWNER=owner） */
+    private String approverRef;
     /** AND 会签 / OR 或签 */
-    private String mode;
+    private ApprovalMode mode;
     /** PENDING/APPROVED/REJECTED/TRANSFERRED */
-    private String result;
+    private ApprovalResult result;
     private String comment;
     private LocalDateTime decidedAt;
     private LocalDateTime createdAt;
@@ -74,19 +81,35 @@ public class Approval {
         this.approverId = approverId;
     }
 
-    public String getMode() {
+    public ApproverType getApproverType() {
+        return approverType;
+    }
+
+    public void setApproverType(ApproverType approverType) {
+        this.approverType = approverType;
+    }
+
+    public String getApproverRef() {
+        return approverRef;
+    }
+
+    public void setApproverRef(String approverRef) {
+        this.approverRef = approverRef;
+    }
+
+    public ApprovalMode getMode() {
         return mode;
     }
 
-    public void setMode(String mode) {
+    public void setMode(ApprovalMode mode) {
         this.mode = mode;
     }
 
-    public String getResult() {
+    public ApprovalResult getResult() {
         return result;
     }
 
-    public void setResult(String result) {
+    public void setResult(ApprovalResult result) {
         this.result = result;
     }
 

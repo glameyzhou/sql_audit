@@ -1,7 +1,7 @@
 package com.sqlaudit.storage.dao;
 
+import com.sqlaudit.common.enums.ApprovalResult;
 import com.sqlaudit.storage.model.Approval;
-
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -36,7 +36,7 @@ public interface ApprovalDao {
      * @param toResult   目标结果
      * @return 影响行数：1 成功；0 = 已被决策 / 记录不存在（并发冲突）
      */
-    int updateResult(long id, long approverId, String fromResult, String toResult,
+    int updateResult(long id, long approverId, ApprovalResult fromResult, ApprovalResult toResult,
                      String comment, LocalDateTime decidedAt);
 
     /**
@@ -47,4 +47,9 @@ public interface ApprovalDao {
 
     /** 全部 PENDING 审批（server「待我审批」列表；按 created_at, id 排序）。 */
     List<Approval> listPending();
+
+    /**
+     * 审批转交：把某审批人的 PENDING 记录转给代理人（条件更新，fromUserId 不匹配或已决策返回 0）。
+     */
+    int transfer(long id, long fromUserId, long toUserId);
 }

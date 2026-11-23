@@ -98,12 +98,12 @@ mysql -h127.0.0.1 -uroot -ppassword -e \
 cd sql-audit/backend
 mvn install -DskipTests   # 多模块依赖（sqlaudit-worker 等）先进本地仓库，否则 spring-boot:run 拿旧 jar
 SPRING_PROFILES_ACTIVE=dev-home mvn -pl sqlaudit-server spring-boot:run
-# 端口 8080；Flyway 自动建 23 张 t_ 前缀表 + 创世块 + 4 角色种子
+# 端口 8888；Flyway 自动建 23 张 t_ 前缀表 + 创世块 + 4 角色种子
 
 # 4) 起前端（另开终端）
 cd sql-audit/frontend
 npm install        # 首次
-npm run dev        # 端口 5173，/api 代理到 8080
+npm run dev        # 端口 5173，/api 代理到 8888
 ```
 
 浏览器打开 http://localhost:5173 。
@@ -119,32 +119,21 @@ npm run dev        # 端口 5173，/api 代理到 8080
 
 > 首次启动时由 `SeedUserRunner` 自动创建（无则建、有则跳过）。**生产环境务必改密码**，或接企微 OAuth 登录。
 
-### 6.2 端到端测试的准备（实例 + 凭据，一次手工配置）
+### 6.2 端到端测试的准备（实例 + 凭据，UI 一次配置）
 
 提交 → 审批 → worker 自动执行的完整链路需要「生产实例」（本机测试 = 另一个 MySQL 库）与两类生产账号。
 
-**实例**可在「系统配置 → 实例管理」用 UI 新增（方言下拉、环境、Host/端口/默认库，带「测试连接」按钮——输入用户名密码即可先验连通性再保存）。**凭据**暂无管理 UI，用 SQL 手工种子：
+**实例与凭据都在「系统配置 → 实例管理」用 UI 维护**：新增实例时填写方言、环境、Host/端口/默认库和一组「账号 / 密码」，可先点「测试连接」验证连通性再保存。保存时凭据按 AES-GCM 加密写入 `t_credential`，**同一组账号同时落 RO_META（库表浏览 / 审批取结构指纹）与 RW_EXEC（worker 执行 / 回滚）两条**；dev / test / prod 所有环境一视同仁，**不再需要手工 SQL 种子**。编辑实例时账号名自动回填，密码留空表示不修改凭据。
+
+只需准备目标库本身（示例）：
 
 ```sql
--- 1) 目标「生产库」：建测试库和表
+-- 目标「生产库」：建测试库和表
 CREATE DATABASE IF NOT EXISTS `sql_audit_demo` DEFAULT CHARSET utf8mb4;
 CREATE TABLE `sql_audit_demo`.t_demo (
   id INT PRIMARY KEY, a INT, b VARCHAR(32)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 INSERT INTO `sql_audit_demo`.t_demo VALUES (1, 10, 'x'), (2, 20, 'y');
-
--- 2) 平台库注册实例（推荐用 UI：系统配置 → 实例管理 → 新增，带测试连接；
---    下面 SQL 是等价做法，{instance_id} 换成实际实例 id）
-INSERT INTO `sql-audit`.t_instance (name, dialect, environment, owner_id, host, port, default_schema, status, created_by)
-VALUES ('本机演示库', 'MYSQL', 'test', 1, '127.0.0.1', 3306, 'sql_audit_demo', 'active', 1);
-
--- 3) 三类账号之二：RO_META（审批时取表结构指纹 / 查询页库表浏览）+ RW_EXEC（worker 执行）
---    password_enc = AES-GCM 密文，格式 ivBase64.ctBase64（密钥见 §8.4）。
---    下面的值 = 明文 "password" 用开发默认密钥加密，仅本地测试可用：
-INSERT INTO `sql-audit`.t_credential (instance_id, account_type, username, password_enc)
-VALUES
-  ({instance_id}, 'RO_META', 'root', 'dOsm0+qJZwen+8nK.G10Ice4C0P3XQEtcHOrlpNdex82ZrS/9'),
-  ({instance_id}, 'RW_EXEC', 'root', '93F1JVK1QyaqMuhb.Ov4QGjmumsGssd92I6KgHC/3dT11fntX');
 ```
 
 之后在 UI 上：提交变更（如 `UPDATE sql_audit_demo.t_demo SET a = 1 WHERE id = 1`）→ 审批通过（此步采集结构指纹，RO_META 不通会 400）→ `dev-home` 下 worker 循环自动执行（观察「执行监控」页）→ 「回滚管理」页可见反向 SQL 并可执行回滚。
@@ -246,7 +235,7 @@ docker run -d --name iotdb -p 6667:6667 apache/iotdb:2.0.11-standalone
 ```bash
 # 前端/后端：在各自终端 Ctrl+C
 # 或按端口杀进程
-lsof -ti:8080 | xargs kill    # 后端
+lsof -ti:8888 | xargs kill    # 后端
 lsof -ti:5173 | xargs kill    # 前端
 docker stop xiangxin-mysql sqlaudit-pg   # 停数据库容器
 ```

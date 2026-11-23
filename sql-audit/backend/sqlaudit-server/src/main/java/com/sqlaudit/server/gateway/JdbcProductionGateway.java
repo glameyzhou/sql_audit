@@ -1,6 +1,7 @@
 package com.sqlaudit.server.gateway;
 
 import com.sqlaudit.common.crypto.CredentialCrypto;
+import com.sqlaudit.common.enums.AccountType;
 import com.sqlaudit.common.enums.Dialect;
 import com.sqlaudit.executor.gateway.ProductionGateway;
 import com.sqlaudit.storage.dao.CredentialDao;
@@ -34,8 +35,6 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class JdbcProductionGateway implements ProductionGateway {
 
-    private static final String ACCOUNT_TYPE_RW_EXEC = "RW_EXEC";
-
     private final InstanceDao instanceDao;
     private final CredentialDao credentialDao;
 
@@ -58,7 +57,7 @@ public class JdbcProductionGateway implements ProductionGateway {
             return ExecutionResult.executionError("IoTDB 实例不支持 JDBC 回滚执行: " + inst.getName());
         }
 
-        Credential cred = credentialDao.findByInstanceAndType(request.instanceId(), ACCOUNT_TYPE_RW_EXEC);
+        Credential cred = credentialDao.findByInstanceAndType(request.instanceId(), AccountType.RW_EXEC);
         if (cred == null) {
             return ExecutionResult.executionError("实例缺少 RW_EXEC 凭据: id=" + request.instanceId());
         }
@@ -145,20 +144,11 @@ public class JdbcProductionGateway implements ProductionGateway {
                 + "&connectTimeout=3000&socketTimeout=30000";
     }
 
+    /**
+     * 实例方言：列值已由存储层按存储码解码为 {@link Dialect}（POSTGRESQL/POSTGRES 等别名归一
+     * 在入库前完成），为空时回落 MYSQL。
+     */
     private static Dialect dialectOf(Instance inst) {
-        if (inst.getDialect() == null) {
-            return Dialect.MYSQL;
-        }
-        String dialect = inst.getDialect().trim().toUpperCase();
-        // 别名归一：UI/种子数据可能写入 POSTGRESQL/POSTGRES，统一映射枚举 PG，
-        // 避免未知字符串静默回落 MySQL（错方言会用错驱动连库）
-        if ("POSTGRESQL".equals(dialect) || "POSTGRES".equals(dialect)) {
-            return Dialect.PG;
-        }
-        try {
-            return Dialect.valueOf(dialect);
-        } catch (IllegalArgumentException e) {
-            return Dialect.MYSQL;
-        }
+        return inst.getDialect() == null ? Dialect.MYSQL : inst.getDialect();
     }
 }

@@ -2,6 +2,7 @@ package com.sqlaudit.rule.rules;
 
 import com.sqlaudit.common.enums.Dialect;
 import com.sqlaudit.common.enums.DangerousClause;
+import com.sqlaudit.common.enums.RuleCode;
 import com.sqlaudit.common.enums.StatementType;
 import com.sqlaudit.common.model.ParsedStatement;
 import com.sqlaudit.rule.BuiltInRules;
@@ -27,7 +28,7 @@ public final class AstOtherRules {
     private AstOtherRules() {
     }
 
-    private static RuleDefinition def(String code) {
+    private static RuleDefinition def(RuleCode code) {
         return BuiltInRules.byCode(code);
     }
 
@@ -36,7 +37,7 @@ public final class AstOtherRules {
         return new Rule() {
             @Override
             public RuleDefinition definition() {
-                return def("R_PARSE_FAILED");
+                return def(RuleCode.R_PARSE_FAILED);
             }
 
             @Override
@@ -56,7 +57,7 @@ public final class AstOtherRules {
         return new Rule() {
             @Override
             public RuleDefinition definition() {
-                return def("R_NO_LIMIT_QUERY");
+                return def(RuleCode.R_NO_LIMIT_QUERY);
             }
 
             @Override
@@ -80,7 +81,7 @@ public final class AstOtherRules {
         return new Rule() {
             @Override
             public RuleDefinition definition() {
-                return def("R_SQL_INJECTION_PATTERN");
+                return def(RuleCode.R_SQL_INJECTION_PATTERN);
             }
 
             @Override
@@ -109,7 +110,7 @@ public final class AstOtherRules {
         return new Rule() {
             @Override
             public RuleDefinition definition() {
-                return def("R_IOTDB_DROP");
+                return def(RuleCode.R_IOTDB_DROP);
             }
 
             @Override
@@ -133,7 +134,7 @@ public final class AstOtherRules {
         return new Rule() {
             @Override
             public RuleDefinition definition() {
-                return def("R_IOTDB_NO_TIME_RANGE");
+                return def(RuleCode.R_IOTDB_NO_TIME_RANGE);
             }
 
             @Override
@@ -156,7 +157,7 @@ public final class AstOtherRules {
         return new Rule() {
             @Override
             public RuleDefinition definition() {
-                return def("R_IOTDB_TTL");
+                return def(RuleCode.R_IOTDB_TTL);
             }
 
             @Override
@@ -179,7 +180,7 @@ public final class AstOtherRules {
         return new Rule() {
             @Override
             public RuleDefinition definition() {
-                return def("R_TX_DDL_MIX");
+                return def(RuleCode.R_TX_DDL_MIX);
             }
 
             @Override
@@ -206,7 +207,7 @@ public final class AstOtherRules {
         return new Rule() {
             @Override
             public RuleDefinition definition() {
-                return def("R_BIG_UNIT_COUNT");
+                return def(RuleCode.R_BIG_UNIT_COUNT);
             }
 
             @Override

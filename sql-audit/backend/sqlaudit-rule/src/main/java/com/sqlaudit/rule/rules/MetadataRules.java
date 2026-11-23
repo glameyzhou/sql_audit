@@ -1,5 +1,6 @@
 package com.sqlaudit.rule.rules;
 
+import com.sqlaudit.common.enums.RuleCode;
 import com.sqlaudit.common.enums.StatementType;
 import com.sqlaudit.common.model.ParsedStatement;
 import com.sqlaudit.rule.BuiltInRules;
@@ -24,7 +25,7 @@ public final class MetadataRules {
     private MetadataRules() {
     }
 
-    private static RuleDefinition def(String code) {
+    private static RuleDefinition def(RuleCode code) {
         return BuiltInRules.byCode(code);
     }
 
@@ -33,7 +34,7 @@ public final class MetadataRules {
         return new Rule() {
             @Override
             public RuleDefinition definition() {
-                return def("R_NO_PK");
+                return def(RuleCode.R_NO_PK);
             }
 
             @Override
@@ -69,7 +70,7 @@ public final class MetadataRules {
         return new Rule() {
             @Override
             public RuleDefinition definition() {
-                return def("R_OBJECT_NOT_ALLOWED");
+                return def(RuleCode.R_OBJECT_NOT_ALLOWED);
             }
 
             @Override
@@ -107,7 +108,7 @@ public final class MetadataRules {
         return new Rule() {
             @Override
             public RuleDefinition definition() {
-                return def("R_SENSITIVE_COLUMN");
+                return def(RuleCode.R_SENSITIVE_COLUMN);
             }
 
             @Override

@@ -32,7 +32,7 @@
               <span class="option-env">{{ envMeta(ins.environment).label }}</span>
             </el-option>
             <template #empty>
-              <span>暂无实例，请先在系统配置→实例管理新增</span>
+              <span>暂无实例，请先在「实例管理」新增</span>
             </template>
           </el-select>
           <div v-if="envFallback" class="form-tip warn">
@@ -55,6 +55,46 @@
           />
           <div class="form-tip">
             每条语句将逐条解析、命中审核规则并生成回滚清单；含 ERROR 级规则命中将禁止提交。
+          </div>
+
+          <!-- 分表执行：DDL 占位符 {sfx} → 展开成所有分表 SQL -->
+          <div class="shard-block">
+            <div class="shard-toggle">
+              <el-switch v-model="shard.enabled" active-text="分表执行" />
+              <span class="shard-tip">为 DDL 生成所有分表的 SQL：在表名处写占位符 {sfx}</span>
+            </div>
+
+            <div v-if="shard.enabled" class="shard-config">
+              <el-radio-group v-model="shard.mode" size="small">
+                <el-radio-button value="range">数字区间</el-radio-button>
+                <el-radio-button value="list">自定义列表</el-radio-button>
+              </el-radio-group>
+
+              <template v-if="shard.mode === 'range'">
+                <el-input-number v-model="shard.range.start" :min="0" size="small" controls-position="right" />
+                <span class="shard-sep">～</span>
+                <el-input-number v-model="shard.range.end" :min="shard.range.start" size="small" controls-position="right" />
+                <span class="shard-label">前缀</span>
+                <el-input v-model="shard.range.prefix" size="small" class="shard-prefix" placeholder="_" />
+                <span class="shard-label">补零</span>
+                <el-select v-model="shard.range.pad" size="small" class="shard-pad">
+                  <el-option label="无" :value="0" />
+                  <el-option label="2 位" :value="2" />
+                  <el-option label="3 位" :value="3" />
+                </el-select>
+              </template>
+
+              <el-input
+                v-else
+                v-model="shard.list"
+                size="small"
+                class="shard-list"
+                placeholder="逗号分隔，如 _0,_1,_2,_3"
+              />
+
+              <el-button size="small" type="primary" plain @click="generateShardedSql">生成分表 SQL</el-button>
+              <span class="shard-tip">生成后写回上方编辑器，走原有「预检 → 提交」</span>
+            </div>
           </div>
         </el-form-item>
 
@@ -120,7 +160,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
@@ -177,6 +217,18 @@ const form = ref({
   sql: ''
 })
 
+// 分表执行（DDL 分表展开）：占位符 {sfx} → 按后缀规则展开成多语句 SQL
+const shard = reactive({
+  enabled: false,
+  mode: 'range',   // 'range' 数字区间 | 'list' 自定义列表
+  range: { start: 0, end: 99, pad: 0, prefix: '_' },
+  list: ''
+})
+
+// 分表配置随工单提交（审计可见「分表 DDL」语义）；SQL 手动改动后失效
+const shardConfig = ref(null)
+let suppressShardClear = false
+
 const preview = ref(null)
 const previewing = ref(false)
 const submitting = ref(false)
@@ -197,8 +249,40 @@ watch(
   () => [form.value.sql, form.value.instanceIds],
   () => {
     if (preview.value) preview.value = null
+    // 手动改动 SQL 后，之前生成的分表配置失效（生成动作通过 suppressShardClear 跳过）
+    if (!suppressShardClear) shardConfig.value = null
+    suppressShardClear = false
   }
 )
+
+// —— 分表执行：{sfx} 占位符展开 ——
+function buildSuffixes() {
+  if (shard.mode === 'range') {
+    const { start, end, pad, prefix } = shard.range
+    const out = []
+    for (let i = start; i <= end; i++) {
+      const n = pad > 0 ? String(i).padStart(pad, '0') : String(i)
+      out.push(prefix + n)
+    }
+    return out
+  }
+  return (shard.list || '').split(/[,，\n]/).map((s) => s.trim()).filter(Boolean)
+}
+
+function generateShardedSql() {
+  const suffixes = buildSuffixes()
+  if (!suffixes.length) { ElMessage.warning('请先填写分表后缀'); return }
+  if (!form.value.sql.includes('{sfx}')) {
+    ElMessage.warning('SQL 中未找到占位符 {sfx}，请在表名处写 {sfx}，如 ALTER TABLE t_order{sfx} ...')
+    return
+  }
+  if (suffixes.length > 500) { ElMessage.warning('分表数量超过 500，请缩小后缀范围'); return }
+  const template = form.value.sql
+  suppressShardClear = true
+  form.value.sql = suffixes.map((s) => template.replaceAll('{sfx}', s)).join(';\n')
+  shardConfig.value = { template, suffixes }
+  ElMessage.success(`已生成 ${suffixes.length} 条分表 SQL，点「预检」查看逐条解析`)
+}
 
 async function handlePreview() {
   if (!canPreview.value) return
@@ -218,6 +302,10 @@ async function handleSubmit() {
     ElMessage.error('存在 ERROR 级规则命中，请先修正 SQL')
     return
   }
+  if (form.value.sql.includes('{sfx}')) {
+    ElMessage.warning('SQL 中还有未展开的分表占位符 {sfx}，请先点击「生成分表 SQL」')
+    return
+  }
   submitting.value = true
   try {
     const { ticketId } = await api.submitTicket({
@@ -226,6 +314,7 @@ async function handleSubmit() {
       instanceIds: form.value.instanceIds,
       environment: session.env,
       sql: form.value.sql,
+      shardConfig: shardConfig.value ? JSON.stringify(shardConfig.value) : null,
       dialect: selectedDialect.value
     })
     ElMessage.success('工单创建成功')
@@ -263,6 +352,17 @@ function severityClass(severity) {
 .option-env { float: right; font-size: 11px; color: var(--sa-text-3); margin-left: 12px; }
 .env-readonly-tip { font-size: 11.5px; color: var(--sa-text-3); margin-left: 10px; }
 .sql-input :deep(.el-textarea__inner) { font-family: var(--sa-font-mono); font-size: 12px; line-height: 1.6; }
+
+/* ---- 分表执行 ---- */
+.shard-block { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--sa-border); }
+.shard-toggle { display: flex; align-items: center; gap: 10px; }
+.shard-tip { font-size: 11.5px; color: var(--sa-text-3); }
+.shard-config { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.shard-sep { color: var(--sa-text-3); }
+.shard-label { font-size: 12px; color: var(--sa-text-2); }
+.shard-prefix { width: 60px; }
+.shard-pad { width: 80px; }
+.shard-list { width: 220px; }
 
 .hint.danger { font-size: 12px; color: var(--sa-danger); margin-left: 4px; }
 

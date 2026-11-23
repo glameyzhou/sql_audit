@@ -1,8 +1,8 @@
 package com.sqlaudit.storage.impl.memory;
 
+import com.sqlaudit.common.enums.UserStatus;
 import com.sqlaudit.storage.dao.UserDao;
 import com.sqlaudit.storage.model.User;
-
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
@@ -74,7 +74,7 @@ public class InMemoryUserDao implements UserDao {
     }
 
     @Override
-    public synchronized int updateStatus(long id, String status) {
+    public synchronized int updateStatus(long id, UserStatus status) {
         User user = store.get(id);
         if (user == null) {
             return 0;

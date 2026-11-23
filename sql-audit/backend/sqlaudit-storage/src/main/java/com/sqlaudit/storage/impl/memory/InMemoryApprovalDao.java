@@ -1,8 +1,8 @@
 package com.sqlaudit.storage.impl.memory;
 
+import com.sqlaudit.common.enums.ApprovalResult;
 import com.sqlaudit.storage.dao.ApprovalDao;
 import com.sqlaudit.storage.model.Approval;
-
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -51,14 +51,14 @@ public class InMemoryApprovalDao implements ApprovalDao {
     }
 
     @Override
-    public synchronized int updateResult(long id, long approverId, String fromResult, String toResult,
+    public synchronized int updateResult(long id, long approverId, ApprovalResult fromResult, ApprovalResult toResult,
                                          String comment, LocalDateTime decidedAt) {
         Approval approval = store.get(id);
         if (approval == null) {
             return 0;
         }
         // 条件更新：result 不匹配（已被决策）→ 影响行数 0，不覆盖既有决策
-        if (fromResult != null && fromResult.equals(approval.getResult())) {
+        if (fromResult != null && fromResult == approval.getResult()) {
             approval.setApproverId(approverId);
             approval.setResult(toResult);
             approval.setComment(comment);
@@ -72,7 +72,7 @@ public class InMemoryApprovalDao implements ApprovalDao {
     public synchronized List<Approval> listPendingCreatedBefore(LocalDateTime threshold) {
         List<Approval> result = new ArrayList<>();
         for (Approval approval : store.values()) {
-            boolean pending = "PENDING".equals(approval.getResult());
+            boolean pending = ApprovalResult.PENDING == approval.getResult();
             boolean overdue = approval.getCreatedAt() != null && approval.getCreatedAt().isBefore(threshold);
             if (pending && overdue) {
                 result.add(copy(approval));
@@ -88,13 +88,28 @@ public class InMemoryApprovalDao implements ApprovalDao {
     public synchronized List<Approval> listPending() {
         List<Approval> result = new ArrayList<>();
         for (Approval approval : store.values()) {
-            if ("PENDING".equals(approval.getResult())) {
+            if (ApprovalResult.PENDING == approval.getResult()) {
                 result.add(copy(approval));
             }
         }
         result.sort(Comparator.comparing(Approval::getCreatedAt)
                 .thenComparing(Approval::getId));
         return result;
+    }
+
+    @Override
+    public synchronized int transfer(long id, long fromUserId, long toUserId) {
+        Approval approval = store.get(id);
+        if (approval == null) {
+            return 0;
+        }
+        // 条件更新：仍为 PENDING 且归属 fromUserId 才转交
+        if (ApprovalResult.PENDING == approval.getResult()
+                && approval.getApproverId() != null && approval.getApproverId() == fromUserId) {
+            approval.setApproverId(toUserId);
+            return 1;
+        }
+        return 0;
     }
 
     /** 深拷贝：返回给调用方的是快照，防止绕过条件更新直接改内存状态。 */
@@ -105,6 +120,8 @@ public class InMemoryApprovalDao implements ApprovalDao {
         dest.setNodeId(src.getNodeId());
         dest.setNodeOrder(src.getNodeOrder());
         dest.setApproverId(src.getApproverId());
+        dest.setApproverType(src.getApproverType());
+        dest.setApproverRef(src.getApproverRef());
         dest.setMode(src.getMode());
         dest.setResult(src.getResult());
         dest.setComment(src.getComment());

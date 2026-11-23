@@ -15,6 +15,7 @@ import com.alibaba.druid.sql.ast.statement.SQLSelectItem;
 import com.alibaba.druid.sql.ast.statement.SQLUpdateSetItem;
 import com.alibaba.druid.sql.ast.statement.SQLUpdateStatement;
 import com.alibaba.druid.sql.dialect.mysql.ast.statement.MySqlUpdateStatement;
+import com.sqlaudit.common.enums.RuleCode;
 import com.sqlaudit.common.enums.StatementType;
 import com.sqlaudit.common.model.ParsedStatement;
 import com.sqlaudit.rule.BuiltInRules;
@@ -36,7 +37,7 @@ public final class AstDmlRules {
     private AstDmlRules() {
     }
 
-    private static RuleDefinition def(String code) {
+    private static RuleDefinition def(RuleCode code) {
         return BuiltInRules.byCode(code);
     }
 
@@ -45,7 +46,7 @@ public final class AstDmlRules {
         return new Rule() {
             @Override
             public RuleDefinition definition() {
-                return def("R_NO_WHERE");
+                return def(RuleCode.R_NO_WHERE);
             }
 
             @Override
@@ -67,7 +68,7 @@ public final class AstDmlRules {
         return new Rule() {
             @Override
             public RuleDefinition definition() {
-                return def("R_LIMIT_ORDER_DML");
+                return def(RuleCode.R_LIMIT_ORDER_DML);
             }
 
             @Override
@@ -106,7 +107,7 @@ public final class AstDmlRules {
         return new Rule() {
             @Override
             public RuleDefinition definition() {
-                return def("R_NONDETERMINISTIC_SET");
+                return def(RuleCode.R_NONDETERMINISTIC_SET);
             }
 
             @Override
@@ -150,7 +151,7 @@ public final class AstDmlRules {
         return new Rule() {
             @Override
             public RuleDefinition definition() {
-                return def("R_MULTI_TABLE_DML");
+                return def(RuleCode.R_MULTI_TABLE_DML);
             }
 
             @Override
@@ -179,7 +180,7 @@ public final class AstDmlRules {
         return new Rule() {
             @Override
             public RuleDefinition definition() {
-                return def("R_SELECT_STAR");
+                return def(RuleCode.R_SELECT_STAR);
             }
 
             @Override

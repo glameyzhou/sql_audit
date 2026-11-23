@@ -1,5 +1,8 @@
 package com.sqlaudit.worker;
 
+import com.sqlaudit.common.enums.RollbackStatus;
+import com.sqlaudit.common.enums.StatementType;
+import com.sqlaudit.common.enums.UnitStatus;
 import com.sqlaudit.executor.engine.UnitExecutionEngine;
 import com.sqlaudit.executor.gate.ExecutionGate;
 import com.sqlaudit.executor.gate.GateContext;
@@ -101,8 +104,8 @@ class WorkerEndToEndTest {
         u.setUnitOrder(1);
         u.setStatement(sql.getBytes(StandardCharsets.UTF_8));
         u.setStatementHash("h");
-        u.setStatementType("UPDATE");
-        u.setStatus("pending");
+        u.setStatementType(StatementType.UPDATE);
+        u.setStatus(UnitStatus.PENDING);
         u.setIntentWritten(false);
         return unitDao.insert(u);
     }
@@ -116,7 +119,7 @@ class WorkerEndToEndTest {
 
         assertEquals(1, executed, "本轮应执行 1 个 unit");
         TicketUnit after = unitDao.findById(id);
-        assertEquals("success", after.getStatus());
+        assertEquals(UnitStatus.SUCCESS, after.getStatus());
         assertEquals(3L, after.getAffectedRows(), "3 行受影响");
 
         // 生产库（H2 演示）已变更
@@ -128,7 +131,7 @@ class WorkerEndToEndTest {
         // 反向 SQL 已落库（verified）且可查
         var master = rollbackDao.findByUnitId(id);
         assertNotNull(master, "反向 SQL 主记录应存在");
-        assertEquals("verified", master.getStatus());
+        assertEquals(RollbackStatus.VERIFIED, master.getStatus());
         assertEquals(3, master.getStmtCount(), "3 行前镜像 → 3 条反向 UPDATE");
     }
 
@@ -142,7 +145,7 @@ class WorkerEndToEndTest {
         // 第二轮：unit 已 success + intent_written=1，绝不重跑
         loop.runOnce(NOW.plusSeconds(60));
         assertEquals(55, GATEWAY.currentValues().get(1), "绝不重复执行");
-        assertEquals("success", unitDao.findById(id).getStatus());
+        assertEquals(UnitStatus.SUCCESS, unitDao.findById(id).getStatus());
     }
 
     @Test
@@ -150,7 +153,7 @@ class WorkerEndToEndTest {
         // 语法错误语句（提交期会被拦，但防御性验证 worker 的失败路径）
         long id = insertUnit("UPDATE t_demo SET WHERE ???", "t_demo");
         loop.runOnce(NOW);
-        assertEquals("failed", unitDao.findById(id).getStatus());
+        assertEquals(UnitStatus.FAILED, unitDao.findById(id).getStatus());
     }
 
     @Test
@@ -159,7 +162,7 @@ class WorkerEndToEndTest {
         // 这里验证对账成功路径的边界：WHERE id = 999 命中 0 行 → 0 == 0 对账通过
         long id = insertUnit("UPDATE t_demo SET a = 1 WHERE id = 999", "t_demo");
         loop.runOnce(NOW);
-        assertEquals("success", unitDao.findById(id).getStatus());
+        assertEquals(UnitStatus.SUCCESS, unitDao.findById(id).getStatus());
         assertEquals(0L, unitDao.findById(id).getAffectedRows());
     }
 }

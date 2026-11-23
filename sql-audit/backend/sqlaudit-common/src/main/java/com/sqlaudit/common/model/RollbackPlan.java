@@ -1,6 +1,7 @@
 package com.sqlaudit.common.model;
 
 import com.sqlaudit.common.enums.RollbackCoverage;
+import com.sqlaudit.common.enums.RollbackGenerator;
 import com.sqlaudit.common.enums.UnavailableReason;
 
 import java.util.ArrayList;
@@ -26,8 +27,8 @@ public class RollbackPlan {
     /** 不可回滚时的具体原因（coverage=NONE 时非空） */
     private UnavailableReason unavailableReason;
 
-    /** 生成器：MIRROR/REVERSE_DDL/BINLOG/SNAPSHOT（对应 rollback_sql.generator） */
-    private String generator;
+    /** 生成器（对应 rollback_sql.generator；不可回滚的计划为 {@link RollbackGenerator#NONE}） */
+    private RollbackGenerator generator;
 
     /** 反向语句预览（参数化、不含前镜像值；实际落库在 rollback_statement 子表） */
     private List<String> reverseStatementPreview = new ArrayList<>();
@@ -51,11 +52,11 @@ public class RollbackPlan {
         this.unavailableReason = unavailableReason;
     }
 
-    public String getGenerator() {
+    public RollbackGenerator getGenerator() {
         return generator;
     }
 
-    public void setGenerator(String generator) {
+    public void setGenerator(RollbackGenerator generator) {
         this.generator = generator;
     }
 

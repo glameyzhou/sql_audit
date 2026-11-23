@@ -1,5 +1,10 @@
 package com.sqlaudit.worker.gateway;
 
+import com.sqlaudit.common.enums.ApprovalMode;
+import com.sqlaudit.common.enums.ApprovalResult;
+import com.sqlaudit.common.enums.Dialect;
+import com.sqlaudit.common.enums.GateCode;
+import com.sqlaudit.common.enums.TicketStatus;
 import com.sqlaudit.executor.gate.ExecutionGate;
 import com.sqlaudit.parser.SqlParserService;
 import com.sqlaudit.rollback.capability.RollbackCapabilityAssessor;
@@ -50,7 +55,7 @@ class WorkerGateContextTest {
     void insertMySqlInstance() {
         Instance inst = new Instance();
         inst.setName("ctx-test");
-        inst.setDialect("MYSQL");
+        inst.setDialect(Dialect.MYSQL);
         inst.setHost("127.0.0.1");
         inst.setPort(3306);
         instanceDao.insert(inst);
@@ -63,9 +68,9 @@ class WorkerGateContextTest {
     @Test
     void approvedAt_picksLatestApprovedDecidedAt() {
         TicketUnit unit = unit(1L, 1L);
-        approvalDao.insert(approval(1L, "APPROVED", T1));
-        approvalDao.insert(approval(1L, "PENDING", null));
-        approvalDao.insert(approval(1L, "APPROVED", T2));
+        approvalDao.insert(approval(1L, ApprovalResult.APPROVED, T1));
+        approvalDao.insert(approval(1L, ApprovalResult.PENDING, null));
+        approvalDao.insert(approval(1L, ApprovalResult.APPROVED, T2));
 
         assertEquals(T2, ctx.approvedAt(unit), "应取 APPROVED 记录里最新的 decidedAt");
     }
@@ -73,8 +78,8 @@ class WorkerGateContextTest {
     @Test
     void approvedAt_noApprovedRecord_returnsNull() {
         TicketUnit unit = unit(1L, 1L);
-        approvalDao.insert(approval(1L, "PENDING", null));
-        approvalDao.insert(approval(1L, "REJECTED", T1));
+        approvalDao.insert(approval(1L, ApprovalResult.PENDING, null));
+        approvalDao.insert(approval(1L, ApprovalResult.REJECTED, T1));
 
         assertNull(ctx.approvedAt(unit), "无 APPROVED 记录应返回 null");
     }
@@ -114,26 +119,26 @@ class WorkerGateContextTest {
     @Test
     void onGateFailure_approvalTtl_marksTicketExpired() {
         Ticket ticket = new Ticket();
-        ticket.setStatus("approved");
+        ticket.setStatus(TicketStatus.APPROVED);
         long ticketId = ticketDao.insertTicket(ticket);
 
         ctx.onGateFailure(unit(ticketId, 1L),
-                ExecutionGate.GateResult.fail("APPROVAL_TTL", "审批已超 24h 有效期"));
+                ExecutionGate.GateResult.fail(GateCode.APPROVAL_TTL, "审批已超 24h 有效期"));
 
-        assertEquals("expired", ticketDao.findById(ticketId).getStatus(),
+        assertEquals(TicketStatus.EXPIRED, ticketDao.findById(ticketId).getStatus(),
                 "§3.5：审批超时置 expired，需重新审批");
     }
 
     @Test
     void onGateFailure_otherGate_leavesTicketStatus() {
         Ticket ticket = new Ticket();
-        ticket.setStatus("approved");
+        ticket.setStatus(TicketStatus.APPROVED);
         long ticketId = ticketDao.insertTicket(ticket);
 
         ctx.onGateFailure(unit(ticketId, 1L),
-                ExecutionGate.GateResult.fail("R_SCHEMA_DRIFT", "表结构漂移"));
+                ExecutionGate.GateResult.fail(GateCode.SCHEMA_DRIFT, "表结构漂移"));
 
-        assertEquals("approved", ticketDao.findById(ticketId).getStatus(),
+        assertEquals(TicketStatus.APPROVED, ticketDao.findById(ticketId).getStatus(),
                 "非 TTL 门禁不做 expired 补偿（退回重审走 unit failed 路径）");
     }
 
@@ -149,12 +154,12 @@ class WorkerGateContextTest {
         return u;
     }
 
-    private static Approval approval(long ticketId, String result, LocalDateTime decidedAt) {
+    private static Approval approval(long ticketId, ApprovalResult result, LocalDateTime decidedAt) {
         Approval a = new Approval();
         a.setTicketId(ticketId);
         a.setNodeOrder(1);
         a.setApproverId(7L);
-        a.setMode("OR");
+        a.setMode(ApprovalMode.OR);
         a.setResult(result);
         a.setDecidedAt(decidedAt);
         a.setCreatedAt(decidedAt);

@@ -1,7 +1,10 @@
 package com.sqlaudit.rollback.lifecycle;
 
 import com.sqlaudit.common.enums.Dialect;
+import com.sqlaudit.common.enums.RollbackCoverage;
+import com.sqlaudit.common.enums.RollbackGenerator;
 import com.sqlaudit.common.enums.RollbackStatus;
+import com.sqlaudit.common.enums.UnavailableReason;
 import com.sqlaudit.parser.SqlParserService;
 import com.sqlaudit.storage.dao.RollbackDao;
 import com.sqlaudit.storage.model.RollbackSql;
@@ -51,15 +54,15 @@ public class RollbackLifecycleService {
      * 生成后落库（status=generated）+ 语法自检（通过则 verified，失败标 not_available）。
      *
      * @param unitId           执行单元
-     * @param generator        MIRROR / REVERSE_DDL / BINLOG / SNAPSHOT
-     * @param coverage         FULL / PARTIAL / NONE
+     * @param generator        生成器 {@link RollbackGenerator}（MIRROR / REVERSE_DDL / BINLOG / SNAPSHOT）
+     * @param coverage         覆盖率 {@link RollbackCoverage}（FULL / PARTIAL / NONE）
      * @param preimageRows     前镜像行（依赖检测 hash 用；INSERT 反向无前镜像传 null）
      * @param statements       反向语句（按回放顺序）
      * @param now              当前时间（有效期起点）
      * @param ttl              有效期（默认 24h）
      * @return 回滚主记录 id
      */
-    public long persistAndVerify(long unitId, String generator, String coverage,
+    public long persistAndVerify(long unitId, RollbackGenerator generator, RollbackCoverage coverage,
                                  List<String> preimageRows,
                                  List<com.sqlaudit.rollback.reverse.ReverseStatement> statements,
                                  Dialect dialect, LocalDateTime now, Duration ttl) {
@@ -88,10 +91,10 @@ public class RollbackLifecycleService {
         master.setPreimageHash(preimageHash(preimageRows));
         master.setExpiresAt(now.plus(ttl));
         if (syntaxFailure != null) {
-            master.setStatus(RollbackStatus.NOT_AVAILABLE.name().toLowerCase());
-            master.setUnavailableReason("SYNTAX_CHECK_FAILED: " + truncate(syntaxFailure, 200));
+            master.setStatus(RollbackStatus.NOT_AVAILABLE);
+            master.setUnavailableReason(UnavailableReason.SYNTAX_CHECK_FAILED.name() + ": " + truncate(syntaxFailure, 200));
         } else {
-            master.setStatus(RollbackStatus.VERIFIED.name().toLowerCase());
+            master.setStatus(RollbackStatus.VERIFIED);
         }
         master.setStmtCount(statements.size());
         rollbackDao.insertRollbackSql(master);

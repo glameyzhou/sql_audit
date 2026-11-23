@@ -1,5 +1,6 @@
 package com.sqlaudit.server.web;
 
+import com.sqlaudit.common.enums.RoleCode;
 import com.sqlaudit.server.auth.RequireRole;
 import com.sqlaudit.server.service.JdbcMetadataService;
 import com.sqlaudit.storage.dao.InstanceDao;
@@ -9,6 +10,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -24,7 +26,7 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/instances")
-@RequireRole({"ADMIN", "DBA", "LEAD", "DEV"})
+@RequireRole({RoleCode.ADMIN, RoleCode.DBA, RoleCode.LEAD, RoleCode.DEV})
 public class InstanceController {
 
     private final InstanceDao instanceDao;
@@ -61,6 +63,16 @@ public class InstanceController {
     @GetMapping("/{id}/databases/{db}/tables")
     public List<String> tables(@PathVariable long id, @PathVariable String db) {
         return metadataService.listTables(id, db);
+    }
+
+    /**
+     * 某实例某库某表的列名清单（按定义顺序；{@code table} 走 query 参数，PG 为
+     * {@code schema.table} 限定名，避免点号混入路径变量被后缀匹配截断）。
+     */
+    @GetMapping("/{id}/databases/{db}/columns")
+    public List<String> columns(@PathVariable long id, @PathVariable String db,
+                                @RequestParam String table) {
+        return metadataService.listColumns(id, db, table);
     }
 
     /** 连通性测试请求体（方言取值：MYSQL / POSTGRESQL / IOTDB）。 */

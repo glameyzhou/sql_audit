@@ -1,5 +1,8 @@
 package com.sqlaudit.server.auth;
 
+import com.sqlaudit.common.enums.RoleCode;
+import com.sqlaudit.common.enums.UserSource;
+import com.sqlaudit.common.enums.UserStatus;
 import com.sqlaudit.storage.dao.RoleDao;
 import com.sqlaudit.storage.dao.UserDao;
 import com.sqlaudit.storage.impl.memory.InMemoryRoleDao;
@@ -17,7 +20,7 @@ import java.util.List;
  *
  * <p>admin/admin12345 → ADMIN+LEAD+DBA+DEV（全角色超级管理员）；dev/dev12345 → DEV。
  * 角色写入：JDBC 方言直插 t_user_role，内存方言走 {@link InMemoryRoleDao#grantByCode}
- * （接口未暴露授权写路径）。</p>
+ * （接口未暴露授权写路径）；两处的角色 code 均取 {@link RoleCode#getCode()}。</p>
  */
 @Component
 public class SeedUserRunner implements ApplicationRunner {
@@ -37,27 +40,28 @@ public class SeedUserRunner implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        seed("admin", "admin12345", List.of("ADMIN", "LEAD", "DBA", "DEV"));
-        seed("dev", "dev12345", List.of("DEV"));
+        seed("admin", "admin12345", List.of(RoleCode.ADMIN, RoleCode.LEAD, RoleCode.DBA, RoleCode.DEV));
+        seed("dev", "dev12345", List.of(RoleCode.DEV));
     }
 
-    private void seed(String username, String password, List<String> roleCodes) {
+    private void seed(String username, String password, List<RoleCode> roleCodes) {
         if (userDao.findByUsername(username) != null) {
             return;
         }
         User user = new User();
         user.setUsername(username);
         user.setDisplayName(username);
-        user.setSource("LOCAL");
+        user.setSource(UserSource.LOCAL);
         user.setPasswordHash(passwordEncoder.encode(password));
-        user.setStatus("ACTIVE");
+        user.setStatus(UserStatus.ACTIVE);
         long userId = userDao.insert(user);
-        for (String code : roleCodes) {
-            grantRole(userId, code);
+        for (RoleCode role : roleCodes) {
+            grantRole(userId, role);
         }
     }
 
-    private void grantRole(long userId, String roleCode) {
+    private void grantRole(long userId, RoleCode role) {
+        String roleCode = role.getCode(); // t_role.code 仍是字符串列
         if (roleDao instanceof InMemoryRoleDao memory) {
             memory.grantByCode(userId, roleCode);
         } else {

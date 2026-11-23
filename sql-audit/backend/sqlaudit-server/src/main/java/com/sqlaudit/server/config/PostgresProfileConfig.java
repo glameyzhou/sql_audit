@@ -5,6 +5,7 @@ import com.sqlaudit.storage.dao.AuditDao;
 import com.sqlaudit.storage.dao.CredentialDao;
 import com.sqlaudit.storage.dao.FlowRuleDao;
 import com.sqlaudit.storage.dao.InstanceDao;
+import com.sqlaudit.storage.dao.PermissionDao;
 import com.sqlaudit.storage.dao.RoleDao;
 import com.sqlaudit.storage.dao.RuleDao;
 import com.sqlaudit.storage.dao.TicketDao;
@@ -15,6 +16,7 @@ import com.sqlaudit.storage.impl.jdbc.postgresql.PostgresCredentialDao;
 import com.sqlaudit.storage.impl.jdbc.postgresql.PostgresExecLockDao;
 import com.sqlaudit.storage.impl.jdbc.postgresql.PostgresFlowRuleDao;
 import com.sqlaudit.storage.impl.jdbc.postgresql.PostgresInstanceDao;
+import com.sqlaudit.storage.impl.jdbc.postgresql.PostgresPermissionDao;
 import com.sqlaudit.storage.impl.jdbc.postgresql.PostgresRoleDao;
 import com.sqlaudit.storage.impl.jdbc.postgresql.PostgresRollbackDao;
 import com.sqlaudit.storage.impl.jdbc.postgresql.PostgresRuleDao;
@@ -81,6 +83,11 @@ public class PostgresProfileConfig {
     @Bean
     public RoleDao roleDao(JdbcTemplate jdbcTemplate) {
         return new PostgresRoleDao(jdbcTemplate);
+    }
+
+    @Bean
+    public PermissionDao permissionDao(JdbcTemplate jdbcTemplate) {
+        return new PostgresPermissionDao(jdbcTemplate);
     }
 
     @Bean

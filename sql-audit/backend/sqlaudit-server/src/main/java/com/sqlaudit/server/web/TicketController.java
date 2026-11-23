@@ -1,6 +1,7 @@
 package com.sqlaudit.server.web;
 
 import com.sqlaudit.common.enums.Dialect;
+import com.sqlaudit.common.enums.Environment;
 import com.sqlaudit.server.service.TicketSubmissionService;
 import com.sqlaudit.storage.dao.TicketDao;
 import com.sqlaudit.storage.model.Ticket;
@@ -38,14 +39,14 @@ public class TicketController {
     /** 提交预览：解析 → 规则 → 回滚清单 → 风险（无副作用，§3.1 提交页第一步）。 */
     @PostMapping("/preview")
     public TicketSubmissionService.PreviewResult preview(@RequestBody PreviewRequest req) {
-        return submission.preview(req.sql(), Dialect.valueOf(req.dialect()), req.instanceIds());
+        return submission.preview(req.sql(), req.dialect(), req.instanceIds());
     }
 
     /** 建单并提交审核（ERROR 命中 → 400 ERROR_RULE_BLOCKED，不建单）。 */
     @PostMapping
     public SubmitResponse submit(@RequestBody SubmitRequest req) {
         long id = submission.submit(req.title(), req.creatorId(), req.instanceIds(),
-                req.environment(), req.sql(), Dialect.valueOf(req.dialect()));
+                req.environment(), req.sql(), req.shardConfig(), req.dialect());
         return new SubmitResponse(id);
     }
 
@@ -75,11 +76,14 @@ public class TicketController {
 
     // ---------------- DTO ----------------
 
-    public record PreviewRequest(String sql, String dialect, List<Long> instanceIds) {
+    /** dialect 按存储码（MYSQL / PG / IOTDB）反序列化，未知取值由统一错误出口转 400。 */
+    public record PreviewRequest(String sql, Dialect dialect, List<Long> instanceIds) {
     }
 
+    /** environment / dialect 按存储码反序列化（prod / test / dev；MYSQL / PG / IOTDB）。 */
     public record SubmitRequest(String title, long creatorId, List<Long> instanceIds,
-                                String environment, String sql, String dialect) {
+                                Environment environment, String sql, String shardConfig,
+                                Dialect dialect) {
     }
 
     public record SubmitApprovalRequest(boolean impactAssessmentDone) {

@@ -1,8 +1,8 @@
 package com.sqlaudit.storage.impl.memory;
 
+import com.sqlaudit.common.enums.InstanceStatus;
 import com.sqlaudit.storage.dao.InstanceDao;
 import com.sqlaudit.storage.model.Instance;
-
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -49,7 +49,7 @@ public class InMemoryInstanceDao implements InstanceDao {
         instance.setId(id);
         LocalDateTime now = LocalDateTime.now();
         if (instance.getStatus() == null) {
-            instance.setStatus("ACTIVE");
+            instance.setStatus(InstanceStatus.ACTIVE);
         }
         if (instance.getCreatedAt() == null) {
             instance.setCreatedAt(now);

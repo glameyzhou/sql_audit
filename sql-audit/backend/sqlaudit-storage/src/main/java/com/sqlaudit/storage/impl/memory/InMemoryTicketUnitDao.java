@@ -1,8 +1,8 @@
 package com.sqlaudit.storage.impl.memory;
 
+import com.sqlaudit.common.enums.UnitStatus;
 import com.sqlaudit.storage.dao.TicketUnitDao;
 import com.sqlaudit.storage.model.TicketUnit;
-
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -34,14 +34,6 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public class InMemoryTicketUnitDao implements TicketUnitDao {
 
-    /** DB 中 status 为小写字符串（§3.2 状态机），fake 与之对齐。 */
-    private static final String STATUS_PENDING = "pending";
-    private static final String STATUS_LEASED = "leased";
-    private static final String STATUS_EXECUTING = "executing";
-    private static final String STATUS_SUCCESS = "success";
-    private static final String STATUS_FAILED = "failed";
-    private static final String STATUS_NEEDS_CONFIRM = "needs_confirm";
-
     private final Map<Long, TicketUnit> store = new ConcurrentHashMap<>();
     private final AtomicLong idGenerator = new AtomicLong(0);
 
@@ -54,14 +46,14 @@ public class InMemoryTicketUnitDao implements TicketUnitDao {
             return 0;
         }
         boolean intentNotWritten = !Boolean.TRUE.equals(unit.getIntentWritten());
-        boolean statusClaimable = STATUS_PENDING.equals(unit.getStatus()) || STATUS_LEASED.equals(unit.getStatus());
+        boolean statusClaimable = UnitStatus.PENDING == unit.getStatus() || UnitStatus.LEASED == unit.getStatus();
         // lease_until IS NULL OR lease_until < NOW(3)；NOW 以 heartbeatAt 为基准（见类 javadoc）
         boolean leaseFree = unit.getLeaseUntil() == null || unit.getLeaseUntil().isBefore(heartbeatAt);
         if (intentNotWritten && statusClaimable && leaseFree) {
             unit.setLeaseOwner(leaseOwner);
             unit.setLeaseUntil(leaseUntil);
             unit.setHeartbeatAt(heartbeatAt);
-            unit.setStatus(STATUS_LEASED);
+            unit.setStatus(UnitStatus.LEASED);
             return 1;
         }
         return 0;
@@ -73,9 +65,9 @@ public class InMemoryTicketUnitDao implements TicketUnitDao {
         if (unit == null) {
             return 0;
         }
-        if (STATUS_LEASED.equals(unit.getStatus())) {
+        if (UnitStatus.LEASED == unit.getStatus()) {
             // §3.3 不变式：status='executing' 与 intent_written=1 同事务写入，无中间态
-            unit.setStatus(STATUS_EXECUTING);
+            unit.setStatus(UnitStatus.EXECUTING);
             unit.setIntentWritten(true);
             unit.setHeartbeatAt(now);
             return 1;
@@ -90,8 +82,8 @@ public class InMemoryTicketUnitDao implements TicketUnitDao {
             return 0;
         }
         // §3.3 步骤 5：条件 UPDATE，不靠唯一约束；影响行数 0 = 已被确认
-        if (STATUS_EXECUTING.equals(unit.getStatus()) && unit.getExecutedAt() == null) {
-            unit.setStatus(STATUS_SUCCESS);
+        if (UnitStatus.EXECUTING == unit.getStatus() && unit.getExecutedAt() == null) {
+            unit.setStatus(UnitStatus.SUCCESS);
             unit.setExecutedAt(executedAt);
             unit.setAffectedRows(affectedRows);
             return 1;
@@ -105,8 +97,8 @@ public class InMemoryTicketUnitDao implements TicketUnitDao {
         if (unit == null) {
             return 0;
         }
-        if (STATUS_EXECUTING.equals(unit.getStatus())) {
-            unit.setStatus(STATUS_FAILED);
+        if (UnitStatus.EXECUTING == unit.getStatus()) {
+            unit.setStatus(UnitStatus.FAILED);
             unit.setErrorMessage(errorMessage);
             unit.setExecutedAt(executedAt);
             return 1;
@@ -120,7 +112,7 @@ public class InMemoryTicketUnitDao implements TicketUnitDao {
         if (unit == null) {
             return 0;
         }
-        unit.setStatus(STATUS_NEEDS_CONFIRM);
+        unit.setStatus(UnitStatus.NEEDS_CONFIRM);
         unit.setErrorMessage(reason);
         return 1;
     }
@@ -143,7 +135,7 @@ public class InMemoryTicketUnitDao implements TicketUnitDao {
             return 0;
         }
         clearLease(unit);
-        unit.setStatus(STATUS_PENDING);
+        unit.setStatus(UnitStatus.PENDING);
         return 1;
     }
 
@@ -151,12 +143,12 @@ public class InMemoryTicketUnitDao implements TicketUnitDao {
     public synchronized int reclaimExpiredLease(LocalDateTime now) {
         int reclaimed = 0;
         for (TicketUnit unit : store.values()) {
-            boolean statusRecyclable = STATUS_PENDING.equals(unit.getStatus()) || STATUS_LEASED.equals(unit.getStatus());
+            boolean statusRecyclable = UnitStatus.PENDING == unit.getStatus() || UnitStatus.LEASED == unit.getStatus();
             boolean leaseExpired = unit.getLeaseUntil() != null && unit.getLeaseUntil().isBefore(now);
             boolean intentNotWritten = !Boolean.TRUE.equals(unit.getIntentWritten());
             if (statusRecyclable && leaseExpired && intentNotWritten) {
                 clearLease(unit);
-                unit.setStatus(STATUS_PENDING);
+                unit.setStatus(UnitStatus.PENDING);
                 reclaimed++;
             }
         }
@@ -170,8 +162,8 @@ public class InMemoryTicketUnitDao implements TicketUnitDao {
         List<TicketUnit> result = new ArrayList<>();
         for (TicketUnit unit : store.values()) {
             boolean intentNotWritten = !Boolean.TRUE.equals(unit.getIntentWritten());
-            boolean pending = STATUS_PENDING.equals(unit.getStatus());
-            boolean expiredLease = STATUS_LEASED.equals(unit.getStatus())
+            boolean pending = UnitStatus.PENDING == unit.getStatus();
+            boolean expiredLease = UnitStatus.LEASED == unit.getStatus()
                     && unit.getLeaseUntil() != null && unit.getLeaseUntil().isBefore(now);
             if (intentNotWritten && (pending || expiredLease)) {
                 result.add(copy(unit));
@@ -198,10 +190,10 @@ public class InMemoryTicketUnitDao implements TicketUnitDao {
     }
 
     @Override
-    public synchronized List<TicketUnit> listByStatus(String status) {
+    public synchronized List<TicketUnit> listByStatus(UnitStatus status) {
         List<TicketUnit> result = new ArrayList<>();
         for (TicketUnit unit : store.values()) {
-            if (status.equals(unit.getStatus())) {
+            if (status == unit.getStatus()) {
                 result.add(copy(unit));
             }
         }
@@ -212,7 +204,7 @@ public class InMemoryTicketUnitDao implements TicketUnitDao {
     @Override
     public synchronized int renewLease(long id, String leaseOwner, LocalDateTime leaseUntil, LocalDateTime heartbeatAt) {
         TicketUnit unit = store.get(id);
-        if (unit == null || !STATUS_EXECUTING.equals(unit.getStatus())) {
+        if (unit == null || UnitStatus.EXECUTING != unit.getStatus()) {
             return 0;
         }
         if (leaseOwner != null && !leaseOwner.equals(unit.getLeaseOwner())) {
@@ -233,7 +225,7 @@ public class InMemoryTicketUnitDao implements TicketUnitDao {
     public synchronized List<TicketUnit> listExecutingWithStaleHeartbeat(LocalDateTime heartbeatThreshold) {
         List<TicketUnit> result = new ArrayList<>();
         for (TicketUnit unit : store.values()) {
-            boolean executing = STATUS_EXECUTING.equals(unit.getStatus());
+            boolean executing = UnitStatus.EXECUTING == unit.getStatus();
             boolean stale = unit.getHeartbeatAt() != null && unit.getHeartbeatAt().isBefore(heartbeatThreshold);
             boolean unconfirmed = unit.getExecutedAt() == null;
             if (executing && stale && unconfirmed) {
@@ -269,10 +261,10 @@ public class InMemoryTicketUnitDao implements TicketUnitDao {
     }
 
     /** 按状态计数（流 A 断言用）。 */
-    public synchronized int countByStatus(String status) {
+    public synchronized int countByStatus(UnitStatus status) {
         int count = 0;
         for (TicketUnit unit : store.values()) {
-            if (status == null ? unit.getStatus() == null : status.equals(unit.getStatus())) {
+            if (status == unit.getStatus()) {
                 count++;
             }
         }

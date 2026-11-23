@@ -4,8 +4,12 @@ import com.sqlaudit.auth.AesGcmDetailCipher;
 import com.sqlaudit.audit.AuditWriter;
 import com.sqlaudit.audit.ChainVerifier;
 import com.sqlaudit.audit.DetailCipher;
+import com.sqlaudit.common.enums.AuditAction;
+import com.sqlaudit.common.enums.AuditResult;
+import com.sqlaudit.common.enums.AuditTargetType;
 import com.sqlaudit.executor.gateway.ProductionGateway;
 import com.sqlaudit.parser.SqlParserService;
+import com.sqlaudit.rule.RuleConfig;
 import com.sqlaudit.server.gateway.JdbcProductionGateway;
 import com.sqlaudit.server.service.RollbackExecutor;
 import com.sqlaudit.query.channel.ConnectionProvider;
@@ -35,9 +39,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
 
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.List;
 
@@ -86,8 +87,8 @@ public class ServerBeansConfig {
     }
 
     @Bean
-    public RuleEngine ruleEngine(TableMetadataProvider metadata) {
-        return new RuleEngine(metadata);
+    public RuleEngine ruleEngine(TableMetadataProvider metadata, RuleConfig ruleConfig) {
+        return new RuleEngine(metadata, ruleConfig);
     }
 
     @Bean
@@ -151,12 +152,13 @@ public class ServerBeansConfig {
             com.sqlaudit.common.model.AuditEvent event = com.sqlaudit.common.model.AuditEvent.builder()
                     .actorId(parseActor(actor))
                     .actorName(actor)
-                    .actorRole("SYSTEM")
-                    .action("ticket.state_change")
-                    .targetType("ticket")
+                    .actorRole(com.sqlaudit.common.model.AuditEvent.SYSTEM_ACTOR_ROLE)
+                    .action(AuditAction.TICKET_STATE_CHANGE)
+                    .targetType(AuditTargetType.TICKET)
                     .targetId(String.valueOf(ticketId))
+                    // from / to 为 TicketStatus 枚举，按 toString（常量名）写入，与此前一致
                     .detailPlaintext("{\"from\":\"" + from + "\",\"to\":\"" + to + "\",\"actor\":\"" + actor + "\"}")
-                    .result("SUCCESS")
+                    .result(AuditResult.SUCCESS)
                     .traceId("ticket-" + ticketId)
                     .createdAt(java.time.OffsetDateTime.now(zone))
                     .build();
@@ -196,42 +198,15 @@ public class ServerBeansConfig {
         return new TicketService(ticketDao, unitWriter, stateMachine, approvalEngine, approvalRouter);
     }
 
-    // ---------------- 查询通道（H2 演示连接） ----------------
+    // ---------------- 查询通道（按实例路由的只读连接） ----------------
 
     /**
-     * H2 演示连接：所有 instanceId 路由到同一个内存库（建了 demo 表）。
-     * <p>生产实现按 instanceId 路由到对应只读副本连接池（ro_data）。</p>
+     * 查询连接提供者：按 instanceId 连目标实例的真实库，优先 RO_DATA、回落 RO_META
+     * （见 {@link com.sqlaudit.server.service.JdbcQueryConnectionProvider}）。
      */
     @Bean
-    public ConnectionProvider connectionProvider() {
-        return new ConnectionProvider() {
-            private volatile boolean initialized;
-
-            @Override
-            public Connection getConnection(long instanceId) {
-                try {
-                    Connection conn = DriverManager.getConnection(
-                            "jdbc:h2:mem:querydemo;DB_CLOSE_DELAY=-1", "sa", "");
-                    if (!initialized) {
-                        initDemo(conn);
-                        initialized = true;
-                    }
-                    return conn;
-                } catch (SQLException e) {
-                    throw new IllegalStateException("H2 演示连接不可用", e);
-                }
-            }
-
-            private void initDemo(Connection conn) throws SQLException {
-                try (var st = conn.createStatement()) {
-                    st.execute("CREATE TABLE IF NOT EXISTS t_user (id INT PRIMARY KEY, name VARCHAR(64))");
-                    st.execute("MERGE INTO t_user (id, name) KEY (id) VALUES (1, '张三')");
-                    for (int i = 2; i <= 20; i++) {
-                        st.execute("MERGE INTO t_user (id, name) KEY (id) VALUES (" + i + ", 'user" + i + "')");
-                    }
-                }
-            }
-        };
+    public ConnectionProvider connectionProvider(InstanceDao instanceDao, CredentialDao credentialDao) {
+        return new com.sqlaudit.server.service.JdbcQueryConnectionProvider(instanceDao, credentialDao);
     }
 
     @Bean
