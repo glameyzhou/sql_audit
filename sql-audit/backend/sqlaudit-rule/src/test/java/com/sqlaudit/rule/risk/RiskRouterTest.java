@@ -1,5 +1,7 @@
 package com.sqlaudit.rule.risk;
 
+import com.sqlaudit.common.enums.ApprovalMode;
+import com.sqlaudit.common.enums.ApproverType;
 import com.sqlaudit.common.enums.RiskLevel;
 import com.sqlaudit.common.enums.RuleCode;
 import com.sqlaudit.common.enums.RuleSeverity;
@@ -14,8 +16,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 风险分级 + 审批路由测试（A-2 验收：命中 → 等级 → 审批链映射表驱动；
- * 「配置写错能否把 CRITICAL 降级」反例测试）。
+ * 风险分级 + 审批路由测试（追加模式，决定 9：生效链 = 全局链 + 实例链，
+ * 实例组 node_order 接在全局组之后重新编号；secondConfirm 恒由 CRITICAL 推导）。
  */
 class RiskRouterTest {
 
@@ -23,7 +25,16 @@ class RiskRouterTest {
         return new RuleHit(code, severity, "test");
     }
 
-    // ---------------- 风险分级表驱动（§4.5） ----------------
+    private static ChainNode roleNode(int order, long flowNodeId, String roleCode) {
+        return new ChainNode(order, flowNodeId, ApproverType.ROLE, roleCode, ApprovalMode.OR);
+    }
+
+    private static ChainNode userNode(int order, long flowNodeId, long userId) {
+        return new ChainNode(order, flowNodeId, ApproverType.USER, String.valueOf(userId),
+                ApprovalMode.OR);
+    }
+
+    // ---------------- 风险分级表驱动（README §4.3） ----------------
 
     @Test
     void riskLevel_tableDriven() {
@@ -46,85 +57,106 @@ class RiskRouterTest {
                     code + " 应定级 CRITICAL");
         }
 
-        // 影响面未知 → 升一级（§4.4）
+        // 影响面未知 → 升一级（README §4.3）
         assertEquals(RiskLevel.HIGH, RiskAssessor.assess(List.of(), StatementType.UPDATE, true));
         assertEquals(RiskLevel.CRITICAL,
                 RiskAssessor.assess(List.of(hit(RuleCode.R_NO_WHERE, RuleSeverity.ERROR)), StatementType.UPDATE, true));
     }
 
-    // ---------------- 审批链映射表驱动 ----------------
+    // ---------------- 空配置（无 DB 加载）→ 全空链 ----------------
 
     @Test
-    void approvalChain_tableDriven() {
-        FlowConfig config = new FlowConfig();
-        ApprovalRouter router = new ApprovalRouter(config);
+    void emptyConfig_allChainsEmpty() {
+        ApprovalRouter router = new ApprovalRouter(new FlowConfig());
 
-        // LOW → 自动通过留痕（空链）
-        assertEquals(List.of(), router.route(RiskLevel.LOW, 1, List.of()).nodes());
-
-        // MEDIUM → 主管 1 人
-        assertEquals(List.of("LEAD"), router.route(RiskLevel.MEDIUM, 1, List.of()).nodes());
-
-        // HIGH → 主管 + DBA
-        assertEquals(List.of("LEAD", "DBA"), router.route(RiskLevel.HIGH, 1, List.of()).nodes());
-
-        // CRITICAL → 主管 + DBA + 管理员 + 二次确认
-        ApprovalChain critical = router.route(RiskLevel.CRITICAL, 1, List.of());
-        assertEquals(List.of("LEAD", "DBA", "ADMIN"), critical.nodes());
-        assertTrue(critical.secondConfirm());
+        assertTrue(router.route(RiskLevel.LOW, 1).isEmpty());
+        assertTrue(router.route(RiskLevel.MEDIUM, 1).isEmpty());
+        assertTrue(router.route(RiskLevel.HIGH, 1).isEmpty());
+        assertTrue(router.route(RiskLevel.CRITICAL, 1).isEmpty());
     }
 
-    // ---------------- 反例：配置写错不能把 CRITICAL 降级（A-2 验收） ----------------
+    // ---------------- 全局链（决定 9：追加模式，全局组在前） ----------------
 
     @Test
-    void criticalCannotBeDowngraded_byInstanceConfig() {
+    void globalOnly_chainOrderPreserved() {
         FlowConfig config = new FlowConfig();
-        // 实例 7 试图把 CRITICAL 降成单节点 LEAD（配置写错/恶意）
-        config.addInstanceOverride(7, RiskLevel.CRITICAL,
-                new ApprovalChain(List.of("LEAD"), false, "L2_INSTANCE", RiskLevel.CRITICAL));
+        config.putGlobal(RiskLevel.HIGH,
+                List.of(roleNode(1, 11, "LEAD"), roleNode(2, 12, "DBA")));
         ApprovalRouter router = new ApprovalRouter(config);
 
-        // 无 nonOverridable 命中时：弱覆盖被忽略，仍用 L1 的最严链
-        ApprovalChain chain = router.route(RiskLevel.CRITICAL, 7, List.of());
-        assertEquals(List.of("LEAD", "DBA", "ADMIN"), chain.nodes(), "弱于全局的实例覆盖必须被忽略");
-        assertTrue(chain.secondConfirm());
-
-        // 命中 nonOverridable 规则（R_DDL_DESTRUCTIVE）→ 直接锁定 L3，任何配置不可降级
-        ApprovalChain locked = router.route(RiskLevel.CRITICAL, 7,
-                List.of(hit(RuleCode.R_DDL_DESTRUCTIVE, RuleSeverity.ERROR)));
-        assertEquals(List.of("LEAD", "DBA", "ADMIN"), locked.nodes());
-        assertTrue(locked.secondConfirm());
-        assertEquals("L3_FALLBACK", locked.source());
+        ApprovalChain chain = router.route(RiskLevel.HIGH, 1);
+        assertEquals(2, chain.nodes().size());
+        assertEquals("LEAD", chain.nodes().get(0).ref());
+        assertEquals(1, chain.nodes().get(0).nodeOrder());
+        assertEquals(11L, chain.nodes().get(0).flowNodeId());
+        assertEquals("DBA", chain.nodes().get(1).ref());
+        assertEquals(2, chain.nodes().get(1).nodeOrder());
+        assertFalse(chain.secondConfirm());
     }
 
+    // ---------------- 实例链追加：排在全局之后并重新编号 ----------------
+
     @Test
-    void instanceOverride_canOnlyTighten() {
+    void instanceChain_appendedAfterGlobal_renumbered() {
         FlowConfig config = new FlowConfig();
-        // 加严覆盖：HIGH 从 LEAD+DBA 加到 LEAD+DBA+ADMIN → 生效
-        config.addInstanceOverride(7, RiskLevel.HIGH,
-                new ApprovalChain(List.of("LEAD", "DBA", "ADMIN"), false, "L2_INSTANCE", RiskLevel.HIGH));
-        // 弱覆盖：MEDIUM 从 LEAD 减成空 → 忽略
-        config.addInstanceOverride(8, RiskLevel.MEDIUM,
-                new ApprovalChain(List.of(), false, "L2_INSTANCE", RiskLevel.MEDIUM));
+        // 全局 HIGH：1=LEAD、2=DBA
+        config.putGlobal(RiskLevel.HIGH,
+                List.of(roleNode(1, 11, "LEAD"), roleNode(2, 12, "DBA")));
+        // 实例 7 专用：1=USER 张三、2=USER 李四 → 生效链组序应为 3、4
+        config.putInstance(7, RiskLevel.HIGH,
+                List.of(userNode(1, 21, 100L), userNode(2, 22, 200L)));
         ApprovalRouter router = new ApprovalRouter(config);
 
-        assertEquals(List.of("LEAD", "DBA", "ADMIN"), router.route(RiskLevel.HIGH, 7, List.of()).nodes());
-        // 实例 8 的弱覆盖被忽略，仍走全局
-        assertEquals(List.of("LEAD"), router.route(RiskLevel.MEDIUM, 8, List.of()).nodes());
+        ApprovalChain chain = router.route(RiskLevel.HIGH, 7);
+        assertEquals(4, chain.nodes().size(), "生效链 = 全局组 + 实例组");
+        assertEquals(3, chain.nodes().get(2).nodeOrder(), "实例组 1 接在全局组后：组序 3");
+        assertEquals(21L, chain.nodes().get(2).flowNodeId(), "flowNodeId 保留真实来源");
+        assertEquals("100", chain.nodes().get(2).ref());
+        assertEquals(4, chain.nodes().get(3).nodeOrder());
+        assertEquals("200", chain.nodes().get(3).ref());
     }
 
     @Test
-    void criticalAlwaysSecondConfirm_evenIfConfigForgets() {
+    void instanceChain_onlyInstance_keepsOriginalOrder() {
         FlowConfig config = new FlowConfig();
-        // 全局链被错误配置成无二次确认的 CRITICAL 链（模拟配置写错）
-        config.globalChain(RiskLevel.CRITICAL).ifPresent(c -> {
-            // 不可变配置——直接构造新 router 用覆盖测试
-        });
-        // 构造忘记二次确认的场景：实例级覆盖 equals 全局但 secondConfirm=false
-        config.addInstanceOverride(9, RiskLevel.CRITICAL,
-                new ApprovalChain(List.of("LEAD", "DBA", "ADMIN"), false, "L2_INSTANCE", RiskLevel.CRITICAL));
+        config.putInstance(7, RiskLevel.MEDIUM,
+                List.of(roleNode(1, 21, "LEAD"), roleNode(2, 22, "DBA")));
         ApprovalRouter router = new ApprovalRouter(config);
-        ApprovalChain chain = router.route(RiskLevel.CRITICAL, 9, List.of());
-        assertTrue(chain.secondConfirm(), "CRITICAL 无论配置如何必须带执行前二次确认（§3.4）");
+
+        ApprovalChain chain = router.route(RiskLevel.MEDIUM, 7);
+        assertEquals(2, chain.nodes().size());
+        assertEquals(1, chain.nodes().get(0).nodeOrder());
+        assertEquals(2, chain.nodes().get(1).nodeOrder());
+    }
+
+    @Test
+    void instanceChain_otherInstanceNotLeaked() {
+        FlowConfig config = new FlowConfig();
+        config.putGlobal(RiskLevel.MEDIUM, List.of(roleNode(1, 11, "LEAD")));
+        config.putInstance(7, RiskLevel.MEDIUM, List.of(roleNode(1, 21, "DBA")));
+        ApprovalRouter router = new ApprovalRouter(config);
+
+        // 实例 8 无专用链 → 只有全局链
+        ApprovalChain chain = router.route(RiskLevel.MEDIUM, 8);
+        assertEquals(1, chain.nodes().size());
+        assertEquals("LEAD", chain.nodes().get(0).ref());
+    }
+
+    // ---------------- secondConfirm 恒由 CRITICAL 推导（README §4.6） ----------------
+
+    @Test
+    void secondConfirm_derivedFromCriticalOnly() {
+        FlowConfig config = new FlowConfig();
+        config.putGlobal(RiskLevel.CRITICAL, List.of(roleNode(1, 11, "LEAD")));
+        config.putGlobal(RiskLevel.HIGH, List.of(roleNode(1, 12, "DBA")));
+        ApprovalRouter router = new ApprovalRouter(config);
+
+        assertTrue(router.route(RiskLevel.CRITICAL, 1).secondConfirm(),
+                "CRITICAL 无论配置如何必须带执行前二次确认");
+        assertFalse(router.route(RiskLevel.HIGH, 1).secondConfirm());
+        assertFalse(router.route(RiskLevel.LOW, 1).secondConfirm());
+
+        // 空配置下 CRITICAL 同样带二次确认
+        assertTrue(new ApprovalRouter(new FlowConfig()).route(RiskLevel.CRITICAL, 1).secondConfirm());
     }
 }

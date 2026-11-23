@@ -9,14 +9,14 @@ import java.sql.Timestamp;
 import java.time.LocalDateTime;
 
 /**
- * exec_lock 的 MySQL 真实现（DDL §9 执行锁表；内存版语义基准 {@code InMemoryExecLockDao}）。
+ * exec_lock 的 MySQL 真实现（DDL 执行锁表；内存版语义基准 {@code InMemoryExecLockDao}）。
  *
- * <p><strong>抢锁实现（§3.5 并发互斥）：</strong>{@code tryAcquire} 用 INSERT 主键冲突法——
+ * <p><strong>抢锁实现（README §4.2 并发互斥）：</strong>{@code tryAcquire} 用 INSERT 主键冲突法——
  * exec_lock 以 lock_key 为主键，直接 INSERT 并捕获 {@link DuplicateKeyException} 判
  * 「已被占用返回 false」。原子性由主键唯一约束天然保证，无需先查后插的竞态窗口。</p>
  *
  * <p><strong>与内存版的语义差异（推断点，需注意）：</strong>内存版允许对<strong>已过期</strong>
- * 的锁做覆盖抢占；JDBC 版按设计文档「expires_at 过期由 reaper 清理（DDL 注释）」的分工，
+ * 的锁做覆盖抢占；JDBC 版按 DDL 注释「expires_at 过期由 reaper 清理」的分工，
  * 过期锁只能等 {@link #cleanupExpired} 清掉后再抢，tryAcquire 本身不做过期覆盖。
  * 清理→重抢的最终效果与内存版一致，只是恢复窗口多一个 reaper 周期。</p>
  *
@@ -42,7 +42,7 @@ public class MySqlExecLockDao implements ExecLockDao {
         }
         // DDL：acquired_at / expires_at 均为 NOT NULL——expiresAt 缺失视为调用方契约违约
         if (lock.getExpiresAt() == null) {
-            throw new IllegalArgumentException("exec_lock.expires_at NOT NULL（DDL §9），expiresAt 不能为空");
+            throw new IllegalArgumentException("exec_lock.expires_at NOT NULL（DDL 定义），expiresAt 不能为空");
         }
         try {
             jdbc.update(

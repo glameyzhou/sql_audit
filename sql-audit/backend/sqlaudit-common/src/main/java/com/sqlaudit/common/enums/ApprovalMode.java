@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 
 /**
- * 审批模式（设计文档 §8.2 flow_node.mode / approval.mode）。
+ * 审批模式（README §4.6 flow_node.mode / approval.mode）。
  *
  * <p>原在 sqlaudit-workflow；因存储模型 {@code Approval.mode} 需要强类型，下沉到 common。</p>
  *

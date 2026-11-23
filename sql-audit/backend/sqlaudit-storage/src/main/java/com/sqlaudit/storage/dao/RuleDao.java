@@ -7,8 +7,8 @@ import java.util.List;
 /**
  * 审核规则存储（对应 t_rule 表）。
  *
- * <p>唯一写入方：sqlaudit-rule（本轮系统配置 CRUD 经 sqlaudit-server 写入）。
- * 删除为硬删。</p>
+ * <p>唯一写入方：sqlaudit-server。{@code params} 为 JSON 文本列，DAO 原样读写（不经方言
+ * JSON 类型）。{@link #update} 会刷新 updated_at。删除为硬删。</p>
  */
 public interface RuleDao {
 

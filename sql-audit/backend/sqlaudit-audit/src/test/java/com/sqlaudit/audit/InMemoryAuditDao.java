@@ -34,7 +34,7 @@ class InMemoryAuditDao implements AuditDao {
     private final AtomicLong idGen = new AtomicLong();
 
     private long lastSeq = 0;
-    private String lastHash = CanonicalJson.GENESIS_HASH; // 模拟创世 chain_head 初值（§7.3）
+    private String lastHash = CanonicalJson.GENESIS_HASH; // 模拟创世 chain_head 初值（README §4.1）
 
     @Override
     public ChainHead lockChainHead() {
@@ -76,6 +76,19 @@ class InMemoryAuditDao implements AuditDao {
             }
         }
         return result;
+    }
+
+    @Override
+    public List<AuditLog> listBySeqRange(long fromSeq, long toSeq, int offset, int limit) {
+        List<AuditLog> sorted = listBySeqRange(fromSeq, toSeq);
+        int from = Math.min(Math.max(offset, 0), sorted.size());
+        int to = limit < 0 ? sorted.size() : Math.min(from + limit, sorted.size());
+        return new ArrayList<>(sorted.subList(from, to));
+    }
+
+    @Override
+    public long countBySeqRange(long fromSeq, long toSeq) {
+        return listBySeqRange(fromSeq, toSeq).size();
     }
 
     /** 直接读某条（测试篡改用）。 */

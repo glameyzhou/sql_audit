@@ -7,11 +7,11 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * 规则命中结果（设计文档 §4.3）。
+ * 规则命中结果（README §4.3）。
  *
  * <p>对应 {@code audit_result(unit_id, rule_code, level, message, extra)}。</p>
  *
- * <p>契约要点（§4.3）：</p>
+ * <p>契约要点（README §4.3）：</p>
  * <ul>
  *   <li>ERROR 阻断提交，WARN 只提示；</li>
  *   <li>豁免必须走审批并写审计；</li>

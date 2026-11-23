@@ -16,9 +16,9 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * 查询通道执行编排（设计文档 §6.2：门禁 → LIMIT 注入 → 只读账号流式执行）。
+ * 查询通道执行编排（README §4.1：门禁 → LIMIT 注入 → 只读账号流式执行）。
  *
- * <p><strong>三层保护缺一不可</strong>（§6.2）：</p>
+ * <p><strong>三层保护缺一不可</strong>（README §4.1）：</p>
  * <ol>
  *   <li><strong>AST 注入 LIMIT</strong>（语义正确层，{@link LimitInjector}）：无 LIMIT 注入上限，
  *       过大收紧；边缘语法解析不了时降级；</li>
@@ -36,11 +36,11 @@ import java.util.Objects;
  * 无法区分「正好 maxLimit 行」与「还有更多行」，保守置 true）。
  * 用户自己的 LIMIT（≤ 上限，原样透传）导致的取数不算平台截断。</p>
  *
- * <p>超时：{@code setQueryTimeout}（§6.2：驱动层超时；PG 生产侧另发
+ * <p>超时：{@code setQueryTimeout}（README §4.1：驱动层超时；PG 生产侧另发
  * {@code SET LOCAL statement_timeout}，MySQL 另加 MAX_EXECUTION_TIME hint，由 storage
  * 连接提供方在 W2 集成时落地，本层 JDBC 超时已生效）。</p>
  *
- * <p>结果集不落库（§6.2）；{@link QueryResult} 带齐 query_log 落库所需字段。
+ * <p>结果集不落库（README §4.1）；{@link QueryResult} 带齐 query_log 落库所需字段。
  * 行/总字节上限校验为 TODO（W2 掩码/导出阶段实现，参数已在 {@link QueryOptions} 预留）。</p>
  */
 public final class QueryChannel {

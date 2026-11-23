@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 审计端点（§7：检索 + 链完整性校验）。
+ * 审计端点（README §4.1：检索 + 链完整性校验）。
  */
 @RestController
 @RequestMapping("/api/audit-logs")
@@ -26,14 +26,23 @@ public class AuditController {
         this.chainVerifier = chainVerifier;
     }
 
-    /** 按 seq 区间检索（W2 补 actor/action 过滤与分页）。 */
+    /**
+     * 按 seq 区间检索（seq 升序；{@code fromSeq}/{@code toSeq} 默认保持 1/100）。
+     * 分页 {@code page}/{@code size}（钳制见 {@link PagedResponse}），返回 {@code {items, total}}。
+     */
     @GetMapping
-    public List<AuditLog> list(@RequestParam(defaultValue = "1") long fromSeq,
-                               @RequestParam(defaultValue = "100") long toSeq) {
-        return auditDao.listBySeqRange(fromSeq, toSeq);
+    public PagedResponse<AuditLog> list(@RequestParam(defaultValue = "1") long fromSeq,
+                                        @RequestParam(defaultValue = "100") long toSeq,
+                                        @RequestParam(defaultValue = "1") int page,
+                                        @RequestParam(defaultValue = PagedResponse.DEFAULT_SIZE_STR) int size) {
+        int limit = PagedResponse.clampSize(size);
+        int offset = PagedResponse.offsetOf(page, limit);
+        List<AuditLog> items = auditDao.listBySeqRange(fromSeq, toSeq, offset, limit);
+        long total = auditDao.countBySeqRange(fromSeq, toSeq);
+        return PagedResponse.of(items, total);
     }
 
-    /** 链完整性校验（篡改检测入口，§7.3）。 */
+    /** 链完整性校验（篡改检测入口，README §4.1）。 */
     @GetMapping("/verify")
     public ChainVerifyResult verify(@RequestParam(defaultValue = "1") long fromSeq,
                                     @RequestParam(defaultValue = "1000000") long toSeq) {

@@ -12,7 +12,7 @@ import java.util.Locale;
 import java.util.Objects;
 
 /**
- * Apache IoTDB 1.x 语句白名单解析器（设计文档 §4.1 / §5.7）。
+ * Apache IoTDB 1.x 语句白名单解析器（README §4.3 / README §4.4）。
  *
  * <p><strong>MVP 不做 AST</strong>（不自研 ANTLR grammar，P2 复用官方
  * iotdb-core/antlr 生成的解析器）：按语句类型白名单放行，

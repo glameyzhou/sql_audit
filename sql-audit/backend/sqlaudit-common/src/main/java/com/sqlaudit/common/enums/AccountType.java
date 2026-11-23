@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 
 /**
- * 生产库账号类型（设计文档 §4 / §5 生产实例与凭据）。
+ * 生产库账号类型（生产实例与凭据模型）。
  *
  * <p>对应 {@code t_credential.account_type} 列（存储码 = 枚举名）。三类生产账号物理隔离：
  * {@code (instance_id, account_type)} 唯一，一个实例每种类型最多一份凭据。</p>

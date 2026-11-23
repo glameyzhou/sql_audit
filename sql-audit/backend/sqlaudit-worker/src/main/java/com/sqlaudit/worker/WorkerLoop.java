@@ -15,13 +15,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
 
 /**
- * Worker 主循环（设计文档 §3.3：轮询 + 租约 + 心跳；§2.2：worker 是唯一连生产库的进程）。
+ * Worker 主循环（README §4.2：轮询 + 租约 + 心跳；README §3.1：worker 是唯一连生产库的进程）。
  *
  * <p>循环骨架（每 {@code pollInterval} 一轮）：</p>
  * <ol>
  *   <li>{@link LeaseReaper#reap}：本轮回收（安全回 pending / 转 needs_confirm / 清过期锁）；</li>
  *   <li>{@code listClaimable} 取候选（limit 10），逐个过 {@code ticketCanExecute} 过滤
- *       （§3.5 前置门禁：未过审批 / 需二次确认未确认的工单直接跳过，不抢占租约、
+ *       （README §4.2 前置门禁：未过审批 / 需二次确认未确认的工单直接跳过，不抢占租约、
  *       不动状态——堵上「未过审批的单子被直接执行」）；</li>
  *   <li>过滤后的 unit 逐个 {@link UnitExecutionEngine#execute}
  *       竞争执行（claimUnit 硬条件保证多 worker 安全）；</li>
@@ -37,10 +37,10 @@ public class WorkerLoop {
 
     private static final Logger log = LoggerFactory.getLogger(WorkerLoop.class);
 
-    /** 轮询间隔（§3.3：worker 每秒轮询）。 */
+    /** 轮询间隔（README §4.2：worker 每秒轮询）。 */
     public static final Duration POLL_INTERVAL = Duration.ofSeconds(1);
 
-    /** 心跳间隔（§3.3：心跳 5s；reaper TTL = 15s ≥ 3 个心跳周期）。 */
+    /** 心跳间隔（README §4.2：心跳 5s；reaper TTL = 15s ≥ 3 个心跳周期）。 */
     public static final Duration HEARTBEAT_INTERVAL = Duration.ofSeconds(5);
 
     /** 单轮最多尝试的候选 unit 数。 */
@@ -50,7 +50,7 @@ public class WorkerLoop {
     private final UnitExecutionEngine engine;
     private final LeaseReaper reaper;
     private final String workerId;
-    /** §3.5 前置门禁：工单是否已到可执行态（审批通过且完成必要的二次确认）。 */
+    /** README §4.2 前置门禁：工单是否已到可执行态（审批通过且完成必要的二次确认）。 */
     private final Predicate<Long> ticketCanExecute;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private volatile Thread loopThread;
@@ -71,7 +71,7 @@ public class WorkerLoop {
         List<TicketUnit> candidates = unitDao.listClaimable(now, BATCH_LIMIT);
         int executed = 0;
         for (TicketUnit unit : candidates) {
-            // §3.5 前置门禁：未过审批（含需二次确认未确认）的工单跳过且不动状态，
+            // README §4.2 前置门禁：未过审批（含需二次确认未确认）的工单跳过且不动状态，
             // 堵上「未过审批的单子被直接执行」——审批流推进后下一轮自然恢复
             boolean canExecute;
             try {

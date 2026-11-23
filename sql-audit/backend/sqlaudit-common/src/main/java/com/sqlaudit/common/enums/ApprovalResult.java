@@ -4,15 +4,16 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 
 /**
- * 审批结果（设计文档 §9 approval.result）。
- *
- * <p>原在 sqlaudit-workflow；因存储模型 {@code Approval.result} 需要强类型，下沉到 common。</p>
+ * 审批结果（对应 {@code t_approval.result} 列）。
  *
  * <ul>
  *   <li>{@link #PENDING}：待审批；</li>
  *   <li>{@link #APPROVED}：同意；</li>
  *   <li>{@link #REJECTED}：驳回（工单转 rejected）；</li>
- *   <li>{@link #TRANSFERRED}：转交（B-3 仅保留语义与 DAO 条件更新支持，转交操作由 W2 实现）。</li>
+ *   <li>{@link #TRANSFERRED}：已转交——原记录置本值留痕，同事务插入一条指向代理人的
+ *       USER 记录；组判定时忽略本值；</li>
+ *   <li>{@link #SKIPPED}：跳过——节点解析出的审批人就是提交人（防自审），
+ *       {@code decided_by} 记提交人并写审计；组判定时视为通过。</li>
  * </ul>
  */
 public enum ApprovalResult implements CodedEnum {
@@ -22,8 +23,10 @@ public enum ApprovalResult implements CodedEnum {
     APPROVED,
     /** 驳回（工单转 rejected） */
     REJECTED,
-    /** 转交（保留语义，暂未启用） */
-    TRANSFERRED;
+    /** 已转交（原记录留痕，另起一条指向代理人的 USER 记录） */
+    TRANSFERRED,
+    /** 跳过（解析到提交人本人，防自审；组判定视为通过） */
+    SKIPPED;
 
     /** DB / JSON 存储码（= 枚举名）。 */
     @Override

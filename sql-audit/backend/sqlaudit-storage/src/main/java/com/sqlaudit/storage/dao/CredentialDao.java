@@ -7,10 +7,10 @@ import java.util.List;
 /**
  * 生产库凭据存储（对应 t_credential 表）。
  *
- * <p>唯一写入方：sqlaudit-server（实例新增/编辑时随实例保存凭据，见
- * {@code ConfigController}）；读方：sqlaudit-worker（RW_EXEC 建连接）、sqlaudit-query
- * （RO_META/RO_DATA）。{@code passwordEnc} 恒为 AES-GCM 密文，解密在消费方（common 的
- * {@code CredentialCrypto}）完成，DAO 层不触碰明文。</p>
+ * <p>唯一写入方：sqlaudit-server（实例新增/编辑时随实例保存凭据）；读方：sqlaudit-worker
+ * （RW_EXEC 建连接）、sqlaudit-query（RO_META/RO_DATA）。{@code passwordEnc} 恒为
+ * {@code CredentialCrypto} 产出的密文文本（{@code ivBase64.ciphertextBase64}），
+ * 解密在消费方完成，DAO 层不触碰明文。</p>
  */
 public interface CredentialDao {
 

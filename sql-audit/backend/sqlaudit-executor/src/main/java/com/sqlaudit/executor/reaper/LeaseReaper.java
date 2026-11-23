@@ -9,7 +9,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 租约回收器（设计文档 §3.3 reaper 分流表 + §3.5 锁清理）。
+ * 租约回收器（README §4.2 reaper 分流表 + README §4.2 锁清理）。
  *
  * <p><strong>reaper 独立于抢占</strong>（v2 漏洞修正：抢占 SQL 只覆盖 pending，
  * 崩在 executing 的行永远回收不到）。分流规则：</p>
@@ -23,12 +23,12 @@ import java.util.List;
  *       <td>不回收；超 max_exec_minutes 只告警</td></tr>
  * </table>
  *
- * <p><strong>只认心跳不认耗时</strong>（§3.3）：长时间 DDL 会让 unit 长期停在
+ * <p><strong>只认心跳不认耗时</strong>（README §4.2）：长时间 DDL 会让 unit 长期停在
  * executing，按耗时回收会把正常执行的 DDL 误判为死 worker。</p>
  */
 public class LeaseReaper {
 
-    /** 心跳停滞判定窗口（TTL ≥ 心跳间隔 × 3，§3.3：心跳 5s → TTL 15s）。 */
+    /** 心跳停滞判定窗口（TTL ≥ 心跳间隔 × 3，README §4.2：心跳 5s → TTL 15s）。 */
     public static final Duration HEARTBEAT_STALE_TTL = Duration.ofSeconds(15);
 
     private final TicketUnitDao ticketUnitDao;
@@ -51,7 +51,7 @@ public class LeaseReaper {
      * 执行一轮回收。
      *
      * @param now 当前时间
-     * @return 分流统计（needs_confirm &gt; 0 应触发企微告警，§11）
+     * @return 分流统计（needs_confirm &gt; 0 应触发企微告警）
      */
     public ReapResult reap(LocalDateTime now) {
         // 1. 安全回收：pending/leased + 租约过期 + intent_written=0 → 回 pending
@@ -65,12 +65,12 @@ public class LeaseReaper {
             // 双保险：已确认的（executed_at 非空）不转
             if (unit.getExecutedAt() == null && Boolean.TRUE.equals(unit.getIntentWritten())) {
                 ticketUnitDao.markNeedsConfirm(unit.getId(),
-                        "心跳停滞超 TTL 且 intent 已预写，SQL 可能已执行，禁止自动重试（§3.3）");
+                        "心跳停滞超 TTL 且 intent 已预写，SQL 可能已执行，禁止自动重试");
                 needsConfirm++;
             }
         }
 
-        // 3. 过期执行锁清理（§3.5：锁与租约同生命周期，worker 崩溃后防锁永久泄漏）
+        // 3. 过期执行锁清理（README §4.2：锁与租约同生命周期，worker 崩溃后防锁永久泄漏）
         execLockDao.cleanupExpired(now);
 
         return new ReapResult(reclaimed, needsConfirm);

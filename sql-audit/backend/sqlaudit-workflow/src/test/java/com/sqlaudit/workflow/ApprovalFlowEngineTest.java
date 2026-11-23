@@ -3,22 +3,25 @@ package com.sqlaudit.workflow;
 import com.sqlaudit.common.enums.ApprovalMode;
 import com.sqlaudit.common.enums.ApprovalResult;
 import com.sqlaudit.common.enums.ApproverType;
-import com.sqlaudit.common.enums.Environment;
 import com.sqlaudit.common.enums.RiskLevel;
 import com.sqlaudit.common.enums.TicketStatus;
+import com.sqlaudit.common.enums.UserStatus;
 import com.sqlaudit.common.exception.IllegalStateTransitionException;
 import com.sqlaudit.common.exception.SqlauditException;
 import com.sqlaudit.rule.risk.ApprovalChain;
+import com.sqlaudit.rule.risk.ChainNode;
+import com.sqlaudit.storage.dao.ApprovalDao;
 import com.sqlaudit.storage.impl.memory.InMemoryApprovalDao;
 import com.sqlaudit.storage.impl.memory.InMemoryTicketDao;
 import com.sqlaudit.storage.model.Approval;
 import com.sqlaudit.storage.model.Ticket;
+import com.sqlaudit.workflow.WorkflowTestDoubles.FakeInstanceDao;
+import com.sqlaudit.workflow.WorkflowTestDoubles.FakeRoleDao;
+import com.sqlaudit.workflow.WorkflowTestDoubles.FakeUserDao;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.time.Duration;
-import java.time.Instant;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -27,25 +30,40 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * {@link ApprovalFlowEngine} 单测（B-3 验收：防自审 / 会签或签 / 二次确认 / 超时查询）。
+ * {@link ApprovalFlowEngine} 单测（决定 9 追加模式：USER / ROLE / INSTANCE_OWNER 解析、
+ * 防自审跳过留痕、会签 / 或签、转交、二次确认、并发重复生成防护）。
  */
 class ApprovalFlowEngineTest {
 
     private static final long CREATOR = 1L;
+    private static final long ZHANG = 100L;   // 张三
+    private static final long LI = 200L;      // 李四
+    private static final long WANG = 300L;    // 王五
 
+    private final FakeUserDao users = new FakeUserDao();
+    private final FakeRoleDao roles = new FakeRoleDao(users);
+    private final FakeInstanceDao instances = new FakeInstanceDao();
     private final InMemoryTicketDao ticketDao = new InMemoryTicketDao();
     private final InMemoryApprovalDao approvalDao = new InMemoryApprovalDao();
     private final ApprovalFlowEngine engine = new ApprovalFlowEngine(
-            approvalDao, ticketDao, new TicketStateMachine(ticketDao));
+            approvalDao, ticketDao, users, roles, instances,
+            new TicketStateMachine(ticketDao));
+
+    @BeforeEach
+    void seedPeople() {
+        users.add(CREATOR, "creator", UserStatus.ACTIVE);
+        users.add(ZHANG, "zhangsan", UserStatus.ACTIVE);
+        users.add(LI, "lisi", UserStatus.ACTIVE);
+        users.add(WANG, "wangwu", UserStatus.ACTIVE);
+    }
 
     // ---- 造数 ----
 
-    private Ticket newAuditingTicket(RiskLevel riskLevel) {
+    private Ticket newAuditingTicket(RiskLevel riskLevel, long instanceId, long creatorId) {
         Ticket ticket = new Ticket();
         ticket.setTitle("approval-test");
-        ticket.setCreatorId(CREATOR);
-        ticket.setInstanceIds(new ArrayList<>(List.of(1L)));
-        ticket.setEnvironment(Environment.PROD);
+        ticket.setCreatorId(creatorId);
+        ticket.setInstanceId(instanceId);
         ticket.setRiskLevel(riskLevel);
         ticket.setStatus(TicketStatus.AUDITING);
         ticket.setTraceId("tr-" + System.nanoTime());
@@ -56,66 +74,191 @@ class ApprovalFlowEngineTest {
         return ticketDao.findById(id);
     }
 
-    /** 直接落一条具体审批人的 PENDING 记录（模拟 W2 角色 → 用户解析后的会签组）。 */
-    private void seedApproval(long ticketId, int nodeOrder, long approverId, ApprovalMode mode,
-                              LocalDateTime createdAt) {
-        Approval approval = new Approval();
-        approval.setTicketId(ticketId);
-        approval.setNodeId(0L);
-        approval.setNodeOrder(nodeOrder);
-        approval.setApproverId(approverId);
-        approval.setMode(mode);
-        approval.setResult(ApprovalResult.PENDING);
-        approval.setCreatedAt(createdAt);
-        approvalDao.insert(approval);
+    private static ChainNode user(int order, long flowNodeId, long userId) {
+        return new ChainNode(order, flowNodeId, ApproverType.USER, String.valueOf(userId),
+                ApprovalMode.OR);
+    }
+
+    private static ChainNode userAnd(int order, long flowNodeId, long userId) {
+        return new ChainNode(order, flowNodeId, ApproverType.USER, String.valueOf(userId),
+                ApprovalMode.AND);
+    }
+
+    private static ChainNode role(int order, long flowNodeId, String roleCode) {
+        return new ChainNode(order, flowNodeId, ApproverType.ROLE, roleCode, ApprovalMode.OR);
+    }
+
+    private static ChainNode owner(int order, long flowNodeId) {
+        return new ChainNode(order, flowNodeId, ApproverType.INSTANCE_OWNER, "*", ApprovalMode.OR);
     }
 
     private TicketStatus statusOf(Ticket ticket) {
         return ticketDao.findById(ticket.getId()).getStatus();
     }
 
-    // ---- createNodes ----
+    // ---------------- 节点解析（试解析） ----------------
 
     @Test
-    void createNodes_多节点链_生成AND会签占位记录() {
-        Ticket ticket = newAuditingTicket(RiskLevel.HIGH);
-        ApprovalChain chain = new ApprovalChain(List.of("LEAD", "DBA"), false, "L1_GLOBAL",
-                RiskLevel.HIGH);
+    void resolve_非LOW空链_拒绝提交() {
+        Ticket ticket = newAuditingTicket(RiskLevel.HIGH, 1L, CREATOR);
+        ApprovalChain chain = new ApprovalChain(List.of(), false, RiskLevel.HIGH);
+
+        SqlauditException ex = assertThrows(SqlauditException.class,
+                () -> engine.resolveNodes(ticket, chain));
+        assertEquals("APPROVAL_FLOW_NOT_CONFIGURED", ex.getCode(),
+                "非 LOW 生效链为空必须拒绝，不再自动批准");
+    }
+
+    @Test
+    void resolve_LOW空链_免审() {
+        Ticket ticket = newAuditingTicket(RiskLevel.LOW, 1L, CREATOR);
+        assertTrue(engine.resolveNodes(ticket,
+                new ApprovalChain(List.of(), false, RiskLevel.LOW)).isEmpty());
+    }
+
+    @Test
+    void resolve_USER节点_生成本人可审记录() {
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 1L, CREATOR);
+        List<Approval> rows = engine.resolveNodes(ticket,
+                new ApprovalChain(List.of(user(1, 11, ZHANG)), false, RiskLevel.MEDIUM));
+
+        assertEquals(1, rows.size());
+        Approval row = rows.get(0);
+        assertEquals(ApproverType.USER, row.getApproverType());
+        assertEquals("100", row.getApproverRef());
+        assertEquals(ApprovalResult.PENDING, row.getResult());
+        assertEquals(11L, row.getFlowNodeId(), "flowNodeId 保留真实来源");
+        assertEquals(1, row.getNodeOrder());
+    }
+
+    @Test
+    void resolve_USER节点是提交人_SKIPPED留痕() {
+        Ticket ticket = newAuditingTicket(RiskLevel.LOW, 1L, CREATOR);
+        List<Approval> rows = engine.resolveNodes(ticket,
+                new ApprovalChain(List.of(user(1, 11, CREATOR)), false, RiskLevel.LOW));
+
+        assertEquals(1, rows.size());
+        assertEquals(ApprovalResult.SKIPPED, rows.get(0).getResult(), "提交人节点必须被跳过");
+        assertEquals(CREATOR, rows.get(0).getDecidedBy(), "跳过留痕 decided_by = 提交人");
+    }
+
+    @Test
+    void resolve_非LOW全部跳过_NO_ELIGIBLE_APPROVER() {
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 1L, CREATOR);
+        SqlauditException ex = assertThrows(SqlauditException.class, () -> engine.resolveNodes(ticket,
+                new ApprovalChain(List.of(user(1, 11, CREATOR)), false, RiskLevel.MEDIUM)));
+        assertEquals("NO_ELIGIBLE_APPROVER", ex.getCode(), "无可审人（全跳过）且非 LOW → 拒绝");
+    }
+
+    @Test
+    void resolve_非LOW部分跳过_剩余节点可审() {
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 1L, CREATOR);
+        List<Approval> rows = engine.resolveNodes(ticket, new ApprovalChain(
+                List.of(userAnd(1, 11, CREATOR), userAnd(1, 12, ZHANG)), false, RiskLevel.MEDIUM));
+
+        assertEquals(2, rows.size());
+        assertEquals(ApprovalResult.SKIPPED, rows.get(0).getResult());
+        assertEquals(ApprovalResult.PENDING, rows.get(1).getResult());
+    }
+
+    @Test
+    void resolve_ROLE节点无除提交人外成员_拒绝() {
+        roles.addRole("LEAD");
+        roles.addMember("LEAD", CREATOR); // 唯一成员就是提交人
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 1L, CREATOR);
+
+        SqlauditException ex = assertThrows(SqlauditException.class, () -> engine.resolveNodes(ticket,
+                new ApprovalChain(List.of(role(1, 11, "LEAD")), false, RiskLevel.MEDIUM)));
+        assertEquals("NO_ELIGIBLE_APPROVER", ex.getCode());
+    }
+
+    @Test
+    void resolve_ROLE节点_保持角色记录待认领() {
+        roles.addRole("LEAD");
+        roles.addMember("LEAD", ZHANG);
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 1L, CREATOR);
+
+        List<Approval> rows = engine.resolveNodes(ticket,
+                new ApprovalChain(List.of(role(1, 11, "LEAD")), false, RiskLevel.MEDIUM));
+
+        assertEquals(1, rows.size());
+        assertEquals(ApproverType.ROLE, rows.get(0).getApproverType());
+        assertEquals("LEAD", rows.get(0).getApproverRef());
+        assertEquals(ApprovalResult.PENDING, rows.get(0).getResult());
+    }
+
+    @Test
+    void resolve_ROLE节点引用不存在的角色_拒绝() {
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 1L, CREATOR);
+        SqlauditException ex = assertThrows(SqlauditException.class, () -> engine.resolveNodes(ticket,
+                new ApprovalChain(List.of(role(1, 11, "GHOST")), false, RiskLevel.MEDIUM)));
+        assertEquals("NO_ELIGIBLE_APPROVER", ex.getCode());
+    }
+
+    @Test
+    void resolve_USER节点停用_拒绝() {
+        users.setStatus(ZHANG, UserStatus.DISABLED);
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 1L, CREATOR);
+
+        SqlauditException ex = assertThrows(SqlauditException.class, () -> engine.resolveNodes(ticket,
+                new ApprovalChain(List.of(user(1, 11, ZHANG)), false, RiskLevel.MEDIUM)));
+        assertEquals("NO_ELIGIBLE_APPROVER", ex.getCode());
+    }
+
+    @Test
+    void resolve_INSTANCE_OWNER_解析负责人为快照() {
+        instances.add(1L, ZHANG);
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 1L, CREATOR);
+
+        List<Approval> rows = engine.resolveNodes(ticket,
+                new ApprovalChain(List.of(owner(1, 11)), false, RiskLevel.MEDIUM));
+
+        assertEquals(1, rows.size());
+        assertEquals(ApproverType.INSTANCE_OWNER, rows.get(0).getApproverType());
+        assertEquals("100", rows.get(0).getApproverRef(), "提交时解析出的负责人用户 id 快照");
+    }
+
+    @Test
+    void resolve_INSTANCE_OWNER负责人是提交人_SKIPPED() {
+        instances.add(1L, CREATOR);
+        Ticket ticket = newAuditingTicket(RiskLevel.LOW, 1L, CREATOR);
+
+        List<Approval> rows = engine.resolveNodes(ticket,
+                new ApprovalChain(List.of(owner(1, 11)), false, RiskLevel.LOW));
+
+        assertEquals(1, rows.size());
+        assertEquals(ApprovalResult.SKIPPED, rows.get(0).getResult());
+        assertEquals(CREATOR, rows.get(0).getDecidedBy());
+    }
+
+    @Test
+    void resolve_实例不存在_拒绝() {
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 999L, CREATOR);
+        SqlauditException ex = assertThrows(SqlauditException.class, () -> engine.resolveNodes(ticket,
+                new ApprovalChain(List.of(owner(1, 11)), false, RiskLevel.MEDIUM)));
+        assertEquals("NO_ELIGIBLE_APPROVER", ex.getCode());
+    }
+
+    // ---------------- 节点生成 ----------------
+
+    @Test
+    void createNodes_生成记录并标记二次确认() {
+        Ticket ticket = newAuditingTicket(RiskLevel.CRITICAL, 1L, CREATOR);
+        ApprovalChain chain = new ApprovalChain(
+                List.of(user(1, 11, ZHANG), user(2, 12, LI)), true, RiskLevel.CRITICAL);
 
         List<Approval> nodes = engine.createNodes(ticket, chain);
 
         assertEquals(2, nodes.size());
-        for (int i = 0; i < nodes.size(); i++) {
-            Approval node = nodes.get(i);
-            assertEquals(i + 1, node.getNodeOrder());
-            assertEquals(ApprovalMode.AND, node.getMode(), "多节点链默认会签");
-            assertEquals(0L, node.getApproverId(), "ROLE 占位：approver_id=0 表示按角色解析");
-            assertEquals(ApprovalResult.PENDING, node.getResult());
-            assertEquals(0L, node.getNodeId(), "flow_node 关联占位，W2 装配时补");
-        }
-        // buildNodes 的角色顺序与链一致
-        List<ApprovalNode> built = engine.buildNodes(chain);
-        assertEquals("LEAD", built.get(0).role());
-        assertEquals("DBA", built.get(1).role());
-        assertEquals(ApproverType.ROLE, built.get(0).approverType());
-    }
-
-    @Test
-    void createNodes_单节点链_生成OR或签记录() {
-        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM);
-        ApprovalChain chain = new ApprovalChain(List.of("LEAD"), false, "L1_GLOBAL", RiskLevel.MEDIUM);
-
-        List<Approval> nodes = engine.createNodes(ticket, chain);
-
-        assertEquals(1, nodes.size());
-        assertEquals(ApprovalMode.OR, nodes.get(0).getMode(), "单节点链映射为或签");
+        assertEquals(1, nodes.get(0).getNodeOrder());
+        assertEquals(2, nodes.get(1).getNodeOrder());
+        assertTrue(engine.needsSecondConfirm(ticket.getId()), "CRITICAL 链落二次确认标记");
     }
 
     @Test
     void createNodes_重复生成抛异常() {
-        Ticket ticket = newAuditingTicket(RiskLevel.HIGH);
-        ApprovalChain chain = new ApprovalChain(List.of("LEAD", "DBA"), false, "L1_GLOBAL",
-                RiskLevel.HIGH);
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 1L, CREATOR);
+        ApprovalChain chain = new ApprovalChain(List.of(user(1, 11, ZHANG)), false, RiskLevel.MEDIUM);
         engine.createNodes(ticket, chain);
 
         SqlauditException ex = assertThrows(SqlauditException.class,
@@ -123,38 +266,127 @@ class ApprovalFlowEngineTest {
         assertEquals("APPROVAL_NODES_EXIST", ex.getCode());
     }
 
-    // ---- 防自审（§3.4 硬校验） ----
+    @Test
+    void createNodes_插入撞唯一键_视为并发生成失败() {
+        // 并发重复生成：DAO 撞 uk_approval_assignee 返回 0 → 引擎必须视为失败（不当作成功）
+        ApprovalDao failingDao = new ApprovalDao() {
+            private final InMemoryApprovalDao delegate = new InMemoryApprovalDao();
+            private boolean failNext = true;
+
+            @Override
+            public long insert(Approval approval) {
+                if (failNext) {
+                    failNext = false;
+                    return 0L; // 模拟唯一键冲突
+                }
+                return delegate.insert(approval);
+            }
+
+            @Override
+            public List<Approval> listByTicket(long ticketId) {
+                return delegate.listByTicket(ticketId);
+            }
+
+            @Override
+            public int updateResult(long id, long decidedBy, ApprovalResult fromResult,
+                                    ApprovalResult toResult, String comment, LocalDateTime decidedAt) {
+                return delegate.updateResult(id, decidedBy, fromResult, toResult, comment, decidedAt);
+            }
+
+            @Override
+            public List<Approval> listPending() {
+                return delegate.listPending();
+            }
+
+            @Override
+            public long transfer(long id, long fromUserId, long toUserId, LocalDateTime transferredAt) {
+                return delegate.transfer(id, fromUserId, toUserId, transferredAt);
+            }
+        };
+        ApprovalFlowEngine racing = new ApprovalFlowEngine(
+                failingDao, ticketDao, users, roles, instances, new TicketStateMachine(ticketDao));
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 1L, CREATOR);
+
+        SqlauditException ex = assertThrows(SqlauditException.class,
+                () -> racing.createNodes(ticket,
+                        new ApprovalChain(List.of(user(1, 11, ZHANG)), false, RiskLevel.MEDIUM)));
+        assertEquals("APPROVAL_NODES_EXIST", ex.getCode());
+    }
+
+    // ---------------- 防自审（README §4.6 硬校验） ----------------
 
     @Test
     void 防自审_提交人审批自己的工单必须被拒() {
-        Ticket ticket = newAuditingTicket(RiskLevel.HIGH);
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 1L, CREATOR);
         engine.createNodes(ticket,
-                new ApprovalChain(List.of("LEAD"), false, "L1_GLOBAL", RiskLevel.MEDIUM));
+                new ApprovalChain(List.of(user(1, 11, ZHANG)), false, RiskLevel.MEDIUM));
 
         SqlauditException ex = assertThrows(SqlauditException.class,
-                () -> engine.submitDecision(ticket.getId(), CREATOR, List.of(), true, "自己批自己"));
+                () -> engine.submitDecision(ticket.getId(), CREATOR, true, "自己批自己"));
         assertEquals("SELF_APPROVAL_FORBIDDEN", ex.getCode());
         assertEquals(TicketStatus.AUDITING, statusOf(ticket));
         assertEquals(ApprovalResult.PENDING, approvalDao.listByTicket(ticket.getId()).get(0).getResult());
     }
 
-    // ---- 会签 / 或签 ----
+    // ---------------- 张三 → 李四 指定人流程（决定 3 的验收形态） ----------------
+
+    @Test
+    void 张三李四流程_依次审批通过() {
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 1L, CREATOR);
+        engine.createNodes(ticket, new ApprovalChain(
+                List.of(user(1, 11, ZHANG), user(2, 12, LI)), false, RiskLevel.MEDIUM));
+
+        // 李四不能抢在张三前决策
+        SqlauditException ex = assertThrows(SqlauditException.class,
+                () -> engine.submitDecision(ticket.getId(), LI, true, "抢先"));
+        assertEquals("APPROVAL_TARGET_NOT_FOUND", ex.getCode(), "只能作用于当前组");
+
+        ApprovalDecision first = engine.submitDecision(ticket.getId(), ZHANG, true, "张三同意");
+        assertTrue(first.nodePassed());
+        assertFalse(first.ticketApproved(), "还有李四的节点");
+        assertEquals(TicketStatus.AUDITING, statusOf(ticket));
+
+        ApprovalDecision second = engine.submitDecision(ticket.getId(), LI, true, "李四同意");
+        assertTrue(second.ticketApproved());
+        assertEquals(TicketStatus.APPROVED, statusOf(ticket));
+    }
+
+    @Test
+    void 张三提交_自己的节点被跳过留痕_李四审批通过() {
+        // 张三本人提交 → 张三节点 SKIPPED 留痕，直接轮到李四
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 1L, ZHANG);
+        engine.createNodes(ticket, new ApprovalChain(
+                List.of(user(1, 11, ZHANG), user(2, 12, LI)), false, RiskLevel.MEDIUM));
+
+        List<Approval> rows = approvalDao.listByTicket(ticket.getId());
+        assertEquals(2, rows.size());
+        assertEquals(ApprovalResult.SKIPPED, rows.get(0).getResult(), "提交人节点跳过留痕");
+        assertEquals(ZHANG, rows.get(0).getDecidedBy());
+
+        // 张三不能自审（已被跳过，也不允许认领）
+        SqlauditException self = assertThrows(SqlauditException.class,
+                () -> engine.submitDecision(ticket.getId(), ZHANG, true, "自己批自己"));
+        assertEquals("SELF_APPROVAL_FORBIDDEN", self.getCode());
+
+        ApprovalDecision li = engine.submitDecision(ticket.getId(), LI, true, "李四同意");
+        assertTrue(li.ticketApproved());
+        assertEquals(TicketStatus.APPROVED, statusOf(ticket));
+    }
+
+    // ---------------- 会签 / 或签 ----------------
 
     @Test
     void 会签_AND_两审批人全过才过节点并转approved() {
-        Ticket ticket = newAuditingTicket(RiskLevel.HIGH);
-        LocalDateTime now = LocalDateTime.now();
-        seedApproval(ticket.getId(), 1, 2L, ApprovalMode.AND, now);
-        seedApproval(ticket.getId(), 1, 3L, ApprovalMode.AND, now);
+        Ticket ticket = newAuditingTicket(RiskLevel.HIGH, 1L, CREATOR);
+        engine.createNodes(ticket, new ApprovalChain(
+                List.of(userAnd(1, 11, ZHANG), userAnd(1, 12, LI)), false, RiskLevel.HIGH));
 
-        // 第一人同意：节点未过，工单仍在审批
-        ApprovalDecision first = engine.submitDecision(ticket.getId(), 2L, List.of(), true, "ok");
+        ApprovalDecision first = engine.submitDecision(ticket.getId(), ZHANG, true, "ok");
         assertFalse(first.nodePassed());
         assertFalse(first.ticketApproved());
         assertEquals(TicketStatus.AUDITING, statusOf(ticket));
 
-        // 第二人同意：节点通过（唯一节点）→ 工单 approved
-        ApprovalDecision second = engine.submitDecision(ticket.getId(), 3L, List.of(), true, "ok");
+        ApprovalDecision second = engine.submitDecision(ticket.getId(), LI, true, "ok");
         assertTrue(second.nodePassed());
         assertTrue(second.ticketApproved());
         assertEquals(TicketStatus.APPROVED, statusOf(ticket));
@@ -162,13 +394,12 @@ class ApprovalFlowEngineTest {
 
     @Test
     void 会签_AND_一人驳回即驳回工单() {
-        Ticket ticket = newAuditingTicket(RiskLevel.HIGH);
-        LocalDateTime now = LocalDateTime.now();
-        seedApproval(ticket.getId(), 1, 2L, ApprovalMode.AND, now);
-        seedApproval(ticket.getId(), 1, 3L, ApprovalMode.AND, now);
+        Ticket ticket = newAuditingTicket(RiskLevel.HIGH, 1L, CREATOR);
+        engine.createNodes(ticket, new ApprovalChain(
+                List.of(userAnd(1, 11, ZHANG), userAnd(1, 12, LI)), false, RiskLevel.HIGH));
 
-        engine.submitDecision(ticket.getId(), 2L, List.of(), true, "ok");
-        ApprovalDecision reject = engine.submitDecision(ticket.getId(), 3L, List.of(), false, "风险太高");
+        engine.submitDecision(ticket.getId(), ZHANG, true, "ok");
+        ApprovalDecision reject = engine.submitDecision(ticket.getId(), LI, false, "风险太高");
 
         assertTrue(reject.ticketRejected());
         assertEquals(TicketStatus.REJECTED, statusOf(ticket));
@@ -176,12 +407,11 @@ class ApprovalFlowEngineTest {
 
     @Test
     void 或签_OR_一人通过即过节点() {
-        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM);
-        LocalDateTime now = LocalDateTime.now();
-        seedApproval(ticket.getId(), 1, 2L, ApprovalMode.OR, now);
-        seedApproval(ticket.getId(), 1, 3L, ApprovalMode.OR, now);
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 1L, CREATOR);
+        engine.createNodes(ticket, new ApprovalChain(
+                List.of(user(1, 11, ZHANG), user(1, 12, LI)), false, RiskLevel.MEDIUM));
 
-        ApprovalDecision decision = engine.submitDecision(ticket.getId(), 2L, List.of(), true, "ok");
+        ApprovalDecision decision = engine.submitDecision(ticket.getId(), ZHANG, true, "ok");
         assertTrue(decision.nodePassed());
         assertTrue(decision.ticketApproved());
         assertEquals(TicketStatus.APPROVED, statusOf(ticket));
@@ -189,168 +419,237 @@ class ApprovalFlowEngineTest {
 
     @Test
     void 或签_OR_一人驳回且无人通过即驳回() {
-        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM);
-        seedApproval(ticket.getId(), 1, 2L, ApprovalMode.OR, LocalDateTime.now());
-        seedApproval(ticket.getId(), 1, 3L, ApprovalMode.OR, LocalDateTime.now());
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 1L, CREATOR);
+        engine.createNodes(ticket, new ApprovalChain(
+                List.of(user(1, 11, ZHANG), user(1, 12, LI)), false, RiskLevel.MEDIUM));
 
-        ApprovalDecision decision = engine.submitDecision(ticket.getId(), 2L, List.of(), false, "不批");
+        ApprovalDecision decision = engine.submitDecision(ticket.getId(), ZHANG, false, "不批");
         assertTrue(decision.ticketRejected());
         assertEquals(TicketStatus.REJECTED, statusOf(ticket));
     }
 
+    // ---------------- ROLE 节点：认领与角色校验 ----------------
+
     @Test
-    void 多节点串行_前一节点通过后才轮到下一节点() {
-        Ticket ticket = newAuditingTicket(RiskLevel.HIGH);
+    void ROLE节点_持有角色者认领_非成员被拒() {
+        roles.addRole("LEAD");
+        roles.addMember("LEAD", ZHANG);
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 1L, CREATOR);
         engine.createNodes(ticket,
-                new ApprovalChain(List.of("LEAD", "DBA"), false, "L1_GLOBAL", RiskLevel.HIGH));
+                new ApprovalChain(List.of(role(1, 11, "LEAD")), false, RiskLevel.MEDIUM));
 
-        // 节点 1（LEAD 占位）由 u2 认领决策：通过但还有节点 2，工单仍在审批
-        ApprovalDecision first = engine.submitDecision(ticket.getId(), 2L, List.of("LEAD"), true, "lead ok");
-        assertTrue(first.nodePassed());
-        assertFalse(first.ticketApproved());
-        assertEquals(TicketStatus.AUDITING, statusOf(ticket));
-        assertEquals(2L, approvalDao.listByTicket(ticket.getId()).get(0).getApproverId(),
-                "ROLE 占位记录应被实际决策人认领");
+        // 非角色成员不能认领
+        SqlauditException denied = assertThrows(SqlauditException.class,
+                () -> engine.submitDecision(ticket.getId(), WANG, true, "路人"));
+        assertEquals("APPROVAL_TARGET_NOT_FOUND", denied.getCode());
 
-        ApprovalDecision second = engine.submitDecision(ticket.getId(), 3L, List.of("DBA"), true, "dba ok");
-        assertTrue(second.ticketApproved());
-        assertEquals(TicketStatus.APPROVED, statusOf(ticket));
+        ApprovalDecision ok = engine.submitDecision(ticket.getId(), ZHANG, true, "主管同意");
+        assertTrue(ok.ticketApproved());
+        assertEquals(ZHANG, approvalDao.listByTicket(ticket.getId()).get(0).getDecidedBy(),
+                "认领时写入实际决策人 decided_by");
     }
 
     @Test
-    void 非当前节点决策_被拒绝() {
-        Ticket ticket = newAuditingTicket(RiskLevel.HIGH);
-        LocalDateTime now = LocalDateTime.now();
-        seedApproval(ticket.getId(), 1, 2L, ApprovalMode.AND, now); // 节点 1：u2
-        seedApproval(ticket.getId(), 2, 3L, ApprovalMode.AND, now); // 节点 2：u3
+    void ROLE节点_提交人持有角色也不能自审() {
+        roles.addRole("LEAD");
+        roles.addMember("LEAD", CREATOR);
+        roles.addMember("LEAD", ZHANG);
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 1L, CREATOR);
+        engine.createNodes(ticket,
+                new ApprovalChain(List.of(role(1, 11, "LEAD")), false, RiskLevel.MEDIUM));
 
-        // 节点 1 未过，u3 不能跳过流程决策节点 2
+        SqlauditException self = assertThrows(SqlauditException.class,
+                () -> engine.submitDecision(ticket.getId(), CREATOR, true, "自审"));
+        assertEquals("SELF_APPROVAL_FORBIDDEN", self.getCode());
+
+        ApprovalDecision ok = engine.submitDecision(ticket.getId(), ZHANG, true, "同意");
+        assertTrue(ok.ticketApproved());
+    }
+
+    // ---------------- 非当前节点 / 非审批人 ----------------
+
+    @Test
+    void 非当前节点决策_被拒绝() {
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 1L, CREATOR);
+        engine.createNodes(ticket, new ApprovalChain(
+                List.of(user(1, 11, ZHANG), user(2, 12, LI)), false, RiskLevel.MEDIUM));
+
+        // 节点 1 未过，李四（节点 2）不能抢跑
         SqlauditException ex = assertThrows(SqlauditException.class,
-                () -> engine.submitDecision(ticket.getId(), 3L, List.of(), true, "抢先"));
+                () -> engine.submitDecision(ticket.getId(), LI, true, "抢先"));
         assertEquals("APPROVAL_TARGET_NOT_FOUND", ex.getCode());
-        assertEquals(TicketStatus.AUDITING, statusOf(ticket));
     }
 
     @Test
     void 非节点审批人决策_被拒绝() {
-        Ticket ticket = newAuditingTicket(RiskLevel.HIGH);
-        seedApproval(ticket.getId(), 1, 2L, ApprovalMode.AND, LocalDateTime.now());
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 1L, CREATOR);
+        engine.createNodes(ticket,
+                new ApprovalChain(List.of(user(1, 11, ZHANG)), false, RiskLevel.MEDIUM));
 
         SqlauditException ex = assertThrows(SqlauditException.class,
-                () -> engine.submitDecision(ticket.getId(), 99L, List.of(), true, "路人"));
+                () -> engine.submitDecision(ticket.getId(), WANG, true, "路人"));
         assertEquals("APPROVAL_TARGET_NOT_FOUND", ex.getCode());
     }
 
+    // ---------------- 幂等重放 ----------------
+
     @Test
     void 重复决策_同结果幂等_改结果抛异常() {
-        Ticket ticket = newAuditingTicket(RiskLevel.HIGH);
-        LocalDateTime now = LocalDateTime.now();
-        seedApproval(ticket.getId(), 1, 2L, ApprovalMode.AND, now);
-        seedApproval(ticket.getId(), 1, 3L, ApprovalMode.AND, now);
+        Ticket ticket = newAuditingTicket(RiskLevel.HIGH, 1L, CREATOR);
+        engine.createNodes(ticket, new ApprovalChain(
+                List.of(userAnd(1, 11, ZHANG), userAnd(1, 12, LI)), false, RiskLevel.HIGH));
 
-        engine.submitDecision(ticket.getId(), 2L, List.of(), true, "ok");
-        // 同结果重复提交：幂等放行，节点仍未过
-        ApprovalDecision again = engine.submitDecision(ticket.getId(), 2L, List.of(), true, "ok again");
-        assertFalse(again.nodePassed());
-        // 不同结果重复提交：拒绝
+        engine.submitDecision(ticket.getId(), ZHANG, true, "ok");
+        ApprovalDecision again = engine.submitDecision(ticket.getId(), ZHANG, true, "ok again");
+        assertFalse(again.nodePassed(), "同结果重复提交：幂等放行，节点仍未过");
+
         SqlauditException ex = assertThrows(SqlauditException.class,
-                () -> engine.submitDecision(ticket.getId(), 2L, List.of(), false, "改主意"));
+                () -> engine.submitDecision(ticket.getId(), ZHANG, false, "改主意"));
         assertEquals("APPROVAL_ALREADY_DECIDED", ex.getCode());
         assertEquals(TicketStatus.AUDITING, statusOf(ticket));
     }
 
-    // ---- 审批 ≠ 执行：二次确认（§3.4） ----
+    // ---------------- 二次确认（README §4.6：接口权限控制，引擎不再判角色） ----------------
 
     @Test
     void 二次确认_CRITICAL链全过只到approved_需显式确认才可执行() {
-        Ticket ticket = newAuditingTicket(RiskLevel.CRITICAL);
+        Ticket ticket = newAuditingTicket(RiskLevel.CRITICAL, 1L, CREATOR);
         engine.createNodes(ticket, new ApprovalChain(
-                List.of("LEAD", "DBA", "ADMIN"), true, "L1_GLOBAL", RiskLevel.CRITICAL));
+                List.of(user(1, 11, ZHANG)), true, RiskLevel.CRITICAL));
 
-        // 确认前置：未 approved 不能二次确认
         assertThrows(IllegalStateTransitionException.class,
-                () -> engine.confirmExecution(ticket.getId(), 9L, List.of()));
+                () -> engine.confirmExecution(ticket.getId(), WANG));
 
-        engine.submitDecision(ticket.getId(), 2L, List.of("LEAD"), true, "lead");   // 节点 1
-        engine.submitDecision(ticket.getId(), 3L, List.of("DBA"), true, "dba");    // 节点 2
-        engine.submitDecision(ticket.getId(), 4L, List.of("ADMIN"), true, "admin");  // 节点 3 → 全过
+        engine.submitDecision(ticket.getId(), ZHANG, true, "同意");
 
-        // 全部节点通过只到 approved，审批 ≠ 执行
         assertEquals(TicketStatus.APPROVED, statusOf(ticket));
         assertTrue(engine.needsSecondConfirm(ticket.getId()));
         assertFalse(engine.canExecute(ticket.getId()), "二次确认前不得执行");
 
-        // 提交人不得确认自己的工单
         SqlauditException self = assertThrows(SqlauditException.class,
-                () -> engine.confirmExecution(ticket.getId(), CREATOR, List.of()));
+                () -> engine.confirmExecution(ticket.getId(), CREATOR));
         assertEquals("SELF_CONFIRM_FORBIDDEN", self.getCode());
 
-        // DBA 显式二次确认后才可执行
-        engine.confirmExecution(ticket.getId(), 3L, List.of("DBA"));
+        // 无 DBA/ADMIN 角色的普通用户也可以二次确认（角色校验由接口权限点控制，§5）
+        engine.confirmExecution(ticket.getId(), WANG);
         assertTrue(engine.canExecute(ticket.getId()));
     }
 
     @Test
     void 二次确认_无secondConfirm链_直接可执行() {
-        Ticket ticket = newAuditingTicket(RiskLevel.HIGH);
+        Ticket ticket = newAuditingTicket(RiskLevel.HIGH, 1L, CREATOR);
         engine.createNodes(ticket,
-                new ApprovalChain(List.of("LEAD"), false, "L1_GLOBAL", RiskLevel.HIGH));
-        engine.submitDecision(ticket.getId(), 2L, List.of("LEAD"), true, "ok");
+                new ApprovalChain(List.of(user(1, 11, ZHANG)), false, RiskLevel.HIGH));
+        engine.submitDecision(ticket.getId(), ZHANG, true, "ok");
 
         assertFalse(engine.needsSecondConfirm(ticket.getId()));
         assertTrue(engine.canExecute(ticket.getId()));
     }
 
-    // ---- 审批转交（代理人，§8.2 TRANSFERRED） ----
+    // ---------------- 审批转交（代理人） ----------------
 
     @Test
-    void 转交_把本人待审批记录转给代理人() {
-        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM);
-        seedApproval(ticket.getId(), 1, 2L, ApprovalMode.OR, LocalDateTime.now());
+    void 转交_USER记录_转给有效用户并留痕() {
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 1L, CREATOR);
+        engine.createNodes(ticket,
+                new ApprovalChain(List.of(user(1, 11, ZHANG)), false, RiskLevel.MEDIUM));
 
-        engine.transfer(ticket.getId(), 2L, 3L, List.of("LEAD"));
+        engine.transfer(ticket.getId(), ZHANG, WANG);
 
-        Approval a = approvalDao.listByTicket(ticket.getId()).get(0);
-        assertEquals(3L, a.getApproverId(), "待审批记录应转给代理人");
-        assertEquals(ApprovalResult.PENDING, a.getResult(), "转交后仍为待审批");
+        List<Approval> rows = approvalDao.listByTicket(ticket.getId());
+        assertEquals(2, rows.size());
+        Approval original = rows.stream()
+                .filter(r -> r.getResult() == ApprovalResult.TRANSFERRED).findFirst().orElseThrow();
+        assertEquals(ZHANG, original.getDecidedBy(), "原记录留痕：decided_by = 转交人");
+        Approval delegated = rows.stream()
+                .filter(r -> r.getResult() == ApprovalResult.PENDING).findFirst().orElseThrow();
+        assertEquals(ApproverType.USER, delegated.getApproverType());
+        assertEquals("300", delegated.getApproverRef());
+
+        // 代理人接管后可以决策
+        ApprovalDecision ok = engine.submitDecision(ticket.getId(), WANG, true, "接手同意");
+        assertTrue(ok.ticketApproved());
     }
 
     @Test
     void 转交_不能转给提交人() {
-        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM);
-        seedApproval(ticket.getId(), 1, 2L, ApprovalMode.OR, LocalDateTime.now());
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 1L, CREATOR);
+        engine.createNodes(ticket,
+                new ApprovalChain(List.of(user(1, 11, ZHANG)), false, RiskLevel.MEDIUM));
 
         SqlauditException ex = assertThrows(SqlauditException.class,
-                () -> engine.transfer(ticket.getId(), 2L, CREATOR, List.of("LEAD")));
+                () -> engine.transfer(ticket.getId(), ZHANG, CREATOR));
         assertEquals("FORBIDDEN", ex.getCode());
     }
 
-    // ---- 超时提醒查询 ----
+    @Test
+    void 转交_不能转给本人或停用用户() {
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 1L, CREATOR);
+        engine.createNodes(ticket,
+                new ApprovalChain(List.of(user(1, 11, ZHANG)), false, RiskLevel.MEDIUM));
+
+        assertEquals("INVALID_REQUEST", assertThrows(SqlauditException.class,
+                () -> engine.transfer(ticket.getId(), ZHANG, ZHANG)).getCode());
+
+        users.setStatus(WANG, UserStatus.DISABLED);
+        assertEquals("FORBIDDEN", assertThrows(SqlauditException.class,
+                () -> engine.transfer(ticket.getId(), ZHANG, WANG)).getCode());
+    }
 
     @Test
-    void listPendingOverdue_只返回审批中工单的当前节点超时记录() {
-        LocalDateTime now = LocalDateTime.now();
+    void 转交_ROLE记录_双方都须持有角色() {
+        roles.addRole("LEAD");
+        roles.addMember("LEAD", ZHANG);
+        roles.addMember("LEAD", WANG);
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 1L, CREATOR);
+        engine.createNodes(ticket,
+                new ApprovalChain(List.of(role(1, 11, "LEAD")), false, RiskLevel.MEDIUM));
 
-        // 工单 A：auditing，节点 1 / 2 都有 2 小时前的 PENDING → 只提醒节点 1
-        Ticket a = newAuditingTicket(RiskLevel.HIGH);
-        seedApproval(a.getId(), 1, 2L, ApprovalMode.AND, now.minusHours(2));
-        seedApproval(a.getId(), 2, 3L, ApprovalMode.AND, now.minusHours(2));
+        // 李四不持有 LEAD → 拒绝
+        assertEquals("FORBIDDEN", assertThrows(SqlauditException.class,
+                () -> engine.transfer(ticket.getId(), ZHANG, LI)).getCode());
 
-        // 工单 B：auditing，PENDING 但未超时 → 不提醒
-        Ticket b = newAuditingTicket(RiskLevel.HIGH);
-        seedApproval(b.getId(), 1, 4L, ApprovalMode.AND, now.minusMinutes(5));
+        // 王五持有 LEAD → 可以转
+        engine.transfer(ticket.getId(), ZHANG, WANG);
+        List<Approval> rows = approvalDao.listByTicket(ticket.getId());
+        assertTrue(rows.stream().anyMatch(r -> r.getResult() == ApprovalResult.TRANSFERRED));
+        assertTrue(rows.stream().anyMatch(r -> ApprovalResult.PENDING == r.getResult()
+                && "300".equals(r.getApproverRef())));
+    }
 
-        // 工单 C：已驳回，遗留的节点 PENDING → 不提醒
-        Ticket c = newAuditingTicket(RiskLevel.HIGH);
-        seedApproval(c.getId(), 1, 5L, ApprovalMode.AND, now.minusHours(2));
-        seedApproval(c.getId(), 2, 6L, ApprovalMode.AND, now.minusHours(2));
-        ticketDao.updateStatus(c.getId(), TicketStatus.AUDITING, TicketStatus.REJECTED, now);
+    @Test
+    void 转交_ROLE记录_非角色成员不能发起() {
+        roles.addRole("LEAD");
+        roles.addMember("LEAD", ZHANG);
+        roles.addMember("LEAD", WANG);
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 1L, CREATOR);
+        engine.createNodes(ticket,
+                new ApprovalChain(List.of(role(1, 11, "LEAD")), false, RiskLevel.MEDIUM));
 
-        List<Approval> overdue = engine.listPendingOverdue(Instant.now(), Duration.ofHours(1));
+        // 李四不持有 LEAD，不能转交这条 ROLE 记录
+        assertEquals("NO_PENDING_APPROVAL", assertThrows(SqlauditException.class,
+                () -> engine.transfer(ticket.getId(), LI, WANG)).getCode());
+    }
 
-        assertEquals(1, overdue.size());
-        assertEquals(a.getId(), overdue.get(0).getTicketId());
-        assertEquals(1, overdue.get(0).getNodeOrder());
-        assertEquals(2L, overdue.get(0).getApproverId());
+    @Test
+    void 转交_代理人已在本组_拒绝() {
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 1L, CREATOR);
+        engine.createNodes(ticket, new ApprovalChain(
+                List.of(user(1, 11, ZHANG), user(1, 12, WANG)), false, RiskLevel.MEDIUM));
+
+        SqlauditException ex = assertThrows(SqlauditException.class,
+                () -> engine.transfer(ticket.getId(), ZHANG, WANG));
+        assertEquals("FORBIDDEN", ex.getCode(), "代理人已在本组 → 拒绝");
+    }
+
+    @Test
+    void 转交_非当前节点或非本人记录_拒绝() {
+        Ticket ticket = newAuditingTicket(RiskLevel.MEDIUM, 1L, CREATOR);
+        engine.createNodes(ticket, new ApprovalChain(
+                List.of(user(1, 11, ZHANG), user(2, 12, LI)), false, RiskLevel.MEDIUM));
+
+        // 李四是节点 2，当前组是节点 1 → 不能转交
+        assertEquals("NO_PENDING_APPROVAL", assertThrows(SqlauditException.class,
+                () -> engine.transfer(ticket.getId(), LI, WANG)).getCode());
     }
 }

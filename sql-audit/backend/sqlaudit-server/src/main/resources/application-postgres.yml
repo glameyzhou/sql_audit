@@ -12,6 +12,7 @@ spring:
 
   flyway:
     enabled: true
-    # PG 方言迁移（23 表 + 创世块 + 4 角色种子）
+    # PG 方言迁移（V1__schema.sql 20 张表 + V2__seed.sql 种子，两份种子与 MySQL 逐字节相同）
     locations: classpath:db/migration/postgresql
-    baseline-on-migrate: true
+    # 指向已有表却无迁移历史的库直接报错，不静默 baseline（重构后需 drop 重建库）
+    baseline-on-migrate: false

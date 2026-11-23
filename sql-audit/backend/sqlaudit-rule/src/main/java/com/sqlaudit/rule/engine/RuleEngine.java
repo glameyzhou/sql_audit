@@ -23,12 +23,12 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 规则引擎（设计文档 §4.3 / §4.4）。
+ * 规则引擎（README §4.3）。
  *
  * <p>两阶段编排：</p>
  * <ol>
  *   <li>{@link #audit(List)}：同步首轮——AST 规则 + 元数据规则（影响面规则跳过，
- *       §4.4 影响面评估异步）；</li>
+ *       README §4.3 影响面评估异步）；</li>
  *   <li>{@link #assessImpact(ParsedStatement, List)}：异步评估完成后二次触发
  *       影响面规则组（R_AFFECT_TOO_MANY / R_LOW_PEAK_WINDOW / R_PREIMAGE_TOO_LARGE）。
  *       评估结果为 unknown → 由 RiskAssessor 升一级，不在这里拦。</li>
@@ -36,12 +36,12 @@ import java.util.Map;
  *
  * <p>引擎不实现的两条规则（有意为之）：</p>
  * <ul>
- *   <li>R_ROLLBACK_UNAVAILABLE：由 rollback 模块在提交预览时产生（§5.1 能力边界）；</li>
- *   <li>R_SCHEMA_DRIFT：执行期规则（§3.5），提交期不触发。</li>
+ *   <li>R_ROLLBACK_UNAVAILABLE：由 rollback 模块在提交预览时产生（README §4.4 能力边界）；</li>
+ *   <li>R_SCHEMA_DRIFT：执行期规则（README §4.2），提交期不触发。</li>
  * </ul>
  *
  * <p>nonOverridable 守卫：规则定义 nonOverridable=true 的 ERROR 级别不可被任何
- * 配置降级（§4.5），本引擎的规则实例 severity 恒取内置定义，配置覆盖入口在 W2
+ * 配置降级（README §4.3），本引擎的规则实例 severity 恒取内置定义，配置覆盖入口在 W2
  * 的 rule 表读写层实现时再接，且必须拒绝降级 nonOverridable。</p>
  */
 public class RuleEngine {
@@ -149,7 +149,7 @@ public class RuleEngine {
         return syncRules.size();
     }
 
-    /** 级别覆盖：nonOverridable 规则不可降级（§4.5）。 */
+    /** 级别覆盖：nonOverridable 规则不可降级（README §4.3）。 */
     private void applySeverityOverride(Rule rule, List<RuleHit> ruleHits) {
         if (rule.definition().nonOverridable()) {
             return;

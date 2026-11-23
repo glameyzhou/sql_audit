@@ -5,16 +5,17 @@ import com.sqlaudit.common.enums.UnitStatus;
 import java.time.LocalDateTime;
 
 /**
- * 执行单元实体（对应 ticket_unit 表，设计文档 §3.3 / §9）。
+ * 执行单元实体（对应 t_ticket_unit 表）。
  *
- * <p>写入边界（状态机 §3.2）：创建与审批态由 sqlaudit-workflow 写；
+ * <p>写入边界（状态机）：创建与审批态由 sqlaudit-workflow 写；
  * 执行态（leased/executing/success/failed/needs_confirm）由 sqlaudit-executor 写。</p>
  *
  * <p>关键字段约定：</p>
  * <ul>
- *   <li>{@code executed_at} 无唯一约束（同毫秒完成是正常情况）；</li>
- *   <li>{@code exec_fingerprint} 普通索引，用于跨工单重复提交检测，非幂等手段；</li>
- *   <li>{@code statement} 为 AES-GCM 密文（VARBINARY）。</li>
+ *   <li>{@code executedAt} 无唯一约束（同毫秒完成是正常情况）；</li>
+ *   <li>{@code statement} 是<strong>明文</strong>语句，落库时由 JDBC DAO 用
+ *       {@code SqlCipher} 加密（库里是密文），读出时解密；</li>
+ *   <li>{@code statementHash} 按<strong>明文</strong>计算（密文每次加密都不同，不能作指纹）。</li>
  * </ul>
  */
 public class TicketUnit {
@@ -25,12 +26,11 @@ public class TicketUnit {
     private String schemaName;
     private String objectName;
     private Integer unitOrder;
-    /** 加密后的语句（VARBINARY） */
-    private byte[] statement;
+    /** 单条执行语句（明文；DAO 负责加解密） */
+    private String statement;
+    /** 明文的 SHA-256 hex */
     private String statementHash;
     private StatementType statementType;
-    /** IoTDB 等方言扩展（JSON） */
-    private String dialectSpecific;
     /** pending/leased/executing/success/failed/skipped/needs_confirm，见 UnitStatus */
     private UnitStatus status;
     private String leaseOwner;
@@ -39,12 +39,8 @@ public class TicketUnit {
     /** 已预写执行意图（SQL 可能已到生产库） */
     private Boolean intentWritten;
     private LocalDateTime executedAt;
-    private String execFingerprint;
-    private Long preimageRows;
     private Long affectedRows;
     private String ddlFingerprint;
-    private String binlogStart;
-    private String binlogEnd;
     private String errorMessage;
     private LocalDateTime createdAt;
 
@@ -96,11 +92,11 @@ public class TicketUnit {
         this.unitOrder = unitOrder;
     }
 
-    public byte[] getStatement() {
+    public String getStatement() {
         return statement;
     }
 
-    public void setStatement(byte[] statement) {
+    public void setStatement(String statement) {
         this.statement = statement;
     }
 
@@ -118,14 +114,6 @@ public class TicketUnit {
 
     public void setStatementType(StatementType statementType) {
         this.statementType = statementType;
-    }
-
-    public String getDialectSpecific() {
-        return dialectSpecific;
-    }
-
-    public void setDialectSpecific(String dialectSpecific) {
-        this.dialectSpecific = dialectSpecific;
     }
 
     public UnitStatus getStatus() {
@@ -176,22 +164,6 @@ public class TicketUnit {
         this.executedAt = executedAt;
     }
 
-    public String getExecFingerprint() {
-        return execFingerprint;
-    }
-
-    public void setExecFingerprint(String execFingerprint) {
-        this.execFingerprint = execFingerprint;
-    }
-
-    public Long getPreimageRows() {
-        return preimageRows;
-    }
-
-    public void setPreimageRows(Long preimageRows) {
-        this.preimageRows = preimageRows;
-    }
-
     public Long getAffectedRows() {
         return affectedRows;
     }
@@ -206,22 +178,6 @@ public class TicketUnit {
 
     public void setDdlFingerprint(String ddlFingerprint) {
         this.ddlFingerprint = ddlFingerprint;
-    }
-
-    public String getBinlogStart() {
-        return binlogStart;
-    }
-
-    public void setBinlogStart(String binlogStart) {
-        this.binlogStart = binlogStart;
-    }
-
-    public String getBinlogEnd() {
-        return binlogEnd;
-    }
-
-    public void setBinlogEnd(String binlogEnd) {
-        this.binlogEnd = binlogEnd;
     }
 
     public String getErrorMessage() {

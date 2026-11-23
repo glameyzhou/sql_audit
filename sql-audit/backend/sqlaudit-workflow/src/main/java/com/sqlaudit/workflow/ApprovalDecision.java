@@ -10,7 +10,7 @@ import com.sqlaudit.common.enums.ApprovalResult;
  * @param approverId     实际决策人
  * @param result         本条决策结果（APPROVED / REJECTED）
  * @param nodePassed     该节点是否通过（会签需全部同意；或签一人同意即通过）
- * @param ticketApproved 工单是否已转 approved（全部节点通过；审批 ≠ 执行，§3.4）
+ * @param ticketApproved 工单是否已转 approved（全部节点通过；审批 ≠ 执行，README §4.6）
  * @param ticketRejected 工单是否已转 rejected（任一节点驳回）
  */
 public record ApprovalDecision(long ticketId, int nodeOrder, long approverId, ApprovalResult result,

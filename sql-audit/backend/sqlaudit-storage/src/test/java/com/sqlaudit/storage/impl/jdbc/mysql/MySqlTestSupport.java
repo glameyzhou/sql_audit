@@ -1,56 +1,70 @@
 package com.sqlaudit.storage.impl.jdbc.mysql;
 
+import com.sqlaudit.storage.impl.jdbc.SeedSql;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
-import org.springframework.jdbc.core.ConnectionCallback;
+import org.flywaydb.core.Flyway;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * JDBC DAO 集成测试基建：建连接池、跑 Flyway V1 DDL、每个测试前清空全部表。
+ * JDBC DAO 集成测试基建（MySQL 方言）。
  *
- * <p><strong>目标库：</strong>本地 Docker MySQL（mysql:8.0），
- * {@code jdbc:mysql://127.0.0.1:3306/sql-audit}，root/password。库不存在或 MySQL 未启动时，
- * 测试类用 {@link #mysqlAvailable()} + Assumptions 优雅跳过（@Tag("it")），不许让无库环境测试红。</p>
+ * <p><strong>目标库：</strong>本地 Docker MySQL（mysql:8.0，容器 xiangxin-mysql）上的
+ * <strong>独立测试库 {@code sql_audit_it}</strong>——不存在则自动创建，
+ * <strong>绝不连接开发库 {@code sql-audit}</strong>（存储层 IT 曾经每个测试前 TRUNCATE
+ * 开发库全部表，把本机开发数据清空，这个坑不允许再踩）。</p>
+ *
+ * <p><strong>生命周期：</strong>每个测试类在 {@code @BeforeAll} 里 {@link #migrate()}
+ * （Flyway clean + migrate，跑真实的 V1__schema.sql + V2__seed.sql + 后续迁移，与生产同一套迁移文件）；
+ * 每个测试方法在 {@code @BeforeEach} 里 {@link #cleanAndSeed}（清空全部业务表 + 重放种子）。
+ * 表名从库元数据动态读取（排除 {@code flyway_schema_history}），不再手工维护表清单。</p>
+ *
+ * <p>MySQL 未启动时测试类用 {@link #mysqlAvailable()} + Assumptions 优雅跳过。</p>
  */
 public final class MySqlTestSupport {
 
-    /** 本地 Docker MySQL。connectTimeout 保证无库时快速失败以便 Assumptions 跳过。 */
-    public static final String JDBC_URL =
-            "jdbc:mysql://127.0.0.1:3306/sql-audit?connectTimeout=3000&socketTimeout=30000"
-                    + "&useSSL=false&allowPublicKeyRetrieval=true";
-
+    public static final String DB_NAME = "sql_audit_it";
     public static final String DB_USER = "root";
     public static final String DB_PASSWORD = "password";
 
-    /** V1__init.sql 的全部 23 张表（cleanAllTables 逐张 TRUNCATE）。 */
-    public static final List<String> ALL_TABLES = List.of(
-            "t_user", "t_role", "t_user_role", "t_instance", "t_credential",
-            "t_rule", "t_rule_group", "t_rule_group_binding", "t_flow_rule", "t_flow_node",
-            "t_ticket", "t_ticket_unit", "t_audit_result", "t_rollback_sql", "t_rollback_statement",
-            "t_approval", "t_exec_lock", "t_chain_head", "t_audit_log",
-            "t_query_log", "t_masking_rule", "t_export_task", "t_worker_heartbeat");
+    /** 独立测试库连接串（connectTimeout 保证无库时快速失败以便 Assumptions 跳过）。 */
+    public static final String JDBC_URL =
+            "jdbc:mysql://127.0.0.1:3306/" + DB_NAME
+                    + "?connectTimeout=3000&socketTimeout=30000&useSSL=false&allowPublicKeyRetrieval=true";
 
-    /** hash 链创世块：last_hash 与 §7.3 定义一致（64 个 '0'）。 */
-    private static final String GENESIS_HASH = "0".repeat(64);
+    /** 不指定库的服务器级连接（建库 / 探活用）。 */
+    private static final String SERVER_URL =
+            "jdbc:mysql://127.0.0.1:3306/?connectTimeout=3000&socketTimeout=30000"
+                    + "&useSSL=false&allowPublicKeyRetrieval=true";
+
+    private static final String MIGRATION_LOCATION = "classpath:db/migration/mysql";
+    private static final String SEED_DIALECT_DIR = "mysql";
 
     private MySqlTestSupport() {
     }
 
     /** 探测本地 MySQL 是否可用（供 Assumptions.assumeTrue 优雅跳过）。 */
     public static boolean mysqlAvailable() {
-        try (Connection ignored = DriverManager.getConnection(JDBC_URL, DB_USER, DB_PASSWORD)) {
+        try (Connection ignored = DriverManager.getConnection(SERVER_URL, DB_USER, DB_PASSWORD)) {
             return true;
         } catch (SQLException e) {
             return false;
+        }
+    }
+
+    /** 独立测试库不存在则创建（root 有权限，无需预建）。 */
+    public static void ensureDatabase() throws SQLException {
+        try (Connection conn = DriverManager.getConnection(SERVER_URL, DB_USER, DB_PASSWORD);
+             Statement st = conn.createStatement()) {
+            st.execute("CREATE DATABASE IF NOT EXISTS `" + DB_NAME + "` DEFAULT CHARSET utf8mb4");
         }
     }
 
@@ -66,67 +80,63 @@ public final class MySqlTestSupport {
     }
 
     /**
-     * 幂等建表：先 DROP 全部旧表，再执行 classpath 的 {@code db/migration/mysql/V1__init.sql}
-     * （按 {@code ;\n} 拆分逐条执行——DDL 内无行中分号，CHECK 约束等多行语句拆分安全）。
+     * 每个测试类一次：Flyway clean（清掉上一轮测试类的一切表与历史）+ migrate
+     * （跑真实的 V1__schema.sql + V2__seed.sql + 后续迁移）。{@code cleanDisabled(false)} 是
+     * Flyway 10 起 clean 的默认关闭开关，测试库里必须显式打开。
      */
-    public static void ensureSchema(HikariDataSource ds) throws Exception {
-        try (Connection conn = ds.getConnection(); Statement st = conn.createStatement()) {
-            for (String table : ALL_TABLES) {
-                st.execute("DROP TABLE IF EXISTS `" + table + "`");
-            }
-            String ddl = readV1Ddl();
-            for (String sql : splitStatements(ddl)) {
-                st.execute(sql);
-            }
-        }
+    public static void migrate(HikariDataSource ds) {
+        Flyway.configure()
+                .dataSource(ds)
+                .locations(MIGRATION_LOCATION)
+                .cleanDisabled(false)
+                .load()
+                .clean();
+        Flyway.configure()
+                .dataSource(ds)
+                .locations(MIGRATION_LOCATION)
+                .cleanDisabled(false)
+                .load()
+                .migrate();
     }
 
     /**
-     * 每个测试前清库：SET FOREIGN_KEY_CHECKS=0 后 TRUNCATE 全部 23 张表再恢复，
-     * 保证测试类之间 / 测试方法之间数据独立；随后重放 DDL 末尾的初始化数据
-     * （chain_head 创世块 + 内置角色），使链头恒为 genesis 状态。
+     * 每个测试方法前清库：从库元数据动态读出全部业务表（排除 {@code flyway_schema_history}）
+     * 逐张 TRUNCATE，再重放 {@code V2__seed.sql}（创世块 / 角色 / 权限 / 授权 / 账号 / 规则 /
+     * 审批流全部回到种子状态）+ V3 及以后迁移文件的 DML（新端点的权限绑定行等）。
      */
-    public static void cleanAllTables(JdbcTemplate jdbc) {
-        jdbc.execute((ConnectionCallback<Void>) conn -> {
+    public static void cleanAndSeed(JdbcTemplate jdbc) {
+        List<String> tables = businessTables(jdbc);
+        jdbc.execute((Connection conn) -> {
             try (Statement st = conn.createStatement()) {
                 st.execute("SET FOREIGN_KEY_CHECKS=0");
-                for (String table : ALL_TABLES) {
+                for (String table : tables) {
                     st.execute("TRUNCATE TABLE `" + table + "`");
                 }
                 st.execute("SET FOREIGN_KEY_CHECKS=1");
             }
             return null;
         });
-        // 初始化数据（与 V1 末尾一致）：TRUNCATE 会清掉 chain_head 创世块，必须重放
-        jdbc.update("INSERT INTO t_chain_head (id, last_seq, last_hash) VALUES (1, 0, ?)", GENESIS_HASH);
-        jdbc.update("INSERT INTO `t_role` (code, name, description) VALUES "
-                + "('DEV', '开发', '提交工单、查询通道'), "
-                + "('LEAD', '主管', '审批（非本人）'), "
-                + "('DBA', 'DBA', '执行/二次确认、规则与流程配置'), "
-                + "('ADMIN', '管理员', '凭据管理、审计检索导出、全量配置')");
-    }
-
-    // ---- 内部工具 ----
-
-    private static String readV1Ddl() throws Exception {
-        try (InputStream in = MySqlTestSupport.class
-                .getClassLoader().getResourceAsStream("db/migration/mysql/V1__init.sql")) {
-            if (in == null) {
-                throw new IllegalStateException("classpath 下未找到 db/migration/mysql/V1__init.sql");
-            }
-            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        for (String sql : SeedSql.replayStatements(SEED_DIALECT_DIR)) {
+            jdbc.execute(sql);
         }
     }
 
-    /** 按 {@code ;换行} 拆分多语句 DDL；空块（文件尾）跳过。 */
-    static List<String> splitStatements(String ddl) {
-        List<String> statements = new ArrayList<>();
-        for (String chunk : ddl.split(";\\r?\\n")) {
-            String sql = chunk.strip();
-            if (!sql.isEmpty()) {
-                statements.add(sql);
+    /** 从库元数据读取全部基表名（排除 Flyway 历史表），按名字排序保证稳定。 */
+    public static List<String> businessTables(JdbcTemplate jdbc) {
+        // MySQL 的表清单走 catalog（= 库名），schema 为空
+        return jdbc.execute((Connection conn) -> {
+            List<String> names = new ArrayList<>();
+            try (ResultSet rs = conn.getMetaData()
+                    .getTables(DB_NAME, null, "%", new String[]{"TABLE"})) {
+                while (rs.next()) {
+                    String name = rs.getString("TABLE_NAME");
+                    if (!"flyway_schema_history".equalsIgnoreCase(name)) {
+                        names.add(name);
+                    }
+                }
             }
-        }
-        return statements;
+            names.sort(String.CASE_INSENSITIVE_ORDER);
+            return names;
+        });
     }
 }

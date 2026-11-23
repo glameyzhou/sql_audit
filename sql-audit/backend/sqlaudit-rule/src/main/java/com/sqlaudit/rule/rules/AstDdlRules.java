@@ -18,11 +18,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * DDL 的 AST 规则组（设计文档 §4.3 / §5.6）。
+ * DDL 的 AST 规则组（README §4.3 / README §4.4）。
  *
  * <p>R_DDL_DESTRUCTIVE / R_DDL_NO_IF_EXISTS / R_TABLE_NAME / R_INDEX_NAME。</p>
  *
- * <p>破坏性 DDL 按列级/整表级都标 R_DDL_DESTRUCTIVE（§5.6 的影子表/列投影分流
+ * <p>破坏性 DDL 按列级/整表级都标 R_DDL_DESTRUCTIVE（README §4.4 的影子表/列投影分流
  * 由 rollback 模块进一步判定，规则层只负责阻断与路由）。</p>
  */
 public final class AstDdlRules {

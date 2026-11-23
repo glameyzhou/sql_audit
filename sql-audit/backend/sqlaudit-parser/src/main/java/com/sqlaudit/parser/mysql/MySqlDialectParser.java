@@ -19,7 +19,7 @@ import com.sqlaudit.common.model.ParsedStatement;
 import com.sqlaudit.parser.AbstractDruidParser;
 
 /**
- * MySQL 8.0 解析器（设计文档 §4.1：Druid SQL Parser → SQLStatement → Visitor）。
+ * MySQL 8.0 解析器（README §4.3：Druid SQL Parser → SQLStatement → Visitor）。
  *
  * <p>覆盖：DDL / DML / 部分 DCL。解析失败 → 高危人工审（铁律在基类）。</p>
  */
@@ -42,11 +42,11 @@ public class MySqlDialectParser extends AbstractDruidParser {
 
     @Override
     protected void checkDialectSelectFlags(ParsedStatement ps, SQLSelectQueryBlock block) {
-        // §4.2 第 2 行：MySQL 5.7 形态的 LOCK IN SHARE MODE（等价 FOR SHARE）
+        // README §4.3 第 2 行：MySQL 5.7 形态的 LOCK IN SHARE MODE（等价 FOR SHARE）
         if (block instanceof MySqlSelectQueryBlock mysql && mysql.isLockInShareMode()) {
             ps.getDangerousClauses().add(DangerousClause.FOR_UPDATE_LOCK);
         }
-        // §4.2 第 3 行：SELECT ... INTO @var（写会话状态；诊断实测 getInto() = @v）
+        // README §4.3 第 3 行：SELECT ... INTO @var（写会话状态；诊断实测 getInto() = @v）
         if (block.getInto() != null) {
             ps.getDangerousClauses().add(DangerousClause.INTO_OUTFILE);
         }
@@ -110,7 +110,7 @@ public class MySqlDialectParser extends AbstractDruidParser {
             return true;
         }
 
-        /** §4.2 第 3 行：SELECT ... INTO OUTFILE（写文件）—— AST 真实节点。 */
+        /** README §4.3 第 3 行：SELECT ... INTO OUTFILE（写文件）—— AST 真实节点。 */
         @Override
         public boolean visit(MySqlOutFileExpr x) {
             sink.addDangerous(DangerousClause.INTO_OUTFILE);

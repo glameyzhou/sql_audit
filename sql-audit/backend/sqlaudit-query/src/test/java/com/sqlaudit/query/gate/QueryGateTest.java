@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 查询门禁测试（设计文档 §6.2：parser 只读判定 → 放行 / 拒绝）。
+ * 查询门禁测试（README §4.1：parser 只读判定 → 放行 / 拒绝）。
  */
 class QueryGateTest {
 
@@ -43,7 +43,7 @@ class QueryGateTest {
 
     @Test
     void explainAnalyze_rejected() {
-        // EXPLAIN ANALYZE 真实执行（§4.2 第 1 行），必须非只读
+        // EXPLAIN ANALYZE 真实执行（README §4.3 第 1 行），必须非只读
         GateResult r = gate.check("EXPLAIN ANALYZE SELECT * FROM t WHERE id = 1", Dialect.PG);
         assertFalse(r.allowed());
         assertTrue(r.reason().contains(DangerousClause.EXPLAIN_ANALYZE.name()));
@@ -62,7 +62,7 @@ class QueryGateTest {
 
     @Test
     void parseFailure_rejected() {
-        // 解析失败铁律（§4.1）：LOW_CONFIDENCE + 非只读 → 拒绝
+        // 解析失败铁律（README §4.3）：LOW_CONFIDENCE + 非只读 → 拒绝
         GateResult r = gate.check("SELECT * FROM", Dialect.MYSQL);
         assertFalse(r.allowed());
         assertTrue(r.reason().contains(DangerousClause.LOW_CONFIDENCE.name()));

@@ -3,7 +3,7 @@ package com.sqlaudit.workflow;
 import com.sqlaudit.common.enums.TicketStatus;
 
 /**
- * 工单状态变更监听器（设计文档 §3.2 / §7 审计）。
+ * 工单状态变更监听器（README §4.2 状态机 / README §4.1 审计）。
  *
  * <p>所有状态变更的审计写入钩子：workflow 不直接依赖 sqlaudit-audit（模块边界），
  * W2 装配时由装配层把本监听器接到 B-2 的 AuditWriter 上。</p>

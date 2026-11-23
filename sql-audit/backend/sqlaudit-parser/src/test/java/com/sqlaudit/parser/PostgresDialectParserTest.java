@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * PG 解析 + 只读判定测试（§4.2 危险子句表 PG 特有行）。
+ * PG 解析 + 只读判定测试（README §4.3 危险子句表 PG 特有行）。
  * <p>临时实现基于 Druid PG 模式（S1 spike 前的过渡），解析失败一律高危。</p>
  */
 class PostgresDialectParserTest {
@@ -49,7 +49,7 @@ class PostgresDialectParserTest {
 
     @Test
     void dataModifyingCte_isNotReadOnly() {
-        // §4.2 第 5 行：WITH x AS (DELETE ... RETURNING *) 实际写表
+        // README §4.3 第 5 行：WITH x AS (DELETE ... RETURNING *) 实际写表
         ParsedStatement ps = one("WITH x AS (DELETE FROM t WHERE id = 1 RETURNING *) SELECT * FROM x");
         assertTrue(ps.getDangerousClauses().contains(DangerousClause.DATA_MODIFYING_CTE));
         assertFalse(ps.isReadOnly());

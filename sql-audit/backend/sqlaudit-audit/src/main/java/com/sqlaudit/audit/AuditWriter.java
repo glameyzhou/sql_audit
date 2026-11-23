@@ -11,7 +11,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 
 /**
- * 审计日志单写入点（设计文档 §7.3 不可篡改设计）。
+ * 审计日志单写入点（README §4.1 不可篡改设计）。
  *
  * <p>写入流程（单事务）：</p>
  * <ol>

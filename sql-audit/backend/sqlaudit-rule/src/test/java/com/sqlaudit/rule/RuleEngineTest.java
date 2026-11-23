@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 规则引擎表驱动测试（A-2 验收：§4.3 规则逐条用例）。
+ * 规则引擎表驱动测试（验收：README §4.3 规则逐条用例）。
  */
 class RuleEngineTest {
 
@@ -176,6 +176,28 @@ class RuleEngineTest {
         meta.tables.put("t", new TableMetadataProvider.TableMetadata(true, List.of("id"),
                 Set.of(), List.of("id"), Set.of(), false)); // t 移出白名单
         assertTrue(hasCode(auditMySql(meta, "UPDATE t SET a = 1 WHERE id = 1"), RuleCode.R_OBJECT_NOT_ALLOWED));
+    }
+
+    @Test
+    void rObjectNotAllowed_unresolvableTable_message() {
+        // 元数据里查不到 = 无法解析或不存在（未限定库名且实例无默认库 / 库名写错 / 连接失败），
+        // 与「表存在但不在白名单」不是一回事，提示必须区分
+        FakeMetadata meta = defaultMeta();
+        RuleHit hit = auditMySql(meta, "UPDATE t_missing SET a = 1 WHERE id = 1").stream()
+                .filter(h -> h.getCode() == RuleCode.R_OBJECT_NOT_ALLOWED)
+                .findFirst().orElseThrow();
+        assertEquals("目标对象无法解析或不存在（请确认库名前缀或实例默认库）: t_missing", hit.getMessage());
+    }
+
+    @Test
+    void rObjectNotAllowed_notWhitelistedTable_message() {
+        FakeMetadata meta = defaultMeta();
+        meta.tables.put("t", new TableMetadataProvider.TableMetadata(true, List.of("id"),
+                Set.of(), List.of("id"), Set.of(), false)); // 表存在但不在白名单
+        RuleHit hit = auditMySql(meta, "UPDATE t SET a = 1 WHERE id = 1").stream()
+                .filter(h -> h.getCode() == RuleCode.R_OBJECT_NOT_ALLOWED)
+                .findFirst().orElseThrow();
+        assertEquals("目标对象不在实例白名单: t", hit.getMessage());
     }
 
     @Test

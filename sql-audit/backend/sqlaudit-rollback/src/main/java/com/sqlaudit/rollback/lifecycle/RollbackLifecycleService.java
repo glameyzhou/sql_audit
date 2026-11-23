@@ -19,7 +19,7 @@ import java.util.Formatter;
 import java.util.List;
 
 /**
- * 回滚 SQL 生命周期服务（设计文档 §5.9）。
+ * 回滚 SQL 生命周期服务（README §4.4）。
  *
  * <p>状态机：{@code generated → verified → applied | expired | not_available}。</p>
  *
@@ -30,7 +30,7 @@ import java.util.List;
  *   <li>超阈值（默认 5000 条 / 16MB）不落平台库，转对象存储——本服务只判阈值，
  *       对象存储客户端 W2 装配（snapshot_uri 记位置）；</li>
  *   <li>生成后<strong>语法自检</strong>：反向 SQL 过同方言 Parser，解析失败标
- *       not_available + SYNTAX_CHECK_FAILED（§5.3）；</li>
+ *       not_available + SYNTAX_CHECK_FAILED（README §4.4）；</li>
  *   <li>有效期默认 24h：过期标 expired，回放前二次校验；</li>
  *   <li>依赖检测：回滚执行前按主键重查当前行比对前镜像 hash，不一致拒绝执行
  *       （数据已被后续工单改动，回滚会覆盖别人写入）——hash 用本类的
@@ -39,7 +39,7 @@ import java.util.List;
  */
 public class RollbackLifecycleService {
 
-    /** 单 unit 反向语句条数上限（与 §5.3 前镜像上限一致）。 */
+    /** 单 unit 反向语句条数上限（与 README §4.4 前镜像上限一致）。 */
     public static final int MAX_STATEMENTS = 5_000;
 
     private final RollbackDao rollbackDao;
@@ -71,7 +71,7 @@ public class RollbackLifecycleService {
                     + MAX_STATEMENTS + "，应转对象存储（调用方处理，此处拒绝落平台库）");
         }
 
-        // 语法自检：每条反向 SQL 过同方言 Parser（§5.3）
+        // 语法自检：每条反向 SQL 过同方言 Parser（README §4.4）
         String syntaxFailure = null;
         for (com.sqlaudit.rollback.reverse.ReverseStatement stmt : statements) {
             if (parserService.parse(stmt.sql(), dialect).get(0).getParseConfidence() == 0) {
@@ -103,19 +103,19 @@ public class RollbackLifecycleService {
         int order = 0;
         for (com.sqlaudit.rollback.reverse.ReverseStatement stmt : statements) {
             RollbackStatement row = new RollbackStatement();
-            // 反向语句与参数的加密由 W2 的存储实现层做（DetailCipher 同款机制），
-            // 服务层存明文，DAO 实现负责透明加解密
+            // 反向语句与参数落库时由 JDBC DAO 用 SqlCipher 透明加密（库里无明文），
+            // 服务层存明文
             row.setRollbackId(master.getId());
             row.setStmtOrder(order++);
-            row.setReverseSql(stmt.sql().getBytes(StandardCharsets.UTF_8));
-            row.setValueParams(paramsBytes(stmt.params()));
+            row.setReverseSql(stmt.sql());
+            row.setValueParams(paramsJson(stmt.params()));
             rollbackDao.insertRollbackStatement(row);
         }
         return master.getId();
     }
 
     /**
-     * 依赖检测（§5.9）：回滚执行前按主键重查当前行，比对前镜像 hash。
+     * 依赖检测（README §4.4）：回滚执行前按主键重查当前行，比对前镜像 hash。
      *
      * @param unitId 执行单元（rollback_sql 按 unit_id 唯一）
      * @return true = 数据未被动过，可回滚；false = 已被后续工单改动，拒绝执行并告警
@@ -153,8 +153,9 @@ public class RollbackLifecycleService {
         }
     }
 
-    private static byte[] paramsBytes(List<Object> params) {
-        // 参数序列化（CBOR/JSON，§5.9）——首版用紧凑 JSON 文本，W2 可换 CBOR
+    private static String paramsJson(List<Object> params) {
+        // 参数序列化（CBOR/JSON，README §4.4）——首版用紧凑 JSON 文本；列是 LONGBLOB/BYTEA
+        // 密文列，文本由 JDBC DAO 加密后落库
         if (params == null || params.isEmpty()) {
             return null;
         }
@@ -164,7 +165,7 @@ public class RollbackLifecycleService {
                     ? String.valueOf(p) : "\"" + String.valueOf(p).replace("\\", "\\\\")
                     .replace("\"", "\\\"") + "\"");
         }
-        return ("[" + String.join(",", items) + "]").getBytes(StandardCharsets.UTF_8);
+        return "[" + String.join(",", items) + "]";
     }
 
     private static String truncate(String s, int max) {

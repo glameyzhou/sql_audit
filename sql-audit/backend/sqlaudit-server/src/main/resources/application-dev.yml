@@ -1,7 +1,6 @@
 # 开发环境（仅环境相关，方言另选）：调试日志。
 # 组合启动：SPRING_PROFILES_ACTIVE=dev,mysql（在家）
 #           SPRING_PROFILES_ACTIVE=dev,postgres（公司开发）
-#           SPRING_PROFILES_ACTIVE=dev,h2（无库快速起）
 logging:
   level:
     com.sqlaudit: DEBUG     # 本地调试：打印 SQL 编排、状态机迁移细节

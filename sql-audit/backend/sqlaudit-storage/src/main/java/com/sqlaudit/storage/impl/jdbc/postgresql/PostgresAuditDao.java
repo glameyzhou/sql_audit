@@ -13,10 +13,10 @@ import java.util.List;
 
 /**
  * chain_head / audit_log 的 PostgreSQL 真实现
- * （DDL §10 审计日志与 hash 链表；内存版语义基准 {@code InMemoryAuditDao}，SQL 逐句对照
+ * （DDL 审计日志与 hash 链表；内存版语义基准 {@code InMemoryAuditDao}，SQL 逐句对照
  * MySQL 版 {@code MySqlAuditDao}）。
  *
- * <p><strong>hash 链写入流程（§7.3 单写入点，语义与内存版一致）：</strong>
+ * <p><strong>hash 链写入流程（README §4.1 单写入点，语义与内存版一致）：</strong>
  * {@code lockChainHead()} → 取 last_seq/last_hash → 调用方算本条 hash →
  * {@code insert()} → {@code updateChainHead()}。</p>
  *
@@ -121,6 +121,21 @@ public class PostgresAuditDao implements AuditDao {
         return jdbc.query(
                 "SELECT * FROM t_audit_log WHERE seq>=? AND seq<=? ORDER BY seq",
                 LOG_MAPPER, fromSeq, toSeq);
+    }
+
+    @Override
+    public List<AuditLog> listBySeqRange(long fromSeq, long toSeq, int offset, int limit) {
+        // 服务端分页：limit<0 视为取全部（PG 与 MySQL 同款 LIMIT ? OFFSET ? 语义）
+        int safeLimit = limit < 0 ? Integer.MAX_VALUE : limit;
+        return jdbc.query(
+                "SELECT * FROM t_audit_log WHERE seq>=? AND seq<=? ORDER BY seq LIMIT ? OFFSET ?",
+                LOG_MAPPER, fromSeq, toSeq, safeLimit, offset);
+    }
+
+    @Override
+    public long countBySeqRange(long fromSeq, long toSeq) {
+        return jdbc.queryForObject(
+                "SELECT COUNT(*) FROM t_audit_log WHERE seq>=? AND seq<=?", Long.class, fromSeq, toSeq);
     }
 
     /** 不加锁直接读链头快照（测试断言用，勿在 append 流程内替代 lockChainHead）。 */

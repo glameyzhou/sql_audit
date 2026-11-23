@@ -1,46 +1,48 @@
 package com.sqlaudit.storage.impl.jdbc.postgresql;
 
 import com.sqlaudit.common.enums.CodedEnum;
-import com.sqlaudit.common.enums.Environment;
 import com.sqlaudit.common.enums.RiskLevel;
 import com.sqlaudit.storage.dao.FlowRuleDao;
+import com.sqlaudit.storage.impl.jdbc.JdbcTx;
 import com.sqlaudit.storage.model.FlowRule;
 import java.sql.PreparedStatement;
 import java.sql.Timestamp;
-import java.sql.Types;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * flow_rule 的 PostgreSQL 真实现（DDL §5 t_flow_rule 表；内存版语义基准
- * {@code InMemoryFlowRuleDao}，SQL 逐句对照 MySQL 版 {@code MySqlFlowRuleDao}）。
+ * flow_rule 的 PostgreSQL 真实现（t_flow_rule 表，SQL 逐句对照 MySQL 版
+ * {@code MySqlFlowRuleDao}）。
  *
- * <p>自增 id 回填用 {@code INSERT ... RETURNING id}。删除为硬删。</p>
+ * <p>{@link #findByScope} 供服务层判重：实例专用流程的唯一性由库级唯一约束
+ * {@code uk_flow_scope_risk(instance_id, risk_level)} 保证，全局流程（{@code instance_id}
+ * 为 NULL）的 UNIQUE 不约束 NULL，只能由服务层查后创建（违反返回 {@code DUPLICATE_FLOW}）。</p>
+ *
+ * <p>{@link #delete} 在事务内<strong>连同该流程的全部节点</strong>一起删
+ * （{@code t_flow_node.flow_rule_id} 无物理外键，两步必须原子）。
+ * PG 无 {@code ON UPDATE}：{@code updated_at} 由 DAO 显式写。</p>
  */
 public class PostgresFlowRuleDao implements FlowRuleDao {
 
     private final JdbcTemplate jdbc;
+    private final TransactionTemplate tx;
 
     public PostgresFlowRuleDao(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
+        this.tx = JdbcTx.of(jdbc);
     }
 
     private static final RowMapper<FlowRule> MAPPER = (rs, i) -> {
         FlowRule f = new FlowRule();
         f.setId(rs.getLong("id"));
         f.setName(rs.getString("name"));
-        f.setEnvironment(Environment.fromCode(rs.getString("environment")));
-        long instanceId = rs.getLong("instance_id");
-        f.setInstanceId(rs.wasNull() ? null : instanceId);
+        f.setInstanceId(rs.getObject("instance_id", Long.class));
         f.setRiskLevel(RiskLevel.fromCode(rs.getString("risk_level")));
-        f.setNonOverridable(rs.getBoolean("non_overridable"));
-        int priority = rs.getInt("priority");
-        f.setPriority(rs.wasNull() ? null : priority);
         f.setEnabled(rs.getBoolean("enabled"));
-        long createdBy = rs.getLong("created_by");
-        f.setCreatedBy(rs.wasNull() ? null : createdBy);
+        f.setCreatedBy(rs.getObject("created_by", Long.class));
         Timestamp created = rs.getTimestamp("created_at");
         f.setCreatedAt(created == null ? null : created.toLocalDateTime());
         Timestamp updated = rs.getTimestamp("updated_at");
@@ -60,24 +62,41 @@ public class PostgresFlowRuleDao implements FlowRuleDao {
     }
 
     @Override
+    public FlowRule findByScope(Long instanceId, RiskLevel riskLevel) {
+        // instance_id = NULL 的流程不能用「WHERE instance_id=NULL」匹配（恒为 UNKNOWN），
+        // 必须按 IS NULL 分支查询
+        List<FlowRule> result = instanceId == null
+                ? jdbc.query("SELECT * FROM t_flow_rule WHERE instance_id IS NULL AND risk_level=?",
+                        MAPPER, CodedEnum.code(riskLevel))
+                : jdbc.query("SELECT * FROM t_flow_rule WHERE instance_id=? AND risk_level=?",
+                        MAPPER, instanceId, CodedEnum.code(riskLevel));
+        return result.isEmpty() ? null : result.get(0);
+    }
+
+    @Override
     public long insert(FlowRule flowRule) {
         long id = jdbc.query(conn -> {
             PreparedStatement ps = conn.prepareStatement(
-                    "INSERT INTO t_flow_rule (name, environment, instance_id, risk_level, "
-                            + "non_overridable, priority, enabled, created_by, created_at, updated_at) "
-                            + "VALUES (?,?,?,?,?,?,?,?,?,?) RETURNING id");
+                    "INSERT INTO t_flow_rule (name, instance_id, risk_level, enabled, created_by, "
+                            + "created_at, updated_at) VALUES (?,?,?,?,?,?,?) RETURNING id");
             ps.setString(1, flowRule.getName());
-            ps.setString(2, CodedEnum.code(flowRule.getEnvironment()));
-            setNullableLong(ps, 3, flowRule.getInstanceId());
-            ps.setString(4, CodedEnum.code(flowRule.getRiskLevel()));
-            ps.setBoolean(5, flowRule.getNonOverridable() != null && flowRule.getNonOverridable());
-            ps.setInt(6, flowRule.getPriority() != null ? flowRule.getPriority() : 0);
-            ps.setBoolean(7, flowRule.getEnabled() == null || flowRule.getEnabled());
-            ps.setLong(8, flowRule.getCreatedBy());
-            ps.setTimestamp(9, Timestamp.valueOf(flowRule.getCreatedAt() != null
-                    ? flowRule.getCreatedAt() : LocalDateTime.now()));
-            ps.setTimestamp(10, Timestamp.valueOf(flowRule.getUpdatedAt() != null
-                    ? flowRule.getUpdatedAt() : LocalDateTime.now()));
+            if (flowRule.getInstanceId() == null) {
+                ps.setNull(2, java.sql.Types.BIGINT);
+            } else {
+                ps.setLong(2, flowRule.getInstanceId());
+            }
+            ps.setString(3, CodedEnum.code(flowRule.getRiskLevel()));
+            ps.setBoolean(4, flowRule.getEnabled() == null || flowRule.getEnabled());
+            if (flowRule.getCreatedBy() == null) {
+                ps.setNull(5, java.sql.Types.BIGINT);
+            } else {
+                ps.setLong(5, flowRule.getCreatedBy());
+            }
+            LocalDateTime now = LocalDateTime.now();
+            ps.setTimestamp(6, Timestamp.valueOf(flowRule.getCreatedAt() != null
+                    ? flowRule.getCreatedAt() : now));
+            ps.setTimestamp(7, Timestamp.valueOf(flowRule.getUpdatedAt() != null
+                    ? flowRule.getUpdatedAt() : now));
             return ps;
         }, rs -> {
             if (rs.next()) {
@@ -91,15 +110,11 @@ public class PostgresFlowRuleDao implements FlowRuleDao {
 
     @Override
     public int update(FlowRule flowRule) {
+        // 刻意只更新 name / enabled：范围与风险等级创建后不可改（改了等于换一条流程，
+        // 历史审批记录的 node_order 就对不上了）
         return jdbc.update(
-                "UPDATE t_flow_rule SET name=?, environment=?, instance_id=?, risk_level=?, "
-                        + "non_overridable=?, priority=?, enabled=?, updated_at=? WHERE id=?",
+                "UPDATE t_flow_rule SET name=?, enabled=?, updated_at=? WHERE id=?",
                 flowRule.getName(),
-                CodedEnum.code(flowRule.getEnvironment()),
-                flowRule.getInstanceId(),
-                CodedEnum.code(flowRule.getRiskLevel()),
-                flowRule.getNonOverridable() != null && flowRule.getNonOverridable(),
-                flowRule.getPriority() != null ? flowRule.getPriority() : 0,
                 flowRule.getEnabled() == null || flowRule.getEnabled(),
                 Timestamp.valueOf(LocalDateTime.now()),
                 flowRule.getId());
@@ -107,14 +122,10 @@ public class PostgresFlowRuleDao implements FlowRuleDao {
 
     @Override
     public int delete(long id) {
-        return jdbc.update("DELETE FROM t_flow_rule WHERE id=?", id);
-    }
-
-    private static void setNullableLong(PreparedStatement ps, int index, Long value) throws java.sql.SQLException {
-        if (value == null) {
-            ps.setNull(index, Types.BIGINT);
-        } else {
-            ps.setLong(index, value);
-        }
+        Integer affected = tx.execute(status -> {
+            jdbc.update("DELETE FROM t_flow_node WHERE flow_rule_id=?", id);
+            return jdbc.update("DELETE FROM t_flow_rule WHERE id=?", id);
+        });
+        return affected == null ? 0 : affected;
     }
 }

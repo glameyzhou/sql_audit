@@ -6,7 +6,7 @@ import com.sqlaudit.common.enums.RollbackStatus;
 import java.time.LocalDateTime;
 
 /**
- * 回滚主记录实体（对应 rollback_sql 表，设计文档 §5.9）。
+ * 回滚主记录实体（对应 rollback_sql 表，README §4.4）。
  * <p>唯一写入方：sqlaudit-rollback。</p>
  */
 public class RollbackSql {
@@ -24,10 +24,6 @@ public class RollbackSql {
     private String unavailableReason;
     /** 前镜像指纹，用于依赖检测 */
     private String preimageHash;
-    private String binlogStart;
-    private String binlogEnd;
-    /** 影子表/IoTDB 快照位置 */
-    private String snapshotUri;
     private LocalDateTime expiresAt;
     private LocalDateTime createdAt;
 
@@ -101,30 +97,6 @@ public class RollbackSql {
 
     public void setPreimageHash(String preimageHash) {
         this.preimageHash = preimageHash;
-    }
-
-    public String getBinlogStart() {
-        return binlogStart;
-    }
-
-    public void setBinlogStart(String binlogStart) {
-        this.binlogStart = binlogStart;
-    }
-
-    public String getBinlogEnd() {
-        return binlogEnd;
-    }
-
-    public void setBinlogEnd(String binlogEnd) {
-        this.binlogEnd = binlogEnd;
-    }
-
-    public String getSnapshotUri() {
-        return snapshotUri;
-    }
-
-    public void setSnapshotUri(String snapshotUri) {
-        this.snapshotUri = snapshotUri;
     }
 
     public LocalDateTime getExpiresAt() {

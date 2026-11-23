@@ -3,7 +3,7 @@ package com.sqlaudit.parser;
 import java.util.Set;
 
 /**
- * 内置纯函数白名单（设计文档 §4.2「调用存储函数 / 存储过程 / 触发器副作用」行）。
+ * 内置纯函数白名单（README §4.3「调用存储函数 / 存储过程 / 触发器副作用」行）。
  *
  * <p>解析层无法区分内置函数与用户自定义/存储函数（SQLMethodInvokeExpr 形态相同），
  * 因此采用<strong>白名单策略</strong>：只有已知确定性的内置纯函数视为只读安全，

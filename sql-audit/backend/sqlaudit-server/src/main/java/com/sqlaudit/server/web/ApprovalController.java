@@ -1,15 +1,25 @@
 package com.sqlaudit.server.web;
 
+import com.sqlaudit.common.enums.ApprovalMode;
+import com.sqlaudit.common.enums.ApprovalResult;
+import com.sqlaudit.common.enums.ApproverType;
 import com.sqlaudit.common.enums.ErrorCode;
+import com.sqlaudit.common.enums.RiskLevel;
 import com.sqlaudit.common.enums.StatementType;
 import com.sqlaudit.common.exception.SqlauditException;
 import com.sqlaudit.executor.gate.ExecutionGate;
-import com.sqlaudit.server.auth.RequireRole;
+import com.sqlaudit.server.auth.CurrentUser;
 import com.sqlaudit.server.auth.RoleAuthInterceptor;
 import com.sqlaudit.storage.dao.ApprovalDao;
+import com.sqlaudit.storage.dao.RoleDao;
+import com.sqlaudit.storage.dao.TicketDao;
 import com.sqlaudit.storage.dao.TicketUnitDao;
+import com.sqlaudit.storage.dao.UserDao;
 import com.sqlaudit.storage.model.Approval;
+import com.sqlaudit.storage.model.Role;
+import com.sqlaudit.storage.model.Ticket;
 import com.sqlaudit.storage.model.TicketUnit;
+import com.sqlaudit.storage.model.User;
 import com.sqlaudit.workflow.ApprovalDecision;
 import com.sqlaudit.workflow.ApprovalFlowEngine;
 import jakarta.servlet.http.HttpServletRequest;
@@ -22,19 +32,22 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 审批端点。审批人 / 二次确认人的真实身份从 JWT 取（拦截器写入 request attribute），
- * 不再信任请求体；防自审与角色校验在 {@link ApprovalFlowEngine} 硬校验（§3.4 / §8.2）。
+ * 审批端点（契约 §6 审批段）。审批人身份取登录态（拦截器写入 request attribute），
+ * 请求体只有决策 / 转交目标；防自审与角色校验在 {@link ApprovalFlowEngine} 硬校验
+ * （引擎每决策从库解析角色，不接收调用方传的角色快照）。
  *
- * <p><strong>§3.5 表结构指纹：审批时记录、执行前比对。</strong>审批通过（approve=true）
- * 时，在决策落库<strong>之前</strong>对工单的每个执行单元采集目标表当前结构指纹
- * （{@code SHA256(SHOW CREATE TABLE)}，经 {@link ExecutionGate.StructureFingerprintProvider}
- * 连 RO_META 只读凭据取），写入 {@code t_ticket_unit.ddl_fingerprint}；执行前由 worker
- * 侧重算比对（R_SCHEMA_DRIFT 门禁）。采集失败（凭据/连接问题）抛
- * {@code FINGERPRINT_CAPTURE_FAILED} 阻断审批，保证决策未落库、无副作用——宁可
- * 审批打回，也不放过「审核后、执行前表结构漂移」的窗口。</p>
+ * <p>待审列表只显示<strong>当前组、本人可审、非本人提交</strong>的记录（契约 §6）；
+ * 待审资格由审批链做真正的门禁（{@code basic}（all_users）权限点放行端点本身）。</p>
+ *
+ * <p><strong>README §4.2 表结构指纹：审批时记录、执行前比对。</strong>审批通过（approve=true）
+ * 时，在决策落库<strong>之前</strong>对工单的每个执行单元采集目标表当前结构指纹，写入
+ * {@code t_ticket_unit.ddl_fingerprint}；采集失败抛 {@code FINGERPRINT_CAPTURE_FAILED}
+ * 阻断审批，保证决策未落库、无副作用。</p>
  */
 @RestController
 @RequestMapping("/api/approvals")
@@ -44,92 +57,143 @@ public class ApprovalController {
 
     private final ApprovalFlowEngine approvalEngine;
     private final ApprovalDao approvalDao;
+    private final TicketDao ticketDao;
     private final TicketUnitDao ticketUnitDao;
+    private final UserDao userDao;
+    private final RoleDao roleDao;
     private final ExecutionGate.StructureFingerprintProvider structureFingerprintProvider;
 
     public ApprovalController(ApprovalFlowEngine approvalEngine, ApprovalDao approvalDao,
-                              TicketUnitDao ticketUnitDao,
+                              TicketDao ticketDao, TicketUnitDao ticketUnitDao,
+                              UserDao userDao, RoleDao roleDao,
                               ExecutionGate.StructureFingerprintProvider structureFingerprintProvider) {
         this.approvalEngine = approvalEngine;
         this.approvalDao = approvalDao;
+        this.ticketDao = ticketDao;
         this.ticketUnitDao = ticketUnitDao;
+        this.userDao = userDao;
+        this.roleDao = roleDao;
         this.structureFingerprintProvider = structureFingerprintProvider;
     }
 
-    /**
-     * 待我审批列表：按登录用户过滤——指派给本人（approver_id=本人）或 ROLE 占位节点
-     * （approver_id=0）且本人持有对应角色（approver_ref）。
-     */
+    /** 待我审批列表：仅当前组、本人可审、非本人提交（契约 §6）。 */
     @GetMapping("/pending")
-    @RequireRole
-    public List<Approval> pending(HttpServletRequest request) {
-        Long userId = (Long) request.getAttribute(RoleAuthInterceptor.ATTR_USER_ID);
-        @SuppressWarnings("unchecked")
-        List<String> roles = (List<String>) request.getAttribute(RoleAuthInterceptor.ATTR_ROLES);
-        return approvalDao.listPending().stream()
-                .filter(a -> visibleTo(a, userId, roles))
-                .toList();
+    public List<PendingView> pending(HttpServletRequest request) {
+        CurrentUser user = RoleAuthInterceptor.currentUser(request);
+        List<PendingView> out = new ArrayList<>();
+        for (Approval a : approvalDao.listPending()) {
+            Ticket ticket = ticketDao.findById(a.getTicketId());
+            if (ticket == null) {
+                continue;
+            }
+            if (ticket.getCreatorId() != null && ticket.getCreatorId() == user.id()) {
+                continue; // 非本人提交
+            }
+            if (a.getNodeOrder() == null || !isCurrentGroup(ticket.getId(), a.getNodeOrder())) {
+                continue; // 仅当前组
+            }
+            if (!actionableBy(a, user)) {
+                continue; // 本人可审
+            }
+            out.add(toView(a, ticket));
+        }
+        return out;
     }
 
-    /**
-     * 审批决策（approve/reject/comment）。审批人身份取 JWT，角色校验在
-     * {@link ApprovalFlowEngine#submitDecision}（ROLE 节点须持有 approver_ref 角色）。
-     */
+    /** 审批决策（approve/reject/comment；决策落库 + 状态迁移整笔事务）。 */
     @PostMapping("/{ticketId}/decide")
-    @RequireRole
+    @org.springframework.transaction.annotation.Transactional
     public ApprovalDecision decide(@PathVariable long ticketId, @RequestBody DecideRequest req,
                                    HttpServletRequest request) {
-        Long approverId = requireUserId(request);
-        @SuppressWarnings("unchecked")
-        List<String> roles = (List<String>) request.getAttribute(RoleAuthInterceptor.ATTR_ROLES);
+        long approverId = RoleAuthInterceptor.currentUser(request).id();
         if (req.approve()) {
             captureStructureFingerprints(ticketId);
         }
-        return approvalEngine.submitDecision(ticketId, approverId, roles, req.approve(), req.comment());
+        return approvalEngine.submitDecision(ticketId, approverId, req.approve(), req.comment());
     }
 
-    /** 执行前二次确认（CRITICAL 工单，§3.4；角色校验 DBA/ADMIN 在引擎层）。 */
+    /** 执行前二次确认（CRITICAL 工单，README §4.6；接口权限点 approval.confirm 控制，不校验角色）。 */
     @PostMapping("/{ticketId}/confirm-execution")
-    @RequireRole
     public void confirmExecution(@PathVariable long ticketId, HttpServletRequest request) {
-        Long confirmerId = requireUserId(request);
-        @SuppressWarnings("unchecked")
-        List<String> roles = (List<String>) request.getAttribute(RoleAuthInterceptor.ATTR_ROLES);
-        approvalEngine.confirmExecution(ticketId, confirmerId, roles);
+        long confirmerId = RoleAuthInterceptor.currentUser(request).id();
+        approvalEngine.confirmExecution(ticketId, confirmerId);
     }
 
     /** 审批转交（代理人）：当前审批人把待审批记录转给代理人。 */
     @PostMapping("/{ticketId}/transfer")
-    @RequireRole
     public void transfer(@PathVariable long ticketId, @RequestBody TransferRequest req,
                          HttpServletRequest request) {
-        Long fromUserId = requireUserId(request);
-        @SuppressWarnings("unchecked")
-        List<String> roles = (List<String>) request.getAttribute(RoleAuthInterceptor.ATTR_ROLES);
-        approvalEngine.transfer(ticketId, fromUserId, req.toUserId(), roles);
+        long fromUserId = RoleAuthInterceptor.currentUser(request).id();
+        approvalEngine.transfer(ticketId, fromUserId, req.toUserId());
+    }
+
+    // ---------------- 视图 ----------------
+
+    /** 待审记录视图（契约 §6 审批段字段）。 */
+    public record PendingView(
+            Long id, Long ticketId, String ticketTitle, RiskLevel riskLevel,
+            Long creatorId, String creatorName, Integer nodeOrder, ApprovalMode mode,
+            ApproverType approverType, String approverRef, String approverDisplay,
+            LocalDateTime createdAt) {
+    }
+
+    private PendingView toView(Approval a, Ticket ticket) {
+        String creatorName = null;
+        if (ticket.getCreatorId() != null) {
+            User creator = userDao.findById(ticket.getCreatorId());
+            creatorName = creator == null ? null : creator.getDisplayName();
+        }
+        return new PendingView(a.getId(), a.getTicketId(), ticket.getTitle(), ticket.getRiskLevel(),
+                ticket.getCreatorId(), creatorName, a.getNodeOrder(), a.getMode(),
+                a.getApproverType(), a.getApproverRef(), approverDisplay(a), a.getCreatedAt());
+    }
+
+    private String approverDisplay(Approval a) {
+        if (a.getApproverType() == null || a.getApproverRef() == null) {
+            return null;
+        }
+        return switch (a.getApproverType()) {
+            case USER, INSTANCE_OWNER -> {
+                try {
+                    User u = userDao.findById(Long.parseLong(a.getApproverRef()));
+                    yield u == null ? null : u.getDisplayName();
+                } catch (NumberFormatException e) {
+                    yield null;
+                }
+            }
+            case ROLE -> {
+                Role role = roleDao.findByCode(a.getApproverRef());
+                yield role == null ? null : role.getName();
+            }
+        };
     }
 
     // ---------------- 工具 ----------------
 
-    /** 待审批记录是否对当前用户可见（本人指派 或 本人持有对应角色）。 */
-    private static boolean visibleTo(Approval a, Long userId, List<String> roles) {
-        if (userId != null && a.getApproverId() != null && a.getApproverId() == userId) {
-            return true;
-        }
-        return a.getApproverId() != null && a.getApproverId() == 0L
-                && a.getApproverRef() != null && roles != null && roles.contains(a.getApproverRef());
+    /** 该组是否为工单当前组（含 PENDING 记录的最小 nodeOrder）。 */
+    private boolean isCurrentGroup(long ticketId, int nodeOrder) {
+        int min = approvalDao.listByTicket(ticketId).stream()
+                .filter(r -> r.getResult() == ApprovalResult.PENDING && r.getNodeOrder() != null)
+                .mapToInt(Approval::getNodeOrder)
+                .min()
+                .orElseThrow(() -> new SqlauditException(ErrorCode.NO_PENDING_APPROVAL,
+                        "工单没有待审批节点"));
+        return nodeOrder == min;
     }
 
-    private static Long requireUserId(HttpServletRequest request) {
-        Long userId = (Long) request.getAttribute(RoleAuthInterceptor.ATTR_USER_ID);
-        if (userId == null) {
-            throw new SqlauditException(ErrorCode.UNAUTHORIZED, "未登录或 token 无效");
+    /** 本人能否决策这条记录（USER/INSTANCE_OWNER 看 ref=本人；ROLE 看持有角色）。 */
+    private static boolean actionableBy(Approval a, CurrentUser user) {
+        if (a.getApproverType() == null || a.getApproverRef() == null) {
+            return false; // 必需字段缺失一律不可审
         }
-        return userId;
+        return switch (a.getApproverType()) {
+            case USER, INSTANCE_OWNER -> a.getApproverRef().equals(String.valueOf(user.id()));
+            case ROLE -> user.roleCodes().contains(a.getApproverRef());
+        };
     }
 
     /**
-     * §3.5 审批时采集表结构指纹（在决策落库之前执行，失败即阻断、无副作用）。
+     * README §4.2 审批时采集表结构指纹（在决策落库之前执行，失败即阻断、无副作用）。
      */
     private void captureStructureFingerprints(long ticketId) {
         for (TicketUnit unit : ticketUnitDao.listByTicket(ticketId)) {

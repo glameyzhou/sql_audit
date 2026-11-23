@@ -12,9 +12,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * {@link TicketUnitDao} 的内存 fake 实现（W0-3，供流 A 单测解耦真实数据库）。
+ * {@link TicketUnitDao} 的内存 fake 实现（单测替身，不加密）。
  *
- * <p>语义逐条对齐设计文档 §3.3 与接口 javadoc：</p>
+ * <p>语义逐条对齐 README §4.2 与接口 javadoc：</p>
  * <ul>
  *   <li>{@code claimUnit} 的「检查 + 写入」在 synchronized 块内原子完成，硬条件
  *       {@code intent_written=0}；</li>
@@ -29,6 +29,8 @@ import java.util.concurrent.atomic.AtomicLong;
  *   <li>{@code claimUnit} 的租约过期比较（{@code lease_until < NOW(3)}）以参数
  *       {@code heartbeatAt} 作为 NOW（javadoc 约定 heartbeatAt = now），保证测试确定性；</li>
  *   <li>{@code intent_written} 为 null 视为 0（DDL 中 NOT NULL DEFAULT 0）；</li>
+ *   <li>{@code statement} 明文存取（JDBC 版经 {@code SqlCipher} 加密落库）；
+ *       {@code statement_hash} 由调用方按明文计算，本类原样保存；</li>
  *   <li>查询方法返回快照拷贝，调用方修改返回值不影响内部状态。</li>
  * </ul>
  */
@@ -66,7 +68,7 @@ public class InMemoryTicketUnitDao implements TicketUnitDao {
             return 0;
         }
         if (UnitStatus.LEASED == unit.getStatus()) {
-            // §3.3 不变式：status='executing' 与 intent_written=1 同事务写入，无中间态
+            // README §4.2 不变式：status='executing' 与 intent_written=1 同事务写入，无中间态
             unit.setStatus(UnitStatus.EXECUTING);
             unit.setIntentWritten(true);
             unit.setHeartbeatAt(now);
@@ -81,7 +83,7 @@ public class InMemoryTicketUnitDao implements TicketUnitDao {
         if (unit == null) {
             return 0;
         }
-        // §3.3 步骤 5：条件 UPDATE，不靠唯一约束；影响行数 0 = 已被确认
+        // README §4.2 步骤 5：条件 UPDATE，不靠唯一约束；影响行数 0 = 已被确认
         if (UnitStatus.EXECUTING == unit.getStatus() && unit.getExecutedAt() == null) {
             unit.setStatus(UnitStatus.SUCCESS);
             unit.setExecutedAt(executedAt);
@@ -119,7 +121,7 @@ public class InMemoryTicketUnitDao implements TicketUnitDao {
 
     @Override
     public synchronized int updateDdlFingerprint(long id, String fingerprint) {
-        // §3.5：审批通过时采集结构指纹写入；执行前 worker 侧重算比对（R_SCHEMA_DRIFT）
+        // README §4.2：审批通过时采集结构指纹写入；执行前 worker 侧重算比对（R_SCHEMA_DRIFT）
         TicketUnit unit = store.get(id);
         if (unit == null) {
             return 0;
@@ -168,13 +170,10 @@ public class InMemoryTicketUnitDao implements TicketUnitDao {
             if (intentNotWritten && (pending || expiredLease)) {
                 result.add(copy(unit));
             }
-            if (result.size() >= limit) {
-                break;
-            }
         }
         result.sort(Comparator.comparing(TicketUnit::getTicketId, Comparator.nullsLast(Comparator.naturalOrder()))
                 .thenComparing(TicketUnit::getUnitOrder, Comparator.nullsLast(Comparator.naturalOrder())));
-        return result;
+        return result.size() > limit ? new ArrayList<>(result.subList(0, limit)) : result;
     }
 
     @Override
@@ -235,21 +234,7 @@ public class InMemoryTicketUnitDao implements TicketUnitDao {
         return result;
     }
 
-    @Override
-    public synchronized List<TicketUnit> listByFingerprintSince(String execFingerprint, LocalDateTime since) {
-        List<TicketUnit> result = new ArrayList<>();
-        for (TicketUnit unit : store.values()) {
-            boolean fingerprintMatch = execFingerprint != null && execFingerprint.equals(unit.getExecFingerprint());
-            boolean inWindow = unit.getCreatedAt() != null && !unit.getCreatedAt().isBefore(since);
-            if (fingerprintMatch && inWindow) {
-                result.add(copy(unit));
-            }
-        }
-        result.sort(Comparator.comparing(TicketUnit::getCreatedAt));
-        return result;
-    }
-
-    // ---- 测试辅助（不属于接口，流 A 单测用来造数与断言） ----
+    // ---- 测试辅助（不属于接口，单测用来造数与断言） ----
 
     /** 插入一条 unit（自增 id），返回分配的 id。 */
     @Override
@@ -260,7 +245,7 @@ public class InMemoryTicketUnitDao implements TicketUnitDao {
         return id;
     }
 
-    /** 按状态计数（流 A 断言用）。 */
+    /** 按状态计数（单测断言用）。 */
     public synchronized int countByStatus(UnitStatus status) {
         int count = 0;
         for (TicketUnit unit : store.values()) {
@@ -291,19 +276,14 @@ public class InMemoryTicketUnitDao implements TicketUnitDao {
         dest.setStatement(src.getStatement());
         dest.setStatementHash(src.getStatementHash());
         dest.setStatementType(src.getStatementType());
-        dest.setDialectSpecific(src.getDialectSpecific());
         dest.setStatus(src.getStatus());
         dest.setLeaseOwner(src.getLeaseOwner());
         dest.setLeaseUntil(src.getLeaseUntil());
         dest.setHeartbeatAt(src.getHeartbeatAt());
         dest.setIntentWritten(src.getIntentWritten());
         dest.setExecutedAt(src.getExecutedAt());
-        dest.setExecFingerprint(src.getExecFingerprint());
-        dest.setPreimageRows(src.getPreimageRows());
         dest.setAffectedRows(src.getAffectedRows());
         dest.setDdlFingerprint(src.getDdlFingerprint());
-        dest.setBinlogStart(src.getBinlogStart());
-        dest.setBinlogEnd(src.getBinlogEnd());
         dest.setErrorMessage(src.getErrorMessage());
         dest.setCreatedAt(src.getCreatedAt());
         return dest;

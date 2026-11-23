@@ -1,5 +1,6 @@
 package com.sqlaudit.storage.impl.jdbc.postgresql;
 
+import com.sqlaudit.common.crypto.SqlCipher;
 import com.sqlaudit.common.enums.StatementType;
 import com.sqlaudit.common.enums.UnitStatus;
 import com.sqlaudit.storage.model.TicketUnit;
@@ -23,7 +24,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -32,21 +32,27 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * {@link PostgresTicketUnitDao} 对本地 Docker PostgreSQL 的集成测试，断言逐条搬自
- * MySQL 版 {@code MySqlTicketUnitDaoIT}。
+ * {@link PostgresTicketUnitDao} 对本地 Docker PostgreSQL（独立测试库 sql_audit_it）的集成测试。
  *
- * <p>语义逐条对照内存版 {@code InMemoryTicketUnitDaoTest}（内存 24 条测试即协议规格）：
+ * <p>语义逐条对照内存版 {@code InMemoryTicketUnitDaoTest}（内存测试即协议规格）：
  * claim 硬条件 / writeIntent / confirmSuccess 幂等 0 / confirmFailed / markNeedsConfirm /
  * releaseLeaseToPending / reclaimExpiredLease / listClaimable / renewLease，
- * 另加两线程（加强为 8 线程）并发 claimUnit 同一 unit 只有一个成功。</p>
+ * 另加 8 线程并发 claimUnit 同一 unit 只有一个成功。</p>
  *
- * <p><strong>与 MySQL 版测试的差异：</strong>PG 中 {@code intent_written} 为 BOOLEAN，
- * 造数用 {@code intent_written=TRUE}（MySQL 版写 1）；DDL §5 的 chk_unit_intent 禁止
- * {@code pending + intent_written=1} 非法组合入库（不变式兜底），PG 报错码 23514 经
- * Spring 翻译为 DataAccessException，断言报错含约束名 chk_unit_intent。</p>
+ * <p><strong>加密</strong>：{@code statement} 列为 LONGBLOB 密文（{@link SqlCipher}），
+ * 断言原列字节不含明文且解密往返一致；{@code statementHash} 由调用方按明文计算，
+ * DAO 原样存取。</p>
+ *
+ * <p><strong>与内存版测试的差异（DDL CHECK 约束所致）：</strong>内存版造数允许
+ * {@code pending + intent_written=1} 的非法组合来验证硬条件；DDL 的 chk_unit_intent
+ * 禁止该组合入库（不变式兜底），JDBC 版改用合法终态（failed / needs_confirm + written）
+ * 验证 claim 拒抢，并断言非法组合被 CHECK 拒绝。</p>
  */
 @Tag("it")
 class PostgresTicketUnitDaoIT {
+
+    private static final SqlCipher CIPHER = new SqlCipher();
+    private static final String PLAIN_SQL = "UPDATE t_user SET status=1 WHERE id=2";
 
     private static HikariDataSource ds;
     private static JdbcTemplate jdbc;
@@ -55,10 +61,11 @@ class PostgresTicketUnitDaoIT {
     @BeforeAll
     static void initDatabase() throws Exception {
         Assumptions.assumeTrue(PostgresTestSupport.postgresAvailable(), "本地 PostgreSQL 未启动，跳过集成测试");
+        PostgresTestSupport.ensureDatabase();
         ds = PostgresTestSupport.buildDataSource();
         jdbc = new JdbcTemplate(ds);
-        PostgresTestSupport.ensureSchema(ds);
-        dao = new PostgresTicketUnitDao(jdbc);
+        PostgresTestSupport.migrate(ds);
+        dao = new PostgresTicketUnitDao(jdbc, CIPHER);
     }
 
     @AfterAll
@@ -71,35 +78,34 @@ class PostgresTicketUnitDaoIT {
     @BeforeEach
     void cleanTables() {
         if (ds != null) {
-            PostgresTestSupport.cleanAllTables(jdbc);
+            PostgresTestSupport.cleanAndSeed(jdbc);
         }
     }
 
-    /** DDL 为 TIMESTAMP(3) 毫秒精度：断言相等前截断到毫秒，避免纳秒读写往返误差。 */
+    /** DDL 为 DATETIME(3) 毫秒精度：断言相等前截断到毫秒，避免纳秒读写往返误差。 */
     private static LocalDateTime nowMillis() {
         return LocalDateTime.now().truncatedTo(ChronoUnit.MILLIS);
     }
 
-    /** 插入一条满足 DDL NOT NULL 约束的 unit（内存版 fake 允许 null，真库必须填全必填列）。 */
-    private static long insertUnit(UnitStatus status, long ticketId, int unitOrder, String execFingerprint) {
+    /** 插入一条满足 DDL NOT NULL 约束的 unit（statement 由 DAO 加密落库）。 */
+    private static long insertUnit(UnitStatus status, long ticketId, int unitOrder) {
         TicketUnit unit = new TicketUnit();
         unit.setTicketId(ticketId);
         unit.setInstanceId(1L);
         unit.setSchemaName("app");
         unit.setObjectName("t_user");
         unit.setUnitOrder(unitOrder);
-        unit.setStatement("UPDATE t_user SET status=1 WHERE id=2".getBytes(StandardCharsets.UTF_8));
+        unit.setStatement(PLAIN_SQL);
         unit.setStatementHash("a".repeat(64));
         unit.setStatementType(StatementType.UPDATE);
         unit.setStatus(status);
-        unit.setExecFingerprint(execFingerprint);
         unit.setCreatedAt(LocalDateTime.now().minusMinutes(5));
         return dao.insert(unit);
     }
 
     @Test
     void 全生命周期_pending到claim到writeIntent到confirmSuccess() {
-        long id = insertUnit(UnitStatus.PENDING, 1L, 1, "fp-default");
+        long id = insertUnit(UnitStatus.PENDING, 1L, 1);
         LocalDateTime now = nowMillis();
 
         assertEquals(1, dao.claimUnit(id, "worker-1", now.plusSeconds(30), now));
@@ -122,41 +128,57 @@ class PostgresTicketUnitDaoIT {
         assertNull(success.getLeaseOwner(), "成功后租约字段清空");
         assertNull(success.getLeaseUntil());
         assertNull(success.getHeartbeatAt());
-        assertArrayEquals("UPDATE t_user SET status=1 WHERE id=2".getBytes(StandardCharsets.UTF_8),
-                success.getStatement(), "加密 statement 字节原样往返");
-        assertEquals("fp-default", success.getExecFingerprint());
+        assertEquals(PLAIN_SQL, success.getStatement(), "密文列读出即明文（DAO 透明解密）");
+        assertEquals("a".repeat(64), success.getStatementHash(), "statement_hash 按明文计算、原样往返");
 
         // 幂等确认：二次 confirmSuccess 返回 0，调用方视为成功
         assertEquals(0, dao.confirmSuccess(id, 42L, now.plusSeconds(3)));
     }
 
     @Test
+    void statement加密落库_原列字节不含明文_解密往返() {
+        long id = insertUnit(UnitStatus.PENDING, 1L, 1);
+
+        // 直接读原始列（绕过 DAO）：LONGBLOB 里必须是密文
+        byte[] raw = jdbc.queryForObject("SELECT statement FROM t_ticket_unit WHERE id=?", byte[].class, id);
+        assertNotNull(raw);
+        String rawText = new String(raw, StandardCharsets.UTF_8);
+        assertFalse(rawText.contains("UPDATE t_user"), "库里不得有执行语句明文");
+        assertEquals(12 + PLAIN_SQL.getBytes(StandardCharsets.UTF_8).length + 16, raw.length,
+                "密文长度 = iv(12B) + 密文（=明文长度，NoPadding）+ tag(16B)");
+        assertEquals(PLAIN_SQL, CIPHER.decrypt(raw), "SqlCipher 解密往返");
+
+        // 同一明文两次加密密文不同（随机 nonce）
+        byte[] rawAgain = CIPHER.encrypt(PLAIN_SQL);
+        assertFalse(java.util.Arrays.equals(raw, rawAgain), "随机 nonce 使密文不可复用作指纹");
+    }
+
+    @Test
     void claimUnit硬条件_已预写intent的终态unit抢不到() {
         LocalDateTime now = nowMillis();
 
-        // 合法状态（DDL CHECK 允许）+ intent_written=true：claim 因状态与硬条件双双拒绝
-        long failedId = insertUnit(UnitStatus.FAILED, 1L, 1, "fp-default");
+        // 合法状态（DDL CHECK 允许）+ intent_written=1：claim 因状态与硬条件双双拒绝
+        long failedId = insertUnit(UnitStatus.FAILED, 1L, 1);
         jdbc.update("UPDATE t_ticket_unit SET intent_written=TRUE WHERE id=?", failedId);
         assertEquals(0, dao.claimUnit(failedId, "worker-1", now.plusSeconds(30), now));
 
-        long needsConfirmId = insertUnit(UnitStatus.NEEDS_CONFIRM, 1L, 2, "fp-default");
+        long needsConfirmId = insertUnit(UnitStatus.NEEDS_CONFIRM, 1L, 2);
         jdbc.update("UPDATE t_ticket_unit SET intent_written=TRUE WHERE id=?", needsConfirmId);
         assertEquals(0, dao.claimUnit(needsConfirmId, "worker-1", now.plusSeconds(30), now));
 
-        // 内存版的 pending+written 非法组合在 DDL 中被 chk_unit_intent 兜底拒绝（不变式验证）
+        // 内存版的 pending+written 非法组合在 DDL 中被 chk_unit_intent 兜底拒绝（不变式验证）；
+        // PG 的 CHECK violation（约束名 chk_unit_intent）经 Spring 翻译为 DataAccessException
         TicketUnit illegal = new TicketUnit();
         illegal.setTicketId(1L);
         illegal.setInstanceId(1L);
         illegal.setUnitOrder(1);
-        illegal.setStatement("SELECT 1".getBytes(StandardCharsets.UTF_8));
+        illegal.setStatement("SELECT 1");
         illegal.setStatementHash("b".repeat(64));
         illegal.setStatementType(StatementType.SELECT);
         illegal.setStatus(UnitStatus.PENDING);
         illegal.setIntentWritten(true);
-        // 内存版的 pending+written 非法组合在 DDL 中被 chk_unit_intent 兜底拒绝（不变式验证）；
-        // PG 错误码 23514（check_violation）经 Spring 翻译为 DataIntegrityViolationException
         DataAccessException ex = assertThrows(DataAccessException.class, () -> dao.insert(illegal),
-                "pending + intent_written=true 违反 chk_unit_intent");
+                "pending + intent_written=1 违反 chk_unit_intent");
         assertTrue(ex.getMessage().contains("chk_unit_intent"),
                 "报错应指明违反的 CHECK 约束: " + ex.getMessage());
     }
@@ -166,13 +188,13 @@ class PostgresTicketUnitDaoIT {
         LocalDateTime now = nowMillis();
 
         // 未过期：先 claim 建立租约，第二个 worker 抢不到
-        long freshId = insertUnit(UnitStatus.PENDING, 1L, 1, "fp-default");
+        long freshId = insertUnit(UnitStatus.PENDING, 1L, 1);
         assertEquals(1, dao.claimUnit(freshId, "worker-1", now.plusSeconds(30), now));
         assertEquals(0, dao.claimUnit(freshId, "worker-2", now.plusSeconds(30), now));
         assertEquals("worker-1", dao.findById(freshId).getLeaseOwner());
 
         // 过期：用过去时间 claim 建立已过期租约，可被重新抢占，租约归属转移
-        long expiredId = insertUnit(UnitStatus.PENDING, 1L, 2, "fp-default");
+        long expiredId = insertUnit(UnitStatus.PENDING, 1L, 2);
         assertEquals(1, dao.claimUnit(expiredId, "worker-1", now.minusSeconds(1), now));
         assertEquals(1, dao.claimUnit(expiredId, "worker-2", now.plusSeconds(30), now));
         TicketUnit taken = dao.findById(expiredId);
@@ -182,7 +204,7 @@ class PostgresTicketUnitDaoIT {
 
     @Test
     void 并发抢占_多线程claim同一unit只有一个成功() throws Exception {
-        long id = insertUnit(UnitStatus.PENDING, 1L, 1, "fp-default");
+        long id = insertUnit(UnitStatus.PENDING, 1L, 1);
         LocalDateTime now = nowMillis();
         int threads = 8;
         CountDownLatch startGate = new CountDownLatch(1);
@@ -215,17 +237,17 @@ class PostgresTicketUnitDaoIT {
     void reclaimExpiredLease_只回收intent未预写且租约过期的() {
         LocalDateTime now = nowMillis();
 
-        // 可回收：leased + 过期 + intent_written=false
-        long reclaimable = insertUnit(UnitStatus.PENDING, 1L, 1, "fp-default");
+        // 可回收：leased + 过期 + intent_written=0
+        long reclaimable = insertUnit(UnitStatus.PENDING, 1L, 1);
         assertEquals(1, dao.claimUnit(reclaimable, "worker-1", now.minusSeconds(1), now));
 
         // 不可回收：intent 已预写（executing，不进 pending/leased 回收分支）
-        long written = insertUnit(UnitStatus.PENDING, 1L, 2, "fp-default");
+        long written = insertUnit(UnitStatus.PENDING, 1L, 2);
         assertEquals(1, dao.claimUnit(written, "worker-1", now.minusSeconds(1), now));
         assertEquals(1, dao.writeIntent(written, now));
 
         // 不可回收：租约未过期
-        long fresh = insertUnit(UnitStatus.PENDING, 1L, 3, "fp-default");
+        long fresh = insertUnit(UnitStatus.PENDING, 1L, 3);
         assertEquals(1, dao.claimUnit(fresh, "worker-1", now.plusSeconds(60), now));
 
         assertEquals(1, dao.reclaimExpiredLease(now));
@@ -245,17 +267,17 @@ class PostgresTicketUnitDaoIT {
         LocalDateTime now = nowMillis();
 
         // executing + 心跳停滞 + 未确认
-        long staleId = insertUnit(UnitStatus.PENDING, 1L, 1, "fp-default");
+        long staleId = insertUnit(UnitStatus.PENDING, 1L, 1);
         assertEquals(1, dao.claimUnit(staleId, "worker-1", now.plusSeconds(30), now.minusSeconds(300)));
         assertEquals(1, dao.writeIntent(staleId, now.minusSeconds(300)));
 
         // executing + 心跳新鲜
-        long freshId = insertUnit(UnitStatus.PENDING, 1L, 2, "fp-default");
+        long freshId = insertUnit(UnitStatus.PENDING, 1L, 2);
         assertEquals(1, dao.claimUnit(freshId, "worker-1", now.plusSeconds(30), now.minusSeconds(1)));
         assertEquals(1, dao.writeIntent(freshId, now.minusSeconds(1)));
 
         // executing + 心跳停滞但已确认（confirmSuccess 后为 success，不在列表内）
-        long confirmedId = insertUnit(UnitStatus.PENDING, 1L, 3, "fp-default");
+        long confirmedId = insertUnit(UnitStatus.PENDING, 1L, 3);
         assertEquals(1, dao.claimUnit(confirmedId, "worker-1", now.plusSeconds(30), now.minusSeconds(300)));
         assertEquals(1, dao.writeIntent(confirmedId, now.minusSeconds(300)));
         assertEquals(1, dao.confirmSuccess(confirmedId, 1L, now));
@@ -272,7 +294,7 @@ class PostgresTicketUnitDaoIT {
     @Test
     void releaseLeaseToPending_清空租约字段且可被再次抢占() {
         LocalDateTime now = nowMillis();
-        long id = insertUnit(UnitStatus.PENDING, 1L, 1, "fp-default");
+        long id = insertUnit(UnitStatus.PENDING, 1L, 1);
         assertEquals(1, dao.claimUnit(id, "worker-1", now.plusSeconds(30), now));
 
         assertEquals(1, dao.releaseLeaseToPending(id));
@@ -292,7 +314,7 @@ class PostgresTicketUnitDaoIT {
     @Test
     void confirmFailed_executing状态置failed() {
         LocalDateTime now = nowMillis();
-        long id = insertUnit(UnitStatus.PENDING, 1L, 1, "fp-default");
+        long id = insertUnit(UnitStatus.PENDING, 1L, 1);
         assertEquals(1, dao.claimUnit(id, "worker-1", now.plusSeconds(30), now));
         assertEquals(1, dao.writeIntent(id, now));
 
@@ -307,7 +329,7 @@ class PostgresTicketUnitDaoIT {
     @Test
     void markNeedsConfirm_置状态与原因() {
         LocalDateTime now = nowMillis();
-        long id = insertUnit(UnitStatus.PENDING, 1L, 1, "fp-default");
+        long id = insertUnit(UnitStatus.PENDING, 1L, 1);
         assertEquals(1, dao.claimUnit(id, "worker-1", now.plusSeconds(30), now));
         assertEquals(1, dao.writeIntent(id, now));
 
@@ -320,7 +342,7 @@ class PostgresTicketUnitDaoIT {
     @Test
     void renewLease_仅本owner在executing状态可续租() {
         LocalDateTime now = nowMillis();
-        long id = insertUnit(UnitStatus.PENDING, 1L, 1, "fp-default");
+        long id = insertUnit(UnitStatus.PENDING, 1L, 1);
         assertEquals(1, dao.claimUnit(id, "worker-1", now.plusSeconds(30), now));
         assertEquals(1, dao.writeIntent(id, now));
 
@@ -339,21 +361,21 @@ class PostgresTicketUnitDaoIT {
     @Test
     void listClaimable_候选过滤与ticket_order稳定排序与limit() {
         LocalDateTime now = nowMillis();
-        long pending2 = insertUnit(UnitStatus.PENDING, 2L, 1, "fp-default");
-        long pending1 = insertUnit(UnitStatus.PENDING, 1L, 2, "fp-default");
-        long pending0 = insertUnit(UnitStatus.PENDING, 1L, 1, "fp-default");
+        long pending2 = insertUnit(UnitStatus.PENDING, 2L, 1);
+        long pending1 = insertUnit(UnitStatus.PENDING, 1L, 2);
+        long pending0 = insertUnit(UnitStatus.PENDING, 1L, 1);
 
         // 过期 leased 可作候选
-        long expiredLeased = insertUnit(UnitStatus.PENDING, 3L, 1, "fp-default");
+        long expiredLeased = insertUnit(UnitStatus.PENDING, 3L, 1);
         assertEquals(1, dao.claimUnit(expiredLeased, "worker-1", now.minusSeconds(1), now));
 
         // executing（intent 已预写）不作候选
-        long executing = insertUnit(UnitStatus.PENDING, 4L, 1, "fp-default");
+        long executing = insertUnit(UnitStatus.PENDING, 4L, 1);
         assertEquals(1, dao.claimUnit(executing, "worker-1", now.plusSeconds(30), now));
         assertEquals(1, dao.writeIntent(executing, now));
 
         // 未过期 leased 不作候选
-        long freshLeased = insertUnit(UnitStatus.PENDING, 5L, 1, "fp-default");
+        long freshLeased = insertUnit(UnitStatus.PENDING, 5L, 1);
         assertEquals(1, dao.claimUnit(freshLeased, "worker-1", now.plusSeconds(30), now));
 
         List<TicketUnit> claimable = dao.listClaimable(now, 10);
@@ -368,25 +390,17 @@ class PostgresTicketUnitDaoIT {
     }
 
     @Test
-    void listByFingerprintSince_按指纹与时间窗过滤() {
-        LocalDateTime now = nowMillis();
-        insertUnit(UnitStatus.SUCCESS, 1L, 1, "fp-x");  // created_at = now-5min，窗口内
-        TicketUnit outOfWindow = new TicketUnit();
-        outOfWindow.setTicketId(1L);
-        outOfWindow.setInstanceId(1L);
-        outOfWindow.setUnitOrder(2);
-        outOfWindow.setStatement("SELECT 1".getBytes(StandardCharsets.UTF_8));
-        outOfWindow.setStatementHash("c".repeat(64));
-        outOfWindow.setStatementType(StatementType.SELECT);
-        outOfWindow.setStatus(UnitStatus.SUCCESS);
-        outOfWindow.setExecFingerprint("fp-x");
-        outOfWindow.setCreatedAt(now.minusHours(2));
-        dao.insert(outOfWindow);
-        insertUnit(UnitStatus.SUCCESS, 1L, 3, "fp-y");  // 其他指纹
+    void listByTicket与listByStatus_工单详情与执行监控读法() {
+        long u1 = insertUnit(UnitStatus.PENDING, 7L, 1);
+        long u2 = insertUnit(UnitStatus.PENDING, 7L, 2);
+        insertUnit(UnitStatus.PENDING, 8L, 1);
 
-        List<TicketUnit> hits = dao.listByFingerprintSince("fp-x", now.minusHours(1));
-        assertEquals(1, hits.size());
-        assertEquals("fp-x", hits.get(0).getExecFingerprint());
-        assertFalse(hits.get(0).getCreatedAt().isBefore(now.minusHours(1)));
+        List<TicketUnit> byTicket = dao.listByTicket(7L);
+        assertEquals(2, byTicket.size());
+        assertEquals(u1, byTicket.get(0).getId(), "按 unit_order 稳定排序");
+        assertEquals(u2, byTicket.get(1).getId());
+
+        assertEquals(3, dao.listByStatus(UnitStatus.PENDING).size(), "按状态（执行监控）");
+        assertEquals(0, dao.listByStatus(UnitStatus.EXECUTING).size());
     }
 }

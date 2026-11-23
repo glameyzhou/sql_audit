@@ -39,8 +39,8 @@ import java.util.Map;
  *       IoTDB 方言以 {@link SqlauditException}（HTTP 400）报出。</li>
  * </ul>
  *
- * <p>标识符拼接（MySQL 反引号 / PG 双引号）一律先经 {@link #mysqlQuote} / {@link #pgQuote}
- * 转义，库名表名均可能来自前端输入，防呆不可省。</p>
+ * <p>库名 / 表名一律走 {@link PreparedStatement} 参数绑定（不拼接进 SQL），
+ * 它们均可能来自前端输入，防注入不可省。</p>
  */
 @Service
 public class JdbcMetadataService {
@@ -140,45 +140,57 @@ public class JdbcMetadataService {
     }
 
     /**
-     * 经实例 RO_META 凭据列指定库的表清单。
+     * 经实例 RO_META 凭据列指定库的表清单（含原生注释）。
      *
      * <ul>
-     *   <li>MySQL：{@code SHOW FULL TABLES FROM `库名`}，取第一列（表名）；</li>
+     *   <li>MySQL：查 {@code information_schema.TABLES}（BASE TABLE + VIEW），
+     *       {@code TABLE_COMMENT} 为原生注释；</li>
      *   <li>PG：<strong>database 参数即数据库名</strong>——连接切到该库，列出所有用户 schema
      *       下的表，返回 {@code schema.table} 限定名（排除 pg_catalog / information_schema），
+     *       注释经 {@code obj_description(c.oid, 'pg_class')} 取（无注释为 null）；
      *       与前端「点库 → 看表 → 点表查询」的两级浏览语义对齐；</li>
      *   <li>IoTDB / 实例不存在 / 无 RO_META 凭据 → {@link SqlauditException}（400）。</li>
      * </ul>
+     *
+     * <p>展示时平台侧备注（t_table_remark）优先于本方法返回的原生注释，合并逻辑在
+     * 前端（备注经 {@code GET /api/table-remarks} 单独下发）。</p>
      */
-    public List<String> listTables(long instanceId, String database) {
+    public List<TableRef> listTables(long instanceId, String database) {
         if (database == null || database.isBlank()) {
             throw new SqlauditException(ErrorCode.INVALID_REQUEST, "库名不能为空");
         }
         Resolved r = resolveMeta(instanceId);
         if (r.dialect() == Dialect.MYSQL) {
-            String sql = "SHOW FULL TABLES FROM " + mysqlQuote(database);
+            String sql = "SELECT TABLE_NAME, TABLE_COMMENT FROM information_schema.TABLES"
+                    + " WHERE TABLE_SCHEMA = ? AND TABLE_TYPE IN ('BASE TABLE', 'VIEW')"
+                    + " ORDER BY TABLE_NAME";
             try (Connection conn = open(r, bootstrapDatabase(r));
-                 Statement st = conn.createStatement();
-                 ResultSet rs = st.executeQuery(sql)) {
-                List<String> out = new ArrayList<>();
-                while (rs.next()) {
-                    out.add(rs.getString(1));
+                 PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setString(1, database);
+                try (ResultSet rs = ps.executeQuery()) {
+                    List<TableRef> out = new ArrayList<>();
+                    while (rs.next()) {
+                        out.add(new TableRef(rs.getString(1), blankToNull(rs.getString(2))));
+                    }
+                    return out;
                 }
-                return out;
             } catch (SQLException e) {
                 throw new SqlauditException(ErrorCode.META_QUERY_FAILED, "表列表查询失败: " + e.getMessage(), e);
             }
         }
-        // PG：连接到所选数据库（database 参数），跨 schema 返回限定名
-        String sql = "SELECT schemaname || '.' || tablename FROM pg_tables"
-                + " WHERE schemaname NOT IN ('pg_catalog', 'information_schema')"
-                + " ORDER BY schemaname, tablename";
+        // PG：连接到所选数据库（database 参数），跨 schema 返回限定名；注释走 pg_class
+        String sql = "SELECT pt.schemaname || '.' || pt.tablename, obj_description(c.oid, 'pg_class')"
+                + " FROM pg_tables pt"
+                + " JOIN pg_class c ON c.relname = pt.tablename"
+                + " JOIN pg_namespace n ON n.nspname = pt.schemaname AND n.oid = c.relnamespace"
+                + " WHERE pt.schemaname NOT IN ('pg_catalog', 'information_schema')"
+                + " ORDER BY pt.schemaname, pt.tablename";
         try (Connection conn = open(r, database);
              Statement st = conn.createStatement();
              ResultSet rs = st.executeQuery(sql)) {
-            List<String> out = new ArrayList<>();
+            List<TableRef> out = new ArrayList<>();
             while (rs.next()) {
-                out.add(rs.getString(1));
+                out.add(new TableRef(rs.getString(1), blankToNull(rs.getString(2))));
             }
             return out;
         } catch (SQLException e) {
@@ -249,6 +261,134 @@ public class JdbcMetadataService {
         }
     }
 
+    /**
+     * 经实例 RO_META 凭据列指定表的表结构（字段 / 类型 / 可空 / 键 / 默认值 / 注释）。
+     *
+     * <ul>
+     *   <li>MySQL：查 {@code information_schema.COLUMNS}（{@code COLUMN_TYPE} 为完整类型，
+     *       {@code COLUMN_KEY} 为键：PRI 主键 / UNI 唯一 / MUL 普通索引 / 空串无键）；</li>
+     *   <li>PG：{@code table} 为 {@code schema.table} 限定名（与 {@link #listTables} 返回
+     *       口径一致），拆成 schema/table 过滤；裸表名回落 {@code public}；注释经
+     *       {@code col_description(pg_class.oid, ordinal_position)} 取；键经
+     *       key_column_usage + table_constraints（PRIMARY KEY → PRI / UNIQUE → UNI）；</li>
+     *   <li>IoTDB → {@link SqlauditException}（400，IoTDB 无 information_schema 等价物，
+     *       「IoTDB 暂不支持表结构查看」）；实例不存在 / 无 RO_META 凭据 → 400。</li>
+     * </ul>
+     *
+     * <p>库名/表名一律走 {@link PreparedStatement} 参数绑定，不拼接进 SQL，防注入。</p>
+     */
+    public List<TableColumn> tableStructure(long instanceId, String database, String table) {
+        if (database == null || database.isBlank()) {
+            throw new SqlauditException(ErrorCode.INVALID_REQUEST, "库名不能为空");
+        }
+        if (table == null || table.isBlank()) {
+            throw new SqlauditException(ErrorCode.INVALID_REQUEST, "表名不能为空");
+        }
+        Instance inst = instanceDao.findById(instanceId);
+        if (inst == null) {
+            throw new SqlauditException(ErrorCode.INSTANCE_NOT_FOUND, "实例不存在: id=" + instanceId);
+        }
+        if (dialectOf(inst) == Dialect.IOTDB) {
+            throw new SqlauditException(ErrorCode.INVALID_REQUEST, "IoTDB 暂不支持表结构查看");
+        }
+        Resolved r = resolveMeta(instanceId);
+        if (r.dialect() == Dialect.MYSQL) {
+            String sql = "SELECT ORDINAL_POSITION, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE,"
+                    + " COLUMN_KEY, COLUMN_DEFAULT, COLUMN_COMMENT"
+                    + " FROM information_schema.COLUMNS"
+                    + " WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?"
+                    + " ORDER BY ORDINAL_POSITION";
+            try (Connection conn = open(r, bootstrapDatabase(r));
+                 PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setString(1, database);
+                ps.setString(2, table);
+                try (ResultSet rs = ps.executeQuery()) {
+                    List<TableColumn> out = new ArrayList<>();
+                    while (rs.next()) {
+                        out.add(new TableColumn(rs.getInt(1), rs.getString(2), rs.getString(3),
+                                "YES".equalsIgnoreCase(rs.getString(4)), blankToNull(rs.getString(5)),
+                                rs.getString(6), blankToNull(rs.getString(7))));
+                    }
+                    return out;
+                }
+            } catch (SQLException e) {
+                throw new SqlauditException(ErrorCode.META_QUERY_FAILED,
+                        "表结构查询失败（表 " + table + "）: " + e.getMessage(), e);
+            }
+        }
+        // PG：table 为 schema.table 限定名（listTables 口径），拆开过滤；裸表名回落 public
+        String schema = "public";
+        String tbl = table;
+        int dot = table.indexOf('.');
+        if (dot > 0) {
+            schema = table.substring(0, dot);
+            tbl = table.substring(dot + 1);
+        }
+        String sql = "SELECT c.ordinal_position, c.column_name, c.data_type, c.is_nullable,"
+                + " c.column_default, col_description(pgc.oid, c.ordinal_position)"
+                + " FROM information_schema.columns c"
+                + " JOIN pg_class pgc ON pgc.relname = c.table_name"
+                + " JOIN pg_namespace pgn ON pgn.oid = pgc.relnamespace AND pgn.nspname = c.table_schema"
+                + " WHERE c.table_schema = ? AND c.table_name = ?"
+                + " ORDER BY c.ordinal_position";
+        Map<String, String> keys = columnKeys(r, database, schema, tbl);
+        try (Connection conn = open(r, database);
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, schema);
+            ps.setString(2, tbl);
+            try (ResultSet rs = ps.executeQuery()) {
+                List<TableColumn> out = new ArrayList<>();
+                while (rs.next()) {
+                    out.add(new TableColumn(rs.getInt(1), rs.getString(2), rs.getString(3),
+                            "YES".equalsIgnoreCase(rs.getString(4)),
+                            keys.getOrDefault(rs.getString(2), ""),
+                            rs.getString(5), blankToNull(rs.getString(6))));
+                }
+                return out;
+            }
+        } catch (SQLException e) {
+            throw new SqlauditException(ErrorCode.META_QUERY_FAILED,
+                    "表结构查询失败（表 " + table + "）: " + e.getMessage(), e);
+        }
+    }
+
+    /** PG 主键 / 唯一键映射：列名 → PRI（主键，优先）/ UNI（唯一约束）。 */
+    private Map<String, String> columnKeys(Resolved r, String database, String schema, String table) {
+        String sql = "SELECT kcu.column_name, tc.constraint_type"
+                + " FROM information_schema.key_column_usage kcu"
+                + " JOIN information_schema.table_constraints tc"
+                + "   ON tc.constraint_name = kcu.constraint_name"
+                + "  AND tc.table_schema = kcu.table_schema"
+                + "  AND tc.table_name = kcu.table_name"
+                + " WHERE kcu.table_schema = ? AND kcu.table_name = ?"
+                + "   AND tc.constraint_type IN ('PRIMARY KEY', 'UNIQUE')"
+                + " ORDER BY kcu.ordinal_position";
+        Map<String, String> keys = new java.util.LinkedHashMap<>();
+        try (Connection conn = open(r, database);
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, schema);
+            ps.setString(2, table);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String col = rs.getString(1);
+                    String type = rs.getString(2);
+                    String code = "PRIMARY KEY".equalsIgnoreCase(type) ? "PRI" : "UNI";
+                    // 主键优先；同名多唯一约束只留第一个
+                    keys.merge(col, code, (old, fresh) -> "PRI".equals(old) ? old : fresh);
+                }
+            }
+        } catch (SQLException e) {
+            // 键信息拿不到不阻断表结构展示（键列置空），结构本体查询失败才会报 400
+            log.warn("[metadata] PG 键信息查询失败 schema={} table={}: {}", schema, table, e.getMessage());
+        }
+        return keys;
+    }
+
+    /** 空串 / 空白注释归一为 null（前端统一按「无」渲染）。 */
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s;
+    }
+
     // ------------------------------------------------------------------
     // 实例路由与凭据
     // ------------------------------------------------------------------
@@ -279,6 +419,20 @@ public class JdbcMetadataService {
     }
 
     private record Resolved(Instance instance, Dialect dialect, Credential credential, String password) {
+    }
+
+    /** 表引用（契约 §6：{name, comment}；comment 为原库原生注释，可为 null）。 */
+    public record TableRef(String name, String comment) {
+    }
+
+    /**
+     * 表结构列（契约 §6：{ordinal, name, dataType, nullable, key, defaultValue, comment}）。
+     *
+     * <p>{@code key} 取值：MySQL {@code PRI / UNI / MUL / 空串}，PG {@code PRI / UNI / 空串}；
+     * {@code defaultValue} / {@code comment} 无值为 null。</p>
+     */
+    public record TableColumn(int ordinal, String name, String dataType, boolean nullable,
+                              String key, String defaultValue, String comment) {
     }
 
     // ------------------------------------------------------------------
@@ -343,16 +497,6 @@ public class JdbcMetadataService {
     /** 实例方言（与 server 端 {@code JdbcProductionGateway} 同口径：列值已由存储层按存储码解码为枚举，为空回落 MYSQL）。 */
     private static Dialect dialectOf(Instance inst) {
         return inst.getDialect() == null ? Dialect.MYSQL : inst.getDialect();
-    }
-
-    /** MySQL 标识符转义：反引号内的反引号翻倍后整体包反引号（拼接前必调）。 */
-    static String mysqlQuote(String identifier) {
-        return "`" + identifier.replace("`", "``") + "`";
-    }
-
-    /** PG 标识符转义：双引号内的双引号翻倍后整体包双引号（拼接前必调）。 */
-    static String pgQuote(String identifier) {
-        return "\"" + identifier.replace("\"", "\"\"") + "\"";
     }
 
     // ------------------------------------------------------------------

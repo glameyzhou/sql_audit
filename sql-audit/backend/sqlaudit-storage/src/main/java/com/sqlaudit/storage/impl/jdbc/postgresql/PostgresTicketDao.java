@@ -1,73 +1,51 @@
 package com.sqlaudit.storage.impl.jdbc.postgresql;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sqlaudit.common.crypto.SqlCipher;
 import com.sqlaudit.common.enums.CodedEnum;
-import com.sqlaudit.common.enums.Environment;
 import com.sqlaudit.common.enums.RiskLevel;
 import com.sqlaudit.common.enums.TicketStatus;
 import com.sqlaudit.storage.dao.TicketDao;
 import com.sqlaudit.storage.model.Ticket;
 import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.sql.Timestamp;
-import java.sql.Types;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 
 /**
- * ticket 的 PostgreSQL 真实现（DDL §5 ticket 表；内存版语义基准 {@code InMemoryTicketDao}，
- * SQL 逐句对照 MySQL 版 {@code MySqlTicketDao}）。
+ * ticket 的 PostgreSQL 真实现（t_ticket 表，单实例工单，SQL 逐句对照 MySQL 版
+ * {@code MySqlTicketDao}）。
  *
- * <p><strong>与内存版语义逐条对照：</strong></p>
- * <ul>
- *   <li>{@code updateStatus} 条件更新（{@code WHERE status=fromStatus}），影响行数 0 =
- *       状态已被并发修改或工单不存在——乐观并发判定，与内存版 synchronized 检查+写入等价；</li>
- *   <li>{@code listByCreator} 按 {@code created_at DESC, id DESC}（内存版同款排序，最新在前）；</li>
- *   <li>{@code listByStatus} 按 id 升序稳定返回。</li>
- * </ul>
+ * <p><strong>SQL 原文加密</strong>：{@code sql_text} 为 {@code BYTEA}（密文），模型里是
+ * 明文 {@code String}——写入前经 {@link SqlCipher} 加密（AES-GCM，随机 nonce，
+ * {@code iv || 密文+tag}），读出后解密；null 透传（列可空）。库里无明文。</p>
  *
- * <p><strong>JSON 列转换（DDL §5）：</strong>{@code instance_ids}（JSONB NOT NULL）为
- * {@code List&lt;Long&gt;} 与 JSON 文本的双向 Jackson 转换；{@code rollback_summary}
- * （JSONB NULL）模型即 JSON 字符串，原样透传（null 透传）。
- * 写入用 {@code setObject(idx, jsonText, Types.OTHER)} 让 PG 驱动识别为 jsonb。</p>
- *
- * <p><strong>与 MySQL 版的方言差异：</strong>自增 id 回填由 {@code GeneratedKeyHolder}
- * 改为 {@code INSERT ... RETURNING id}（PG JDBC 标准做法）。时间戳 {@code TIMESTAMP(3)}
- * 与 {@code LocalDateTime} 经 {@link Timestamp} 互转。事务边界由调用方保证，本类不开事务。</p>
+ * <p><strong>与 MySQL 版的方言差异：</strong>自增 id 回填用 {@code INSERT ... RETURNING id}；
+ * PG 无 {@code ON UPDATE}，本类所有写路径都显式维护 {@code updated_at}。</p>
  */
 public class PostgresTicketDao implements TicketDao {
 
-    /** instance_ids JSONB 列的 List&lt;Long&gt; 反序列化类型。 */
-    private static final TypeReference<List<Long>> INSTANCE_IDS_TYPE = new TypeReference<>() {
-    };
-
-    /** Jackson 只做 List&lt;Long&gt;/文本转换，无自定义模块，静态共享线程安全。 */
-    private static final ObjectMapper JSON = new ObjectMapper();
-
     private final JdbcTemplate jdbc;
+    private final SqlCipher cipher;
 
-    public PostgresTicketDao(JdbcTemplate jdbc) {
+    public PostgresTicketDao(JdbcTemplate jdbc, SqlCipher cipher) {
         this.jdbc = jdbc;
+        this.cipher = cipher;
     }
 
+    /** 除 sql_text（密文）外的列原样读取；sql_text 由 decrypting() 包装解密后设置。 */
     private static final RowMapper<Ticket> MAPPER = (rs, i) -> {
         Ticket t = new Ticket();
         t.setId(rs.getLong("id"));
         t.setTitle(rs.getString("title"));
         t.setCreatorId(rs.getLong("creator_id"));
-        t.setInstanceIds(readInstanceIds(rs.getString("instance_ids")));
-        t.setEnvironment(Environment.fromCode(rs.getString("environment")));
+        t.setInstanceId(rs.getLong("instance_id"));
         t.setRiskLevel(RiskLevel.fromCode(rs.getString("risk_level")));
         t.setStatus(TicketStatus.fromCode(rs.getString("status")));
         t.setRollbackSummary(rs.getString("rollback_summary"));
-        t.setSqlText(rs.getString("sql_text"));
+        // sql_text 为 BYTEA 密文，不在 MAPPER 里读；由 decrypting() 包装统一解密
         t.setShardConfig(rs.getString("shard_config"));
-        Timestamp scheduled = rs.getTimestamp("scheduled_at");
-        t.setScheduledAt(scheduled == null ? null : scheduled.toLocalDateTime());
         t.setTraceId(rs.getString("trace_id"));
         Timestamp created = rs.getTimestamp("created_at");
         t.setCreatedAt(created == null ? null : created.toLocalDateTime());
@@ -84,26 +62,25 @@ public class PostgresTicketDao implements TicketDao {
     public long insertTicket(Ticket ticket) {
         long id = jdbc.query(conn -> {
             PreparedStatement ps = conn.prepareStatement(
-                    "INSERT INTO t_ticket (title, creator_id, instance_ids, environment, risk_level, status, "
-                            + "rollback_summary, scheduled_at, trace_id, created_at, updated_at, sql_text, shard_config) "
-                            + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id");
+                    "INSERT INTO t_ticket (title, creator_id, instance_id, risk_level, status, "
+                            + "rollback_summary, sql_text, shard_config, trace_id, created_at, updated_at) "
+                            + "VALUES (?,?,?,?,?,?,?,?,?,?,?) RETURNING id");
             ps.setString(1, ticket.getTitle());
             ps.setLong(2, ticket.getCreatorId());
-            // JSONB 列：List<Long> 序列化为 JSON 文本；instanceIds 为 null 时 NOT NULL 约束报错
-            ps.setObject(3, writeInstanceIds(ticket.getInstanceIds()), Types.OTHER);
-            ps.setString(4, CodedEnum.code(ticket.getEnvironment()));
-            ps.setString(5, CodedEnum.code(ticket.getRiskLevel()));
-            ps.setString(6, CodedEnum.code(ticket.getStatus()));
-            // rollback_summary 模型即 JSON 字符串，原样透传（可 null）
-            ps.setObject(7, ticket.getRollbackSummary(), Types.OTHER);
-            ps.setTimestamp(8, ticket.getScheduledAt() == null ? null : Timestamp.valueOf(ticket.getScheduledAt()));
+            ps.setLong(3, ticket.getInstanceId());
+            ps.setString(4, CodedEnum.code(ticket.getRiskLevel()));
+            ps.setString(5, CodedEnum.code(ticket.getStatus()));
+            // rollback_summary 为 JSON 文本列（TEXT），原样透传（可 null）
+            ps.setString(6, ticket.getRollbackSummary());
+            // BYTEA 密文列：明文 String → AES-GCM 密文（null 透传）
+            ps.setBytes(7, cipher.encrypt(ticket.getSqlText()));
+            ps.setString(8, ticket.getShardConfig());
             ps.setString(9, ticket.getTraceId());
+            LocalDateTime now = LocalDateTime.now();
             ps.setTimestamp(10, Timestamp.valueOf(ticket.getCreatedAt() != null
-                    ? ticket.getCreatedAt() : LocalDateTime.now()));
+                    ? ticket.getCreatedAt() : now));
             ps.setTimestamp(11, Timestamp.valueOf(ticket.getUpdatedAt() != null
-                    ? ticket.getUpdatedAt() : LocalDateTime.now()));
-            ps.setString(12, ticket.getSqlText());
-            ps.setString(13, ticket.getShardConfig());
+                    ? ticket.getUpdatedAt() : now));
             return ps;
         }, rs -> {
             if (rs.next()) {
@@ -117,14 +94,14 @@ public class PostgresTicketDao implements TicketDao {
 
     @Override
     public Ticket findById(long id) {
-        List<Ticket> result = jdbc.query("SELECT * FROM t_ticket WHERE id=?", MAPPER, id);
+        List<Ticket> result = jdbc.query("SELECT * FROM t_ticket WHERE id=?", decrypting(), id);
         return result.isEmpty() ? null : result.get(0);
     }
 
     @Override
     public int updateStatus(long id, TicketStatus fromStatus, TicketStatus toStatus, LocalDateTime changedAt) {
         // 条件 UPDATE（乐观并发）：fromStatus 不匹配 → 0；updated_at 显式置为 changedAt
-        // （approval_ttl 基准；PG 无 ON UPDATE CURRENT_TIMESTAMP，显式赋值语义与 MySQL 版一致）
+        // （approval_ttl 基准）
         return jdbc.update(
                 "UPDATE t_ticket SET status=?, updated_at=? WHERE id=? AND status=?",
                 CodedEnum.code(toStatus), Timestamp.valueOf(changedAt), id, CodedEnum.code(fromStatus));
@@ -134,12 +111,99 @@ public class PostgresTicketDao implements TicketDao {
     public List<Ticket> listByCreator(long creatorId) {
         return jdbc.query(
                 "SELECT * FROM t_ticket WHERE creator_id=? ORDER BY created_at DESC, id DESC",
-                MAPPER, creatorId);
+                decrypting(), creatorId);
+    }
+
+    @Override
+    public List<Ticket> listByCreator(long creatorId, int offset, int limit) {
+        // 服务端分页：limit<0 视为取全部（PG 与 MySQL 同款 LIMIT ? OFFSET ? 语义）
+        int safeLimit = limit < 0 ? Integer.MAX_VALUE : limit;
+        return jdbc.query(
+                "SELECT * FROM t_ticket WHERE creator_id=? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                decrypting(), creatorId, safeLimit, offset);
+    }
+
+    @Override
+    public long countByCreator(long creatorId) {
+        return jdbc.queryForObject("SELECT COUNT(*) FROM t_ticket WHERE creator_id=?", Long.class, creatorId);
+    }
+
+    @Override
+    public List<Ticket> listAll() {
+        return jdbc.query("SELECT * FROM t_ticket ORDER BY created_at DESC, id DESC", decrypting());
+    }
+
+    @Override
+    public List<Ticket> listAll(int offset, int limit) {
+        int safeLimit = limit < 0 ? Integer.MAX_VALUE : limit;
+        return jdbc.query(
+                "SELECT * FROM t_ticket ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                decrypting(), safeLimit, offset);
+    }
+
+    @Override
+    public long countAll() {
+        return jdbc.queryForObject("SELECT COUNT(*) FROM t_ticket", Long.class);
+    }
+
+    @Override
+    public List<Ticket> listByInstanceIds(List<Long> instanceIds) {
+        if (instanceIds == null || instanceIds.isEmpty()) {
+            // 空集合 = 数据范围为空，返回空列表（不等于「不过滤」）
+            return List.of();
+        }
+        StringBuilder in = new StringBuilder();
+        Object[] args = new Object[instanceIds.size()];
+        for (int i = 0; i < instanceIds.size(); i++) {
+            in.append(i == 0 ? "?" : ",?");
+            args[i] = instanceIds.get(i);
+        }
+        return jdbc.query(
+                "SELECT * FROM t_ticket WHERE instance_id IN (" + in + ") ORDER BY created_at DESC, id DESC",
+                decrypting(), args);
+    }
+
+    @Override
+    public List<Ticket> listByInstanceIds(List<Long> instanceIds, int offset, int limit) {
+        if (instanceIds == null || instanceIds.isEmpty()) {
+            // 空集合 = 数据范围为空，返回空列表（不等于「不过滤」）
+            return List.of();
+        }
+        StringBuilder in = new StringBuilder();
+        List<Object> args = new java.util.ArrayList<>(instanceIds.size() + 2);
+        for (int i = 0; i < instanceIds.size(); i++) {
+            in.append(i == 0 ? "?" : ",?");
+            args.add(instanceIds.get(i));
+        }
+        int safeLimit = limit < 0 ? Integer.MAX_VALUE : limit;
+        args.add(safeLimit);
+        args.add(offset);
+        return jdbc.query(
+                "SELECT * FROM t_ticket WHERE instance_id IN (" + in
+                        + ") ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                decrypting(), args.toArray());
+    }
+
+    @Override
+    public long countByInstanceIds(List<Long> instanceIds) {
+        if (instanceIds == null || instanceIds.isEmpty()) {
+            // 空集合 = 数据范围为空，计数 0（不等于「不过滤」）
+            return 0L;
+        }
+        StringBuilder in = new StringBuilder();
+        Object[] args = new Object[instanceIds.size()];
+        for (int i = 0; i < instanceIds.size(); i++) {
+            in.append(i == 0 ? "?" : ",?");
+            args[i] = instanceIds.get(i);
+        }
+        return jdbc.queryForObject(
+                "SELECT COUNT(*) FROM t_ticket WHERE instance_id IN (" + in + ")", Long.class, args);
     }
 
     @Override
     public List<Ticket> listByStatus(TicketStatus status) {
-        return jdbc.query("SELECT * FROM t_ticket WHERE status=? ORDER BY id", MAPPER, CodedEnum.code(status));
+        return jdbc.query("SELECT * FROM t_ticket WHERE status=? ORDER BY id",
+                decrypting(), CodedEnum.code(status));
     }
 
     @Override
@@ -153,28 +217,12 @@ public class PostgresTicketDao implements TicketDao {
                 confirmedBy, confirmedAt == null ? null : Timestamp.valueOf(confirmedAt), id);
     }
 
-    // ---- JSON 列转换 ----
-
-    private static String writeInstanceIds(List<Long> instanceIds) {
-        if (instanceIds == null) {
-            return null;
-        }
-        try {
-            return JSON.writeValueAsString(instanceIds);
-        } catch (Exception e) {
-            // List<Long> 恒可序列化，此分支不可达
-            throw new IllegalStateException("instance_ids JSON 序列化失败", e);
-        }
-    }
-
-    private static List<Long> readInstanceIds(String json) {
-        if (json == null) {
-            return null;
-        }
-        try {
-            return JSON.readValue(json, INSTANCE_IDS_TYPE);
-        } catch (Exception e) {
-            throw new IllegalStateException("instance_ids JSON 解析失败: " + json, e);
-        }
+    /** 读查询共用：在 MAPPER 之上解密 {@code sql_text}（BYTEA 密文 → 明文 String）。 */
+    private RowMapper<Ticket> decrypting() {
+        return (rs, i) -> {
+            Ticket t = MAPPER.mapRow(rs, i);
+            t.setSqlText(cipher.decrypt(rs.getBytes("sql_text")));
+            return t;
+        };
     }
 }

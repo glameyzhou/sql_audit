@@ -27,7 +27,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * DML 的 AST 规则组（设计文档 §4.3）。
+ * DML 的 AST 规则组（README §4.3）。
  *
  * <p>R_NO_WHERE / R_LIMIT_ORDER_DML / R_NONDETERMINISTIC_SET / R_MULTI_TABLE_DML /
  * R_SELECT_STAR。全部基于 parser 挂载的 sourceStatement（Druid AST）判定。</p>
@@ -132,7 +132,7 @@ public final class AstDmlRules {
 
             /**
              * 确定性字面量判定：仅数字/字符串/NULL/布尔字面量。
-             * <p>§5.4 前置硬检查「SET 全为确定性字面量」——a+1、NOW()、子查询、函数调用
+             * <p>README §4.4 前置硬检查「SET 全为确定性字面量」——a+1、NOW()、子查询、函数调用
              * 一律不算（即使 NOW() 在查询白名单里，SET 场景下前镜像照样失效）。</p>
              */
             private boolean isDeterministicLiteral(SQLExpr expr) {

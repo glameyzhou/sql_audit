@@ -13,17 +13,17 @@ import java.time.LocalDateTime;
 import java.util.Objects;
 
 /**
- * 执行单元引擎——§3.3 抢占与执行协议的编排核心（最高优先级工程约束）。
+ * 执行单元引擎——README §4.2 抢占与执行协议的编排核心（最高优先级工程约束）。
  *
  * <p>协议步骤（每一步的失败路径都有定义，不静默吞）：</p>
  * <ol>
  *   <li><strong>抢占</strong>：claimUnit 硬条件 = intent_written=0 + status ∈ (pending,
  *       过期 leased)。抢不到直接放弃（其他 worker 在跑）；</li>
- *   <li><strong>抢执行锁</strong>（§3.5）：实例级 exec_lock，同实例同时只跑一个 unit；
+ *   <li><strong>抢执行锁</strong>（README §4.2）：实例级 exec_lock，同实例同时只跑一个 unit；
  *       拿不到 → 释放租约退回 pending 等下一轮；</li>
  *   <li><strong>预写 intent</strong>：status='executing' + intent_written=1 同事务写入
  *       ——<strong>事务提交后才允许连生产库</strong>（SQL 可能已到生产库的标记）；</li>
- *   <li><strong>§3.5 执行前门禁</strong>：writeIntent 提交后、连生产库之前，复核审批时效 /
+ *   <li><strong>README §4.2 执行前门禁</strong>：writeIntent 提交后、连生产库之前，复核审批时效 /
  *       结构漂移 / 回滚能力（并发互斥已由 exec_lock 保证）；不过 → onGateFailure 补偿 +
  *       confirmFailed 置 failed + 返回 GATED，<strong>绝不连生产库</strong>；</li>
  *   <li><strong>执行</strong>：ProductionGateway 单事务（前镜像 → DML → 对账 → COMMIT）；</li>
@@ -31,7 +31,7 @@ import java.util.Objects;
  *       executed_at IS NULL），影响行数 0 = 已有人确认过，直接返回成功（不重复执行）。</li>
  * </ol>
  *
- * <p>失败路径（§3.3 协议表）：</p>
+ * <p>失败路径（README §4.2 协议表）：</p>
  * <ul>
  *   <li>RECONCILE_FAILED → markNeedsConfirm（<strong>禁止自动重试</strong>）；</li>
  *   <li>EXECUTION_FAILED → confirmFailed（事务已回滚，可安全重跑）；</li>
@@ -44,7 +44,7 @@ import java.util.Objects;
  */
 public class UnitExecutionEngine {
 
-    /** 租约时长（§3.3：租约到期 = now + 30s）。 */
+    /** 租约时长（README §4.2：租约到期 = now + 30s）。 */
     public static final Duration LEASE_TTL = Duration.ofSeconds(30);
 
     private final TicketUnitDao ticketUnitDao;
@@ -87,7 +87,7 @@ public class UnitExecutionEngine {
             return EngineResult.notClaimed();
         }
 
-        // 2. 实例级执行锁（§3.5 并发互斥）：拿不到 → 释放租约退回 pending
+        // 2. 实例级执行锁（README §4.2 并发互斥）：拿不到 → 释放租约退回 pending
         String lockKey = "inst:" + unit.getInstanceId();
         ExecLock lock = new ExecLock();
         lock.setLockKey(lockKey);
@@ -135,7 +135,7 @@ public class UnitExecutionEngine {
             }
             case RECONCILE_FAILED -> {
                 // 对账失败：事务已回滚，但「回滚是否干净」不确定 → needs_confirm，
-                // 禁止自动重试（§5.3 硬门禁 + §3.3 协议表）
+                // 禁止自动重试（README §4.4 硬门禁 + README §4.2 协议表）
                 ticketUnitDao.markNeedsConfirm(unit.getId(), exec.errorMessage());
                 return EngineResult.needsConfirm(exec.errorMessage());
             }
@@ -150,7 +150,7 @@ public class UnitExecutionEngine {
             }
         }
         } finally {
-            // 锁与租约同生命周期（§3.5）：无论成败释放执行锁
+            // 锁与租约同生命周期（README §4.2）：无论成败释放执行锁
             execLockDao.release(lockKey, unit.getId());
         }
     }
@@ -168,7 +168,7 @@ public class UnitExecutionEngine {
             LOCK_BUSY,
             /** intent 预写被拒（状态已流转） */
             INTENT_REJECTED,
-            /** 执行前门禁拦截（审批时效 / 结构漂移 / 回滚能力，§3.5） */
+            /** 执行前门禁拦截（审批时效 / 结构漂移 / 回滚能力，README §4.2） */
             GATED,
             /** 执行成功 */
             SUCCESS,

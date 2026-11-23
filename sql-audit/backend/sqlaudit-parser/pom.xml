@@ -16,7 +16,7 @@
             <groupId>com.sqlaudit</groupId>
             <artifactId>sqlaudit-common</artifactId>
         </dependency>
-        <!-- MySQL/PG 解析（§4.1：Druid SQL Parser → SQLStatement → Visitor） -->
+        <!-- MySQL/PG 解析（README §4.3：Druid SQL Parser → SQLStatement → Visitor） -->
         <dependency>
             <groupId>com.alibaba</groupId>
             <artifactId>druid</artifactId>

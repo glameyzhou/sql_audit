@@ -3,10 +3,10 @@ package com.sqlaudit.rollback.reverse;
 import java.util.List;
 
 /**
- * 一条参数化反向语句（设计文档 §5.9 存储模型）。
+ * 一条参数化反向语句（README §4.4 存储模型）。
  *
  * <p>值<strong>参数化存储</strong>（{@code ?} 占位符 + params），展示时才拼字面量
- * （§5.3 值序列化要防注入）；落库到 rollback_statement 子表（reverse_sql +
+ * （README §4.4 值序列化要防注入）；落库到 rollback_statement 子表（reverse_sql +
  * value_params 分列，不是单行 VARBINARY——v2 的错误已修正）。</p>
  *
  * @param sql    带 ? 占位符的参数化语句

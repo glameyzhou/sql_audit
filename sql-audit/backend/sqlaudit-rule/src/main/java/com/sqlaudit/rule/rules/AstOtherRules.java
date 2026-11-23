@@ -15,7 +15,7 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * 其余 AST/文本规则组（设计文档 §4.3）。
+ * 其余 AST/文本规则组（README §4.3）。
  *
  * <p>R_PARSE_FAILED / R_NO_LIMIT_QUERY / R_SQL_INJECTION_PATTERN /
  * R_IOTDB_DROP / R_IOTDB_NO_TIME_RANGE / R_IOTDB_TTL / R_TX_DDL_MIX / R_BIG_UNIT_COUNT。</p>
@@ -32,7 +32,7 @@ public final class AstOtherRules {
         return BuiltInRules.byCode(code);
     }
 
-    /** R_PARSE_FAILED：解析失败 → ERROR 人工审（§4.1 铁律的规则化）。 */
+    /** R_PARSE_FAILED：解析失败 → ERROR 人工审（README §4.3 铁律的规则化）。 */
     public static Rule parseFailed() {
         return new Rule() {
             @Override
@@ -75,7 +75,7 @@ public final class AstOtherRules {
      * R_SQL_INJECTION_PATTERN：拼接痕迹 / 注释绕过 → ERROR。
      * <p>检测用户原文中的 SQL 注释（块注释 / 行注释）。注释在 Druid 归一化输出中
      * 已剥离，因此对 originalSql 检测；正常用户极少在工单 SQL 里写注释，
-     * 出现注释的常见场景是拼接生成 SQL（§4.3 该规则的本意）。</p>
+     * 出现注释的常见场景是拼接生成 SQL（README §4.3 该规则的本意）。</p>
      */
     public static Rule sqlInjectionPattern() {
         return new Rule() {

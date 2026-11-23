@@ -2,7 +2,7 @@
 <!--
   Log4j2 配置（server 进程；worker 独立部署时复用本文件）。
 
-  口径（§11 可观测性）：
+  口径（可观测性）：
   - console：人看的（开发/容器 stdout 采集）；
   - app 滚动文件：sqlaudit-app.log，业务日志（INFO+）；
   - error 单独文件：sqlaudit-error.log，供告警脚本 tail（企微告警 W2 后段接）；

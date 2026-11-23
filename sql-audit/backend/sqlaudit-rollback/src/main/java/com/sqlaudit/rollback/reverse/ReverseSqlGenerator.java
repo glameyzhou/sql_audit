@@ -5,7 +5,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 反向 SQL 生成器（设计文档 §5.4 / §5.5）——用执行事务内采集的前镜像逐行生成反向语句。
+ * 反向 SQL 生成器（README §4.4）——用执行事务内采集的前镜像逐行生成反向语句。
  *
  * <p>生成规则（参数化，值绝不拼进 SQL 文本）：</p>
  * <table>
@@ -15,7 +15,7 @@ import java.util.Map;
  *   <tr><td>INSERT INTO t ... (主键已知)</td><td>{@code DELETE FROM t WHERE pk=?}</td></tr>
  * </table>
  *
- * <p>注意：前镜像行集与 affected_rows 的对账（§5.3 硬门禁）在 executor 层做；
+ * <p>注意：前镜像行集与 affected_rows 的对账（README §4.4 硬门禁）在 executor 层做；
  * 本类假设输入行集就是对账通过的。</p>
  */
 public class ReverseSqlGenerator {
@@ -75,7 +75,7 @@ public class ReverseSqlGenerator {
     /**
      * INSERT 的反向语句（DELETE WHERE pk，一条）。
      *
-     * <p>主键来源（§5.4 / §5.5）：显式主键直接用；MySQL 自增取
+     * <p>主键来源（README §4.4）：显式主键直接用；MySQL 自增取
      * {@code LAST_INSERT_ID()}（同连接、单条）；PG 取 {@code RETURNING pk}。</p>
      *
      * @param pkValues 主键值（支持复合主键）

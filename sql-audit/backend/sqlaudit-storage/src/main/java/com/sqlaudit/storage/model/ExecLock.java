@@ -3,7 +3,7 @@ package com.sqlaudit.storage.model;
 import java.time.LocalDateTime;
 
 /**
- * 执行锁实体（对应 exec_lock 表，设计文档 §3.5 并发互斥）。
+ * 执行锁实体（对应 exec_lock 表，README §4.2 并发互斥）。
  * <p>锁与租约同生命周期，过期由 reaper 清理。MVP 粒度 = 实例级。</p>
  * <p>唯一写入方：sqlaudit-executor。</p>
  */

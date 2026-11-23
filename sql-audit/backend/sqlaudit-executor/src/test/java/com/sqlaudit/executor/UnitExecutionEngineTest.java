@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 执行单元引擎协议测试（§3.3 抢占与执行协议 + §10.2 故障注入的单测投影）。
+ * 执行单元引擎协议测试（README §4.2 抢占与执行协议 + 故障注入的单测投影）。
  *
  * <p>用的 fake：InMemoryTicketUnitDao（协议语义已由 storage 侧测试验证）+
  * 可编排的 gateway/persister。</p>
@@ -75,7 +75,7 @@ class UnitExecutionEngineTest {
         u.setSchemaName(schema);
         u.setObjectName(objectName);
         u.setUnitOrder(1);
-        u.setStatement("UPDATE t SET a=1 WHERE id=1".getBytes());
+        u.setStatement("UPDATE t SET a=1 WHERE id=1");
         u.setStatementHash("hash");
         u.setStatementType(StatementType.UPDATE);
         u.setStatus(UnitStatus.PENDING);
@@ -105,7 +105,7 @@ class UnitExecutionEngineTest {
 
     @Test
     void claimHardCondition_intentWritten_neverClaimedAgain() {
-        // §10.2 双执行场景：unit 已 success（intent_written=1）→ 永远不进抢占池
+        // 故障注入 · 双执行场景：unit 已 success（intent_written=1）→ 永远不进抢占池
         long id = newPendingUnit();
         engine.execute(unitDao.findById(id), WORKER, NOW); // 第一次成功
 
@@ -133,7 +133,7 @@ class UnitExecutionEngineTest {
 
     @Test
     void execLockBusy_releaseLeaseBackToPending() {
-        // §10.2 并发工单场景：另一 unit 持有实例锁 → 本 unit 退回 pending 等下一轮
+        // 故障注入 · 并发工单场景：另一 unit 持有实例锁 → 本 unit 退回 pending 等下一轮
         long holderId = newPendingUnit();
         long id = newPendingUnit();
 
@@ -152,11 +152,11 @@ class UnitExecutionEngineTest {
         assertEquals(0, gatewayCalls.get());
     }
 
-    // ---------------- 失败路径分流（§3.3 协议表） ----------------
+    // ---------------- 失败路径分流（README §4.2 协议表） ----------------
 
     @Test
     void reconcileFailure_marksNeedsConfirm_neverAutoRetry() {
-        // §5.3 硬门禁：affected != preimage → 事务回滚 + needs_confirm + 禁止自动重试
+        // README §4.4 硬门禁：affected != preimage → 事务回滚 + needs_confirm + 禁止自动重试
         long id = newPendingUnit();
         nextResult = ProductionGateway.ExecutionResult.reconcileFailure(3, 5);
 
@@ -219,7 +219,7 @@ class UnitExecutionEngineTest {
         assertEquals(UnitExecutionEngine.EngineResult.Status.FAILED, r2.status());
     }
 
-    // ---------------- §3.5 执行前门禁 ----------------
+    // ---------------- README §4.2 执行前门禁 ----------------
 
     @Test
     void gateFailure_schemaDrift_blocksExecution_confirmsFailed() {

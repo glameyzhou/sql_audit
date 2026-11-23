@@ -1,12 +1,11 @@
 package com.sqlaudit.storage.impl.jdbc.postgresql;
 
+import com.sqlaudit.storage.impl.jdbc.SeedSql;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
-import org.springframework.jdbc.core.ConnectionCallback;
+import org.flywaydb.core.Flyway;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -16,69 +15,59 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * JDBC DAO 集成测试基建（PostgreSQL 版）：建连接池、跑 Flyway V1 DDL、每个测试前清空全部表。
+ * JDBC DAO 集成测试基建（PostgreSQL 方言）。
  *
- * <p><strong>目标库：</strong>本地 Docker PostgreSQL（postgres:16-alpine），
- * {@code jdbc:postgresql://127.0.0.1:5432/sql-audit}，postgres/postgres。库不存在或 PG 未启动时，
- * 测试类用 {@link #postgresAvailable()} + Assumptions 优雅跳过（@Tag("it")），不许让无库环境测试红。</p>
+ * <p><strong>目标库：</strong>本地 Docker PostgreSQL（postgres:16，容器 sqlaudit-pg）上的
+ * <strong>独立测试库 {@code sql_audit_it}</strong>——不存在则自动创建，
+ * <strong>绝不连接开发库 {@code sql-audit}</strong>（与 MySQL 侧同一坑位防复发）。</p>
+ *
+ * <p><strong>生命周期：</strong>每个测试类在 {@code @BeforeAll} 里 {@link #migrate()}
+ * （Flyway clean + migrate，跑真实的 V1__schema.sql + V2__seed.sql + 后续迁移，与生产同一套迁移文件）；
+ * 每个测试方法在 {@code @BeforeEach} 里 {@link #cleanAndSeed}（清空全部业务表 + 重放种子）。
+ * 表名从库元数据动态读取（排除 {@code flyway_schema_history}），不再手工维护表清单。</p>
+ *
+ * <p>PG 未启动时测试类用 {@link #postgresAvailable()} + Assumptions 优雅跳过。</p>
  */
 public final class PostgresTestSupport {
 
-    /** 本地 Docker PostgreSQL。connectTimeout 保证无库时快速失败以便 Assumptions 跳过。 */
-    public static final String JDBC_URL =
-            "jdbc:postgresql://127.0.0.1:5432/sql-audit?connectTimeout=3&socketTimeout=30";
-
-    /** 默认 postgres 库（建目标库用；PG 入口脚本不支持连字符库名，须手动 CREATE DATABASE）。 */
-    public static final String ADMIN_URL =
-            "jdbc:postgresql://127.0.0.1:5432/postgres?connectTimeout=3";
-
+    public static final String DB_NAME = "sql_audit_it";
     public static final String DB_USER = "postgres";
     public static final String DB_PASSWORD = "postgres";
 
-    /** 目标库名（含连字符，建库必须双引号，JDBC URL 内连字符合法无需转义）。 */
-    public static final String DATABASE_NAME = "sql-audit";
+    /** 独立测试库连接串（connectTimeout 保证无库时快速失败以便 Assumptions 跳过）。 */
+    public static final String JDBC_URL =
+            "jdbc:postgresql://127.0.0.1:5432/" + DB_NAME + "?connectTimeout=3&socketTimeout=30";
 
-    /** V1__init.sql 的全部 23 张表（cleanAllTables 逐张 TRUNCATE）。 */
-    public static final List<String> ALL_TABLES = List.of(
-            "t_user", "t_role", "t_user_role", "t_instance", "t_credential",
-            "t_rule", "t_rule_group", "t_rule_group_binding", "t_flow_rule", "t_flow_node",
-            "t_ticket", "t_ticket_unit", "t_audit_result", "t_rollback_sql", "t_rollback_statement",
-            "t_approval", "t_exec_lock", "t_chain_head", "t_audit_log",
-            "t_query_log", "t_masking_rule", "t_export_task", "t_worker_heartbeat");
+    /** 不指定库的服务器级连接（建库 / 探活用；PG 必须连某个库，用系统库 postgres）。 */
+    private static final String SERVER_URL =
+            "jdbc:postgresql://127.0.0.1:5432/postgres?connectTimeout=3&socketTimeout=30";
 
-    /** hash 链创世块：last_hash 与 §7.3 定义一致（64 个 '0'）。 */
-    private static final String GENESIS_HASH = "0".repeat(64);
+    private static final String MIGRATION_LOCATION = "classpath:db/migration/postgresql";
+    private static final String SEED_DIALECT_DIR = "postgresql";
 
     private PostgresTestSupport() {
     }
 
-    /** 探测本地 PostgreSQL 是否可用（供 Assumptions.assumeTrue 优雅跳过）；顺带确保目标库存在。 */
+    /** 探测本地 PostgreSQL 是否可用（供 Assumptions.assumeTrue 优雅跳过）。 */
     public static boolean postgresAvailable() {
-        try {
-            ensureDatabase();
-        } catch (SQLException e) {
-            return false;
-        }
-        try (Connection ignored = DriverManager.getConnection(JDBC_URL, DB_USER, DB_PASSWORD)) {
+        try (Connection ignored = DriverManager.getConnection(SERVER_URL, DB_USER, DB_PASSWORD)) {
             return true;
         } catch (SQLException e) {
             return false;
         }
     }
 
-    /**
-     * 幂等建目标库：连默认 postgres 库，若 {@code sql-audit} 不存在则 {@code CREATE DATABASE "sql-audit"}。
-     * PG 的 Docker 入口脚本（POSTGRES_DB 环境变量）不支持连字符库名，故在此手动建。
-     */
-    private static void ensureDatabase() throws SQLException {
-        try (Connection conn = DriverManager.getConnection(ADMIN_URL, DB_USER, DB_PASSWORD);
+    /** 独立测试库不存在则创建（查 pg_database 后补建；PG 标识符小写）。 */
+    public static void ensureDatabase() throws SQLException {
+        try (Connection conn = DriverManager.getConnection(SERVER_URL, DB_USER, DB_PASSWORD);
              Statement st = conn.createStatement()) {
             try (ResultSet rs = st.executeQuery(
-                    "SELECT 1 FROM pg_database WHERE datname = '" + DATABASE_NAME + "'")) {
-                if (!rs.next()) {
-                    st.execute("CREATE DATABASE \"" + DATABASE_NAME + "\"");
+                    "SELECT 1 FROM pg_database WHERE datname = '" + DB_NAME + "'")) {
+                if (rs.next()) {
+                    return;
                 }
             }
+            st.execute("CREATE DATABASE " + DB_NAME);
         }
     }
 
@@ -94,65 +83,57 @@ public final class PostgresTestSupport {
     }
 
     /**
-     * 幂等建表：先 DROP 全部旧表，再执行 classpath 的 {@code db/migration/postgresql/V1__init.sql}
-     * （按 {@code ;\n} 拆分逐条执行——DDL 内无行中分号，CHECK 约束等多行语句拆分安全）。
+     * 每个测试类一次：Flyway clean（清掉上一轮测试类的一切表与历史）+ migrate
+     * （跑真实的 V1__schema.sql + V2__seed.sql + 后续迁移）。{@code cleanDisabled(false)} 是
+     * Flyway 10 起 clean 的默认关闭开关，测试库里必须显式打开。
      */
-    public static void ensureSchema(HikariDataSource ds) throws Exception {
-        try (Connection conn = ds.getConnection(); Statement st = conn.createStatement()) {
-            for (String table : ALL_TABLES) {
-                st.execute("DROP TABLE IF EXISTS \"" + table + "\"");
-            }
-            String ddl = readV1Ddl();
-            for (String sql : splitStatements(ddl)) {
-                st.execute(sql);
-            }
-        }
+    public static void migrate(HikariDataSource ds) {
+        Flyway.configure()
+                .dataSource(ds)
+                .locations(MIGRATION_LOCATION)
+                .cleanDisabled(false)
+                .load()
+                .clean();
+        Flyway.configure()
+                .dataSource(ds)
+                .locations(MIGRATION_LOCATION)
+                .cleanDisabled(false)
+                .load()
+                .migrate();
     }
 
     /**
-     * 每个测试前清库：TRUNCATE 全部 23 张表（RESTART IDENTITY 复位 BIGSERIAL 序列，
-     * 与 MySQL TRUNCATE 复位 auto_increment 对齐），保证测试类之间 / 测试方法之间数据独立；
-     * 随后重放 DDL 末尾的初始化数据（chain_head 创世块 + 内置角色），使链头恒为 genesis 状态。
+     * 每个测试方法前清库：从库元数据动态读出全部业务表（排除 {@code flyway_schema_history}）
+     * 逐张 TRUNCATE（RESTART IDENTITY 复位自增序列），再重放 {@code V2__seed.sql}
+     * （创世块 / 角色 / 权限 / 授权 / 账号 / 规则 / 审批流全部回到种子状态）+ V3 及以后迁移文件的 DML（新端点的权限绑定行等），
+     * 使测试方法之间数据独立且起点一致。
      */
-    public static void cleanAllTables(JdbcTemplate jdbc) {
-        jdbc.execute((ConnectionCallback<Void>) conn -> {
-            try (Statement st = conn.createStatement()) {
-                for (String table : ALL_TABLES) {
-                    st.execute("TRUNCATE TABLE \"" + table + "\" RESTART IDENTITY");
+    public static void cleanAndSeed(JdbcTemplate jdbc) {
+        List<String> tables = businessTables(jdbc);
+        for (String table : tables) {
+            jdbc.execute("TRUNCATE TABLE \"" + table + "\" RESTART IDENTITY");
+        }
+        for (String sql : SeedSql.replayStatements(SEED_DIALECT_DIR)) {
+            jdbc.execute(sql);
+        }
+    }
+
+    /** 从库元数据读取 public schema 下的全部基表名（排除 Flyway 历史表），按名字排序保证稳定。 */
+    public static List<String> businessTables(JdbcTemplate jdbc) {
+        // PG 的表清单走 schema（= public），catalog 为空
+        return jdbc.execute((Connection conn) -> {
+            List<String> names = new ArrayList<>();
+            try (ResultSet rs = conn.getMetaData()
+                    .getTables(null, "public", "%", new String[]{"TABLE"})) {
+                while (rs.next()) {
+                    String name = rs.getString("TABLE_NAME");
+                    if (!"flyway_schema_history".equalsIgnoreCase(name)) {
+                        names.add(name);
+                    }
                 }
             }
-            return null;
+            names.sort(String.CASE_INSENSITIVE_ORDER);
+            return names;
         });
-        // 初始化数据（与 V1 末尾一致）：TRUNCATE 会清掉 chain_head 创世块，必须重放
-        jdbc.update("INSERT INTO t_chain_head (id, last_seq, last_hash) VALUES (1, 0, ?)", GENESIS_HASH);
-        jdbc.update("INSERT INTO t_role (code, name, description) VALUES "
-                + "('DEV', '开发', '提交工单、查询通道'), "
-                + "('LEAD', '主管', '审批（非本人）'), "
-                + "('DBA', 'DBA', '执行/二次确认、规则与流程配置'), "
-                + "('ADMIN', '管理员', '凭据管理、审计检索导出、全量配置')");
-    }
-
-    // ---- 内部工具 ----
-
-    private static String readV1Ddl() throws Exception {
-        try (InputStream in = PostgresTestSupport.class
-                .getClassLoader().getResourceAsStream("db/migration/postgresql/V1__init.sql")) {
-            if (in == null) {
-                throw new IllegalStateException("classpath 下未找到 db/migration/postgresql/V1__init.sql");
-            }
-            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
-        }
-    }
-
-    /** 按 {@code ;换行} 拆分多语句 DDL；空块（文件尾）跳过。 */
-    static List<String> splitStatements(String ddl) {
-        List<String> statements = new ArrayList<>();
-        for (String chunk : ddl.split(";\\r?\\n")) {
-            String sql = chunk.strip();
-            if (!sql.isEmpty()) {
-                statements.add(sql);
-            }
-        }
-        return statements;
     }
 }

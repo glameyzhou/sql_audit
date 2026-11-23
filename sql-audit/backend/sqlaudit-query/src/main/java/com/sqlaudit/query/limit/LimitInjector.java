@@ -17,9 +17,9 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * AST 注入 / 收紧 LIMIT（设计文档 §6.2 三层保护第 1 层：语义正确层）。
+ * AST 注入 / 收紧 LIMIT（README §4.1 三层保护第 1 层：语义正确层）。
  *
- * <p><strong>LIMIT 注入必须走 AST，禁止字符串拼接</strong>（§6.2 v2.1 修正）。
+ * <p><strong>LIMIT 注入必须走 AST，禁止字符串拼接</strong>（README §4.1 修正）。
  * 字符串追加的三种出错 case：</p>
  * <ol>
  *   <li>{@code SELECT ... LIMIT 10} + 拼接 → {@code LIMIT 10 LIMIT 1000} 语法错误；</li>
@@ -97,7 +97,7 @@ public final class LimitInjector {
             return InjectionResult.passthrough(sql, null);
         }
         if (rowCount <= maxLimit) {
-            // 用户 LIMIT 在上限内 → 不动（§6.2：已有且 ≤ 上限 → 不动）
+            // 用户 LIMIT 在上限内 → 不动（README §4.1：已有且 ≤ 上限 → 不动）
             return InjectionResult.passthrough(sql, rowCount);
         }
         // 收紧：只改行数，保留用户 offset（MySQL LIMIT offset, count 形态）

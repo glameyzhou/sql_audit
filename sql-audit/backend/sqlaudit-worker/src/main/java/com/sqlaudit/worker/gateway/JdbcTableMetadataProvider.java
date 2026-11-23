@@ -28,14 +28,14 @@ import java.util.concurrent.ConcurrentHashMap;
  * 生产库表元数据真实现（RO_META 只读凭据 + information_schema）。
  *
  * <p>取代 W2 联调期 {@code ServerBeansConfig} 的 dev stub（硬编码「id/a/b」列），
- * 在 mysql/postgres/h2 profile 装配：前镜像列清单、INSERT 反向主键、规则引擎
- * （R_NO_PK / R_OBJECT_NOT_ALLOWED）都以真实表结构为准。</p>
+ * 在 mysql/postgres 两个真库方言 profile 下恒装配：前镜像列清单、INSERT 反向主键、
+ * 规则引擎（R_NO_PK / R_OBJECT_NOT_ALLOWED）都以真实表结构为准。</p>
  *
  * <ul>
  *   <li>列：{@code information_schema.columns}（ordinal 排序）；</li>
  *   <li>主键：{@code key_column_usage} constraint_name='PRIMARY'（MySQL/PG 通用）；</li>
  *   <li>生成列：MySQL 看 {@code extra} 含 GENERATED；PG 12+ 看 {@code is_generated='ALWAYS'}
- *       ——反向 INSERT 必须排除（§5.3）；</li>
+ *       ——反向 INSERT 必须排除（README §4.4）；</li>
  *   <li>掩码列 / 对象白名单未接线（masking_rule 与白名单配置属后续），返回空集 / true。</li>
  * </ul>
  *

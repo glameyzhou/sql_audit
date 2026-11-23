@@ -52,7 +52,7 @@
                 <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
                 <version>${mybatis-plus.version}</version>
             </dependency>
-            <!-- MySQL/PG SQL 解析（AST 归一化 + 只读判定，§4.1） -->
+            <!-- MySQL/PG SQL 解析（AST 归一化 + 只读判定，README §4.3） -->
             <dependency>
                 <groupId>com.alibaba</groupId>
                 <artifactId>druid</artifactId>

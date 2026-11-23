@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * IoTDB 语句白名单解析测试（§4.1 / §5.7：MVP 不做 AST，白名单外一律高危）。
+ * IoTDB 语句白名单解析测试（README §4.3 / README §4.4：MVP 不做 AST，白名单外一律高危）。
  */
 class IoTDBWhitelistParserTest {
 

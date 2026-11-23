@@ -12,13 +12,13 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
 /**
- * 审计 canonical JSON 序列化 + hash 链计算（设计文档 §7.3）。
+ * 审计 canonical JSON 序列化 + hash 链计算（README §4.1）。
  *
- * <p><strong>这是 hash 链的单一实现点</strong>（§7.3 第 3 点建议）：任何字段序、命名、
+ * <p><strong>这是 hash 链的单一实现点</strong>（README §4.1 第 3 点建议）：任何字段序、命名、
  * 日期格式、NULL 规则的改动都会改变哈希，必须由黄金用例单测锁死。后人重构时若无意改动，
  * 黄金用例会变红。</p>
  *
- * <p>hash 公式（§7.3）：{@code hash = SHA256(prev_hash || seq || canonical_json(record))}，
+ * <p>hash 公式（README §4.1）：{@code hash = SHA256(prev_hash || seq || canonical_json(record))}，
  * 其中 {@code ||} 为字符串拼接，{@code prev_hash} 为 64 位 hex，{@code seq} 为十进制数字。</p>
  */
 public final class CanonicalJson {
@@ -29,7 +29,7 @@ public final class CanonicalJson {
     private static final ObjectMapper MAPPER = new ObjectMapper()
             .registerModule(new JavaTimeModule())
             .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
-            // 关键：NULL 必须序列化为 JSON null，而不是省略键（§7.3 第 2 点）
+            // 关键：NULL 必须序列化为 JSON null，而不是省略键（README §4.1 第 2 点）
             .setSerializationInclusion(JsonInclude.Include.ALWAYS)
             .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 

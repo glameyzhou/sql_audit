@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 
 /**
- * 实例状态（设计文档 §4 实例与凭据）。
+ * 实例状态（生产实例与凭据模型）。
  *
  * <p>对应 {@code t_instance.status} 列（存储码 = 枚举名）。</p>
  */

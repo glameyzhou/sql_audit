@@ -7,12 +7,13 @@ import com.sqlaudit.common.enums.AuditAction;
 import com.sqlaudit.common.enums.AuditResult;
 import com.sqlaudit.common.enums.AuditTargetType;
 import com.sqlaudit.common.enums.ErrorCode;
-import com.sqlaudit.common.enums.RoleCode;
 import com.sqlaudit.common.enums.RollbackStatus;
 import com.sqlaudit.common.exception.SqlauditException;
 import com.sqlaudit.common.model.AuditEvent;
 import com.sqlaudit.executor.gateway.ProductionGateway;
 import com.sqlaudit.rollback.reverse.ReverseStatement;
+import com.sqlaudit.server.auth.AuditActor;
+import com.sqlaudit.server.auth.AuditEvents;
 import com.sqlaudit.storage.dao.RollbackDao;
 import com.sqlaudit.storage.dao.TicketUnitDao;
 import com.sqlaudit.storage.model.RollbackSql;
@@ -22,19 +23,18 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.List;
 
 /**
- * 回滚执行服务（设计文档 §5.9 回放阶段 + §5.6 依赖检测）。
+ * 回滚执行服务（README §4.4 回放阶段与依赖检测）。
  *
  * <p>把已生成（generated/verified）的反向语句真正应用到生产库。执行协议：</p>
  * <ol>
  *   <li>校验回滚主记录存在、状态允许执行（generated/verified）、未过期；</li>
- *   <li>依赖检测（§5.6）：preimage_hash 非空时须重查当前行比对——前镜像 SELECT 与主键列
+ *   <li>依赖检测（README §4.4）：preimage_hash 非空时须重查当前行比对——前镜像 SELECT 与主键列
  *       未持久化，本版留 TODO 放行（见 {@link #dependencyCheck}）；</li>
  *   <li>分批流式读取反向语句，逐条经 {@link ProductionGateway#executeInTransaction} 执行；
  *       反向语句通常带主键 WHERE、幂等，不做 SELECT FOR UPDATE，直接执行 + 校验 affected&gt;0；</li>
@@ -70,10 +70,10 @@ public class RollbackExecutor {
      * 执行回滚。
      *
      * @param rollbackId 回滚主记录 id
-     * @param operatorId 操作者用户 id（写审计）
+     * @param actor      操作者（登录态快照，写审计）
      * @return 执行结果（终态 applied / failed / partial）
      */
-    public Result executeRollback(long rollbackId, long operatorId) {
+    public Result executeRollback(long rollbackId, AuditActor actor) {
         LocalDateTime now = LocalDateTime.now();
 
         // 1. 存在性 + 状态 + 有效期校验（status 已由存储层按存储码解码为枚举，null 即库里为空）
@@ -96,7 +96,7 @@ public class RollbackExecutor {
             throw new SqlauditException(ErrorCode.ROLLBACK_EXPIRED, "回滚已过期，拒绝执行");
         }
 
-        // 2. 依赖检测（§5.6）：前镜像指纹非空时须比对当前行，本版留 TODO 放行
+        // 2. 依赖检测（README §4.4）：前镜像指纹非空时须比对当前行，本版留 TODO 放行
         dependencyCheck(rollbackId, rollback);
 
         // 3. 解析生产实例（反向语句路由目标）
@@ -127,12 +127,12 @@ public class RollbackExecutor {
                     }
                     rollbackDao.markStatementApplied(stmt.getId(), now);
                     applied++;
-                    auditStatementApplied(operatorId, rollback, stmt, sql);
+                    auditStatementApplied(actor, rollback, stmt, sql);
                 }
                 offset += batch.size();
             }
             rollbackDao.updateStatus(rollbackId, RollbackStatus.APPLIED, null);
-            auditExecute(operatorId, rollback, AuditResult.SUCCESS, applied, total, null);
+            auditExecute(actor, rollback, AuditResult.SUCCESS, applied, total, null);
             return new Result(rollbackId, RollbackStatus.APPLIED.getCode(), applied, total, null);
         } catch (ExecutionFailure e) {
             RollbackStatus finalStatus = applied == 0 ? RollbackStatus.FAILED : RollbackStatus.PARTIAL;
@@ -140,7 +140,7 @@ public class RollbackExecutor {
             // 审计 result 落 FAILED / PARTIAL（存储码 = 枚举名），API 响应仍返回小写的回滚状态码
             AuditResult finalResult = finalStatus == RollbackStatus.PARTIAL
                     ? AuditResult.PARTIAL : AuditResult.FAILED;
-            auditExecute(operatorId, rollback, finalResult, applied, total, e.getMessage());
+            auditExecute(actor, rollback, finalResult, applied, total, e.getMessage());
             log.warn("[rollback-exec] rollbackId={} 执行中断 status={} applied={}/{}: {}",
                     rollbackId, finalStatus.getCode(), applied, total, e.getMessage());
             return new Result(rollbackId, finalStatus.getCode(), applied, total, e.getMessage());
@@ -148,7 +148,7 @@ public class RollbackExecutor {
     }
 
     /**
-     * 依赖检测（§5.6）：rollback_sql.preimage_hash 非空时，回滚执行前须按主键重查当前行、
+     * 依赖检测（README §4.4）：rollback_sql.preimage_hash 非空时，回滚执行前须按主键重查当前行、
      * 用同一口径重算前镜像 hash 比对——不一致说明数据已被后续工单改动，回滚会覆盖别人写入，须拒绝。
      *
      * <p>TODO(W2)：前镜像 SELECT 语句与主键列未持久化到 rollback_sql，本版无数据源可重查；
@@ -182,13 +182,13 @@ public class RollbackExecutor {
      * 亦用于 {@code GET /api/rollbacks/{id}/statements} 展示明细。
      */
     public String renderStatementSql(RollbackStatement stmt) {
-        String sql = new String(stmt.getReverseSql(), StandardCharsets.UTF_8);
+        String sql = stmt.getReverseSql();
         List<Object> params = parseParams(stmt.getValueParams());
         return new ReverseStatement(sql, params).displaySql();
     }
 
-    private List<Object> parseParams(byte[] valueParams) {
-        if (valueParams == null || valueParams.length == 0) {
+    private List<Object> parseParams(String valueParams) {
+        if (valueParams == null || valueParams.isEmpty()) {
             return List.of();
         }
         try {
@@ -200,13 +200,10 @@ public class RollbackExecutor {
         }
     }
 
-    private void auditStatementApplied(long operatorId, RollbackSql rollback,
+    private void auditStatementApplied(AuditActor actor, RollbackSql rollback,
                                        RollbackStatement stmt, String sql) {
         try {
-            auditWriter.append(AuditEvent.builder()
-                    .actorId(operatorId)
-                    .actorName(String.valueOf(operatorId))
-                    .actorRole(RoleCode.DBA.getCode())
+            auditWriter.append(AuditEvents.base(actor)
                     .action(AuditAction.ROLLBACK_STATEMENT_APPLIED)
                     .targetType(AuditTargetType.ROLLBACK_STATEMENT)
                     .targetId(String.valueOf(stmt.getId()))
@@ -224,13 +221,10 @@ public class RollbackExecutor {
         }
     }
 
-    private void auditExecute(long operatorId, RollbackSql rollback, AuditResult result,
+    private void auditExecute(AuditActor actor, RollbackSql rollback, AuditResult result,
                               int applied, int total, String message) {
         try {
-            auditWriter.append(AuditEvent.builder()
-                    .actorId(operatorId)
-                    .actorName(String.valueOf(operatorId))
-                    .actorRole(RoleCode.DBA.getCode())
+            auditWriter.append(AuditEvents.base(actor)
                     .action(AuditAction.ROLLBACK_EXECUTE)
                     .targetType(AuditTargetType.ROLLBACK)
                     .targetId(String.valueOf(rollback.getId()))

@@ -80,7 +80,6 @@ public class InstanceCredentialService {
             credential.setAccountType(type);
             credential.setUsername(username);
             credential.setPasswordEnc(passwordEnc);
-            credential.setKeyVersion(1);
             credential.setLastRotatedAt(now);
             credential.setCreatedAt(now);
             credential.setUpdatedAt(now);

@@ -9,13 +9,13 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 内置规则清单（设计文档 §4.3，首版 27 条）。
+ * 内置规则清单（README §4.3，首版 26 条）。
  *
  * <p>非可覆盖（nonOverridable）的规则：破坏性 DDL / 回滚不可用 / 解析失败 /
  * 影响面超限——这四类是回滚能力与生产安全的硬底线，任何 flow_rule 配置都不能降级
- * （§4.5 路由算法）。</p>
+ * （README §4.3 路由算法）。</p>
  *
- * <p>阈值默认值（§4.3 / §4.4 / §5.3）：阻断 10 万行、低峰建议 1 千行、
+ * <p>阈值默认值（README §4.3 / README §4.4）：阻断 10 万行、低峰建议 1 千行、
  * 单工单 unit 上限 200、前镜像上限 5000 行。</p>
  */
 public final class BuiltInRules {
@@ -33,7 +33,7 @@ public final class BuiltInRules {
         return null;
     }
 
-    /** §4.3 内置规则全表（code 升序，27 条；R_INDEX_NAME / R_TABLE_NAME 各算一条）。 */
+    /** README §4.3 内置规则全表（code 升序，26 条；R_INDEX_NAME / R_TABLE_NAME 各算一条）。 */
     public static final List<RuleDefinition> ALL = List.of(
                 def(RuleCode.R_AFFECT_TOO_MANY, null, null, RuleSeverity.ERROR, true,
                         Map.of("threshold", 100_000L), "影响行数超阈值（默认 10 万），强制 DBA 节点"),
@@ -72,11 +72,11 @@ public final class BuiltInRules {
                 def(RuleCode.R_PARSE_FAILED, null, null, RuleSeverity.ERROR, true,
                         Map.of(), "解析失败，人工审"),
                 def(RuleCode.R_PREIMAGE_TOO_LARGE, null, null, RuleSeverity.ERROR, true,
-                        Map.of("rowLimit", 5_000L, "bytesLimit", 16_777_216L), "前镜像行数/字节超上限（§5.3），转分片/binlog/快照"),
+                        Map.of("rowLimit", 5_000L, "bytesLimit", 16_777_216L), "前镜像行数/字节超上限（README §4.4），转分片/binlog/快照"),
                 def(RuleCode.R_ROLLBACK_UNAVAILABLE, null, null, RuleSeverity.ERROR, true,
                         Map.of("strategy", "REJECT"), "无法生成回滚 SQL（策略可配：拒绝/强制兜底）"),
                 def(RuleCode.R_SCHEMA_DRIFT, null, null, RuleSeverity.ERROR, true,
-                        Map.of(), "执行前 DDL 指纹与审核时不一致（§3.5 执行期规则，提交期不触发）"),
+                        Map.of(), "执行前 DDL 指纹与审核时不一致（README §4.2 执行期规则，提交期不触发）"),
                 def(RuleCode.R_SELECT_STAR, null, StatementType.INSERT, RuleSeverity.WARN, false,
                         Map.of(), "SELECT * 于变更语句（INSERT...SELECT）"),
                 def(RuleCode.R_SENSITIVE_COLUMN, null, null, RuleSeverity.ERROR, false,

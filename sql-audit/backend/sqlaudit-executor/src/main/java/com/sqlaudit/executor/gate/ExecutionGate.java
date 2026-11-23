@@ -7,7 +7,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 
 /**
- * 执行前门禁（设计文档 §3.5）——审核通过到真正执行之间世界可能已经变了。
+ * 执行前门禁（README §4.2）——审核通过到真正执行之间世界可能已经变了。
  *
  * <p>四道门禁，任一不过则<strong>不执行</strong>：</p>
  * <table>
@@ -28,7 +28,7 @@ import java.time.LocalDateTime;
  */
 public class ExecutionGate {
 
-    /** 审批有效期默认 24h（§3.5）。 */
+    /** 审批有效期默认 24h（README §4.2）。 */
     public static final Duration DEFAULT_APPROVAL_TTL = Duration.ofHours(24);
 
     /** 指纹提供者：按实例 + 表重算当前结构指纹（ro_meta 只读连接）。 */
@@ -78,7 +78,7 @@ public class ExecutionGate {
                     "审批已超 " + DEFAULT_APPROVAL_TTL.toHours() + "h 有效期，需重新审批");
         }
 
-        // 门禁 2：结构漂移（§3.5：审核后手工 ALTER 过表 → R_SCHEMA_DRIFT 拦截）
+        // 门禁 2：结构漂移（README §4.2：审核后手工 ALTER 过表 → R_SCHEMA_DRIFT 拦截）
         if (unit.getDdlFingerprint() != null && unit.getObjectName() != null) {
             String current = fingerprintProvider.currentFingerprint(
                     unit.getInstanceId(), unit.getSchemaName(), unit.getObjectName());

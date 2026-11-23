@@ -1,6 +1,6 @@
 package com.sqlaudit.workflow;
 
-import com.sqlaudit.common.enums.Environment;
+
 import com.sqlaudit.common.enums.RiskLevel;
 import com.sqlaudit.common.enums.TicketStatus;
 import com.sqlaudit.common.exception.IllegalStateTransitionException;
@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * {@link TicketStateMachine} 单测（B-3 验收：§3.2 状态机全迁移路径 + 非法迁移抛异常）。
+ * {@link TicketStateMachine} 单测（验收：README §4.2 状态机全迁移路径 + 非法迁移抛异常）。
  */
 class TicketStateMachineTest {
 
@@ -53,7 +53,7 @@ class TicketStateMachineTest {
             entry(TicketStatus.EXPIRED,
                     List.of(TicketStatus.SUBMITTED, TicketStatus.AUDITING, TicketStatus.APPROVED, TicketStatus.EXPIRED)));
 
-    /** §3.2 图的全部 25 条合法边 */
+    /** README §4.2 图的全部 25 条合法边 */
     private static final List<Map.Entry<TicketStatus, TicketStatus>> LEGAL_EDGES = List.of(
             entry(TicketStatus.DRAFT, TicketStatus.SUBMITTED),
             entry(TicketStatus.DRAFT, TicketStatus.CANCELLED),
@@ -85,8 +85,8 @@ class TicketStateMachineTest {
         Ticket ticket = new Ticket();
         ticket.setTitle("state-machine-test");
         ticket.setCreatorId(1L);
-        ticket.setInstanceIds(new ArrayList<>(List.of(1L)));
-        ticket.setEnvironment(Environment.PROD);
+        ticket.setInstanceId(1L);
+        
         ticket.setRiskLevel(RiskLevel.HIGH);
         ticket.setStatus(TicketStatus.DRAFT);
         ticket.setTraceId("trace-sm");
@@ -115,7 +115,7 @@ class TicketStateMachineTest {
                         .map(from::canTransitionTo)
                         .filter(Boolean::booleanValue))
                 .count();
-        assertEquals(LEGAL_EDGES.size(), contractEdgeCount, "契约合法边数量应与 §3.2 图一致");
+        assertEquals(LEGAL_EDGES.size(), contractEdgeCount, "契约合法边数量应与 README §4.2 图一致");
         for (Map.Entry<TicketStatus, TicketStatus> edge : LEGAL_EDGES) {
             assertTrue(edge.getKey().canTransitionTo(edge.getValue()),
                     edge.getKey() + " → " + edge.getValue() + " 应为合法边");

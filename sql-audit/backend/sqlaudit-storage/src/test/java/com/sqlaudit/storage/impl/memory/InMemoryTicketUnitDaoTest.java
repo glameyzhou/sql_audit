@@ -17,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * {@link InMemoryTicketUnitDao} 单测：覆盖 §3.3 抢占与幂等协议的核心语义。
+ * {@link InMemoryTicketUnitDao} 单测：覆盖 README §4.2 抢占与幂等协议的核心语义。
  */
 class InMemoryTicketUnitDaoTest {
 
@@ -28,7 +28,6 @@ class InMemoryTicketUnitDaoTest {
         unit.setStatus(status);
         unit.setIntentWritten(intentWritten);
         unit.setLeaseUntil(leaseUntil);
-        unit.setExecFingerprint("fp-default");
         unit.setCreatedAt(LocalDateTime.now().minusMinutes(5));
         return dao.insert(unit);
     }
@@ -218,31 +217,5 @@ class InMemoryTicketUnitDaoTest {
         TicketUnit unit = dao.findById(id);
         assertEquals(UnitStatus.NEEDS_CONFIRM, unit.getStatus());
         assertEquals("heartbeat stale, SQL may have been executed", unit.getErrorMessage());
-    }
-
-    @Test
-    void listByFingerprintSince_按指纹与时间窗过滤() {
-        LocalDateTime now = LocalDateTime.now();
-        TicketUnit inWindow = new TicketUnit();
-        inWindow.setStatus(UnitStatus.SUCCESS);
-        inWindow.setExecFingerprint("fp-x");
-        inWindow.setCreatedAt(now.minusMinutes(10));
-        dao.insert(inWindow);
-
-        TicketUnit outOfWindow = new TicketUnit();
-        outOfWindow.setStatus(UnitStatus.SUCCESS);
-        outOfWindow.setExecFingerprint("fp-x");
-        outOfWindow.setCreatedAt(now.minusHours(2));
-        dao.insert(outOfWindow);
-
-        TicketUnit otherFingerprint = new TicketUnit();
-        otherFingerprint.setStatus(UnitStatus.SUCCESS);
-        otherFingerprint.setExecFingerprint("fp-y");
-        otherFingerprint.setCreatedAt(now.minusMinutes(1));
-        dao.insert(otherFingerprint);
-
-        List<TicketUnit> hits = dao.listByFingerprintSince("fp-x", now.minusHours(1));
-        assertEquals(1, hits.size());
-        assertEquals("fp-x", hits.get(0).getExecFingerprint());
     }
 }

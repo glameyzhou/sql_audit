@@ -28,7 +28,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * 生产库真执行网关（W2）：按实例路由建 JDBC 连接，单事务内完成
  * 前镜像 → DML → 对账 → COMMIT/ROLLBACK，协议语义严格对齐 {@link ProductionGateway}。
  *
- * <p>实现要点（设计文档 §5.3）：</p>
+ * <p>实现要点（README §4.4）：</p>
  * <ul>
  *   <li>同一 {@link Connection}、同一事务：前镜像 SELECT FOR UPDATE 与 DML 同事务执行；</li>
  *   <li>隔离级别：MySQL 保持默认 RR 且禁止降级 RC；PG 显式提升到 REPEATABLE READ；</li>
@@ -55,7 +55,7 @@ public class JdbcProductionGateway implements ProductionGateway {
 
     @Override
     public ExecutionResult executeInTransaction(ExecutionRequest request) {
-        // 1. 实例路由（§5.3）：查不到实例不连生产库
+        // 1. 实例路由（README §4.4）：查不到实例不连生产库
         Instance inst = instanceDao.findById(request.instanceId());
         if (inst == null) {
             return ExecutionResult.executionError("实例不存在: id=" + request.instanceId());
@@ -80,7 +80,7 @@ public class JdbcProductionGateway implements ProductionGateway {
         try (Connection conn = ds.getConnection()) {
             conn.setAutoCommit(false);
             try {
-                // 3. 隔离级别断言（§5.3：云厂商/中间件可能改默认值）
+                // 3. 隔离级别断言（README §4.4：云厂商/中间件可能改默认值）
                 assertIsolation(conn, dialect);
 
                 List<Map<String, Object>> preimage = null;
@@ -93,14 +93,14 @@ public class JdbcProductionGateway implements ProductionGateway {
                     // 5. DML（matched rows 口径）
                     affected = executeUpdate(conn, request.statementSql());
                 } else {
-                    // INSERT：无前镜像，一次执行并取主键（§5.5）
+                    // INSERT：无前镜像，一次执行并取主键（README §4.4）
                     InsertResult r = executeInsert(conn, request.statementSql(),
                             request.pkColumns(), dialect);
                     affected = r.affectedRows();
                     insertedPk = r.pkValues();
                 }
 
-                // 6. 对账先行（§5.3 硬门禁）：affected != preimage.size() → 回滚
+                // 6. 对账先行（README §4.4 硬门禁）：affected != preimage.size() → 回滚
                 if (preimage != null && affected != preimage.size()) {
                     conn.rollback();
                     return ExecutionResult.reconcileFailure(preimage.size(), affected);
@@ -146,7 +146,7 @@ public class JdbcProductionGateway implements ProductionGateway {
         }
     }
 
-    /** INSERT 执行 + 主键取回（分方言，§5.5）。 */
+    /** INSERT 执行 + 主键取回（分方言，README §4.4）。 */
     private static InsertResult executeInsert(Connection conn, String sql,
                                               List<String> pkColumns, Dialect dialect)
             throws SQLException {
@@ -207,7 +207,7 @@ public class JdbcProductionGateway implements ProductionGateway {
     }
 
     /**
-     * 隔离级别断言（§5.3）。
+     * 隔离级别断言（README §4.4）。
      * PG 默认 READ COMMITTED，须显式提升到 REPEATABLE READ；MySQL 保持默认 RR 且禁止降级 RC。
      */
     private static void assertIsolation(Connection conn, Dialect dialect) throws SQLException {
@@ -265,7 +265,7 @@ public class JdbcProductionGateway implements ProductionGateway {
             return "jdbc:postgresql://" + host + ":" + port + "/" + schema
                     + "?connectTimeout=3&socketTimeout=30";
         }
-        // MySQL：useAffectedRows 保持 false（默认）——getUpdateCount 返回 matched rows 才能对账（§5.3）
+        // MySQL：useAffectedRows 保持 false（默认）——getUpdateCount 返回 matched rows 才能对账（README §4.4）
         return "jdbc:mysql://" + host + ":" + port + "/" + schema
                 + "?useSSL=false&allowPublicKeyRetrieval=true&useAffectedRows=false"
                 + "&connectTimeout=3000&socketTimeout=30000";

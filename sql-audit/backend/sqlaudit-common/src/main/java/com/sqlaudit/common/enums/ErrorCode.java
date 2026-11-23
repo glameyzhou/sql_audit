@@ -40,8 +40,17 @@ public enum ErrorCode implements CodedEnum {
     /** 库 / 表清单查询失败 */
     META_QUERY_FAILED,
 
-    // ---- 用户管理 ----
+    // ---- 用户 / 角色 / 权限（RBAC）----
     USERNAME_EXISTS,
+    USER_NOT_FOUND,
+    ROLE_NOT_FOUND,
+    /** 内置角色不可删除、code 不可改（400） */
+    BUILTIN_ROLE_IMMUTABLE,
+    /**
+     * 防自锁不变式被破坏（409）：任一 RBAC 写操作提交后，仍须至少有一个 ACTIVE 用户
+     * 经任意角色持有某个元权限点（{@code t_permission.meta}）。
+     */
+    RBAC_LOCKOUT,
 
     // ---- 工单提交与执行前门禁 ----
     /** 工单没有任何语句 */
@@ -50,16 +59,32 @@ public enum ErrorCode implements CodedEnum {
     EMPTY_INSTANCES,
     /** 存在 ERROR 级规则命中，禁止提交 */
     ERROR_RULE_BLOCKED,
-    /** 影响面评估未完成，不允许提交审批 */
+    /** 影响面评估未完成（评估已并入提交链路同步完成；保留供语义完整性 / 兼容） */
     IMPACT_ASSESSMENT_INCOMPLETE,
     /** 审批前采集表结构指纹失败 */
     FINGERPRINT_CAPTURE_FAILED,
     /** 条件更新影响行数 0：状态已被并发修改 */
     TICKET_STATE_CONFLICT,
+    /** 目标实例不在当前用户的数据范围内（403） */
+    INSTANCE_OUT_OF_SCOPE,
+    /** SQL 文本超长（单工单 1 MiB / 单条查询 64 KiB，400） */
+    SQL_TOO_LARGE,
 
     // ---- 审批 ----
     TICKET_NOT_FOUND,
     TICKET_NOT_AUDITING,
+    /** 无权查看该工单（非提交人 / 非审批人 / 无「查看全部工单」能力，403） */
+    TICKET_ACCESS_DENIED,
+    /** 该风险等级的生效审批链为空（非 LOW 不得免审，400） */
+    APPROVAL_FLOW_NOT_CONFIGURED,
+    /** 审批链节点解析不出「提交人以外的有效审批人」（400） */
+    NO_ELIGIBLE_APPROVER,
+    /** 同一范围（全局 / 某实例）+ 风险等级已存在审批流（409） */
+    DUPLICATE_FLOW,
+    /** 审批流不存在 */
+    FLOW_NOT_FOUND,
+    /** 审批流节点配置非法（组内 mode 不一致 / node_order 不连续 / 引用对象无效，400） */
+    FLOW_NODE_INVALID,
     /** 工单已生成审批节点，不得重复生成 */
     APPROVAL_NODES_EXIST,
     /** 提交人不得审批自己的工单 */

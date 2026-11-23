@@ -5,7 +5,7 @@ import com.sqlaudit.storage.model.ExecLock;
 import java.time.LocalDateTime;
 
 /**
- * 执行锁 DAO 接口（设计文档 §3.5 执行前门禁 · 并发互斥）。
+ * 执行锁 DAO 接口（README §4.2 执行前门禁 · 并发互斥）。
  *
  * <p>MVP 粒度 = 实例级（{@code inst:{id}}），同实例工单串行；
  * P2 可降到对象级（{@code inst:{id}:obj:{schema.table}}），DDL 必须仍取实例级。</p>

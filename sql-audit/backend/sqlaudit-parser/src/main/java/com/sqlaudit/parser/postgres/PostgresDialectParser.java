@@ -18,7 +18,7 @@ import com.sqlaudit.common.model.ParsedStatement;
 import com.sqlaudit.parser.AbstractDruidParser;
 
 /**
- * PostgreSQL 14+ 解析器（设计文档 §4.1）。
+ * PostgreSQL 14+ 解析器（README §4.3）。
  *
  * <p><strong>临时实现</strong>：主方案是 libpg_query 的 Java 绑定（真实 PG 语法树），
  * 是否引入取决于 P0 spike S1 的结论。当前用 Druid PG 模式承担：
@@ -47,12 +47,12 @@ public class PostgresDialectParser extends AbstractDruidParser {
 
     @Override
     protected void checkDialectSelectFlags(ParsedStatement ps, SQLSelectQueryBlock block) {
-        // §4.2 第 2 行：PG 的 FOR UPDATE / FOR SHARE 存在 forClause（诊断实测：
+        // README §4.3 第 2 行：PG 的 FOR UPDATE / FOR SHARE 存在 forClause（诊断实测：
         // 基类 isForUpdate()/isForShare() 对 PG 恒为 false——Druid PG 解析器不填充）
         if (block instanceof PGSelectQueryBlock pg && pg.getForClause() != null) {
             ps.getDangerousClauses().add(DangerousClause.FOR_UPDATE_LOCK);
         }
-        // §4.2 第 4 行：PG SELECT ... INTO new_table（实际建表写数据）
+        // README §4.3 第 4 行：PG SELECT ... INTO new_table（实际建表写数据）
         if (block.getInto() != null) {
             ps.getDangerousClauses().add(DangerousClause.SELECT_INTO);
         }

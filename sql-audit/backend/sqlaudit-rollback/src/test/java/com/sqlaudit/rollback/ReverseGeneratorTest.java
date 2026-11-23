@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 反向 SQL 生成 + DDL 逆向映射测试（§5.4 / §5.6）。
+ * 反向 SQL 生成 + DDL 逆向映射测试（README §4.4）。
  */
 class ReverseGeneratorTest {
 
@@ -63,7 +63,7 @@ class ReverseGeneratorTest {
         assertEquals("INSERT INTO t (a) VALUES ('o''brien')", stmt.displaySql());
     }
 
-    // ---------------- DDL 逆向映射（§5.6 表） ----------------
+    // ---------------- DDL 逆向映射（README §4.4 表） ----------------
 
     @Test
     void ddlCreateTable_reverseDrop() {

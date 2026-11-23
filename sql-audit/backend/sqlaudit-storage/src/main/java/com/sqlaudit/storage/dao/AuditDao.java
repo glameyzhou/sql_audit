@@ -6,7 +6,7 @@ import com.sqlaudit.storage.model.ChainHead;
 import java.util.List;
 
 /**
- * 审计 DAO 接口（设计文档 §7.3 不可篡改设计 · hash 链）。
+ * 审计 DAO 接口（README §4.1 不可篡改设计 · hash 链）。
  *
  * <p>写入流程（单事务，由 sqlaudit-audit service 控制事务边界）：
  * {@code lockChainHead()} → 取 last_seq/last_hash → 算本条 hash → {@code insert()} →
@@ -27,4 +27,10 @@ public interface AuditDao {
 
     /** 按 seq 区间读取，用于链完整性校验。 */
     List<AuditLog> listBySeqRange(long fromSeq, long toSeq);
+
+    /** 按 seq 区间分页读取（服务端分页，seq 升序）。{@code limit < 0} 视为取全部。 */
+    List<AuditLog> listBySeqRange(long fromSeq, long toSeq, int offset, int limit);
+
+    /** 按 seq 区间计数。 */
+    long countBySeqRange(long fromSeq, long toSeq);
 }

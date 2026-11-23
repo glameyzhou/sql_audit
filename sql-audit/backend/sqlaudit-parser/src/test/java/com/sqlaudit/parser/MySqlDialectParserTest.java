@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * MySQL 解析 + 只读判定测试（A-1 验收：§4.2 危险子句表每一行都有用例；
+ * MySQL 解析 + 只读判定测试（验收：README §4.3 危险子句表每一行都有用例；
  * 只读判定假阴性率为 0——宁可误判为写操作）。
  */
 class MySqlDialectParserTest {
@@ -28,7 +28,7 @@ class MySqlDialectParserTest {
         return list.get(0);
     }
 
-    // ---------------- §4.2 危险子句表逐行 ----------------
+    // ---------------- README §4.3 危险子句表逐行 ----------------
 
     @Test
     void row1_explainAnalyze_isNotReadOnly() {
@@ -39,7 +39,7 @@ class MySqlDialectParserTest {
 
     @Test
     void row1_plainExplain_isReadOnly() {
-        // §4.4：dry-run 只用不带 ANALYZE 的 EXPLAIN——普通 EXPLAIN 只读
+        // README §4.3：dry-run 只用不带 ANALYZE 的 EXPLAIN——普通 EXPLAIN 只读
         ParsedStatement ps = one("EXPLAIN SELECT * FROM t WHERE id = 1");
         assertTrue(ps.getDangerousClauses().isEmpty());
         assertTrue(ps.isReadOnly());
@@ -152,7 +152,7 @@ class MySqlDialectParserTest {
 
     @Test
     void selectWithSubquery_isReadOnly() {
-        // 子查询 SELECT 本身无写副作用（§4.2：排除的是「子查询写副作用」）
+        // 子查询 SELECT 本身无写副作用（README §4.3：排除的是「子查询写副作用」）
         ParsedStatement ps = one("SELECT * FROM t WHERE id IN (SELECT id FROM t2)");
         assertTrue(ps.isReadOnly());
         assertTrue(ps.isContainsSubquery());
@@ -216,7 +216,7 @@ class MySqlDialectParserTest {
 
     @Test
     void showTables_notReadOnly() {
-        // 只读白名单只认 SELECT（§4.2），SHOW 走 OTHER 非只读
+        // 只读白名单只认 SELECT（README §4.3），SHOW 走 OTHER 非只读
         ParsedStatement ps = one("SHOW TABLES");
         assertEquals(StatementType.OTHER, ps.getStatementType());
         assertFalse(ps.isReadOnly());

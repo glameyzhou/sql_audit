@@ -10,9 +10,10 @@ import com.sqlaudit.parser.SqlParserService;
 import com.sqlaudit.rollback.preimage.PreimagePlanner;
 import com.sqlaudit.worker.gateway.JdbcTableMetadataProvider.InstanceContext;
 import com.sqlaudit.rule.TableMetadataProvider;
+import com.sqlaudit.storage.dao.InstanceDao;
+import com.sqlaudit.storage.model.Instance;
 import com.sqlaudit.storage.model.TicketUnit;
 
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Objects;
 
@@ -20,13 +21,13 @@ import java.util.Objects;
  * 生产库执行桥（把 unit 交给 {@link ProductionGateway}，前镜像 SQL 由
  * {@link PreimagePlanner} 现场构造）。
  *
- * <p>编排口径（§3.3 步骤 4 + §5.3）：</p>
+ * <p>编排口径（README §4.2 步骤 4 + README §4.4）：</p>
  * <ul>
  *   <li>unit.statement 明文 → parser 解析（解析失败即 EXECUTION_FAILED，
  *       正常到不了这里——提交期已过规则审核，但防御性重解析仍必要：
  *       平台库数据可能被误改）；</li>
  *   <li>UPDATE/DELETE → PreimagePlanner 构造前镜像 SELECT（Worker 执行时刻构造，
- *       审核期不生成，§5.3 铁律）；</li>
+ *       审核期不生成，README §4.4 铁律）；</li>
  *   <li>INSERT → 无前镜像，gateway 按方言取主键（MySQL LAST_INSERT_ID / PG RETURNING）。</li>
  * </ul>
  */
@@ -35,13 +36,15 @@ public class GatewayBridgeImpl implements com.sqlaudit.executor.engine.UnitExecu
     private final ProductionGateway gateway;
     private final SqlParserService parser;
     private final TableMetadataProvider metadata;
+    private final InstanceDao instanceDao;
     private final PreimagePlanner preimagePlanner = new PreimagePlanner();
 
     public GatewayBridgeImpl(ProductionGateway gateway, SqlParserService parser,
-                             TableMetadataProvider metadata) {
+                             TableMetadataProvider metadata, InstanceDao instanceDao) {
         this.gateway = Objects.requireNonNull(gateway);
         this.parser = Objects.requireNonNull(parser);
         this.metadata = Objects.requireNonNull(metadata);
+        this.instanceDao = Objects.requireNonNull(instanceDao);
     }
 
     @Override
@@ -49,7 +52,7 @@ public class GatewayBridgeImpl implements com.sqlaudit.executor.engine.UnitExecu
         // 元数据路由：前镜像规划按 unit 实例取真实表结构
         InstanceContext.set(unit.getInstanceId());
         try {
-        String sql = new String(unit.getStatement(), StandardCharsets.UTF_8);
+        String sql = unit.getStatement();
         Dialect dialect = dialectOf(unit);
         List<ParsedStatement> parsed = parser.parse(sql, dialect);
         if (parsed.isEmpty() || parsed.get(0).getParseConfidence() == 0) {
@@ -79,7 +82,7 @@ public class GatewayBridgeImpl implements com.sqlaudit.executor.engine.UnitExecu
                     ps.getOriginalSql(), null, null, pk, unit.getInstanceId());
         }
 
-        // UPDATE / DELETE：现场构造前镜像 SELECT（§5.3）
+        // UPDATE / DELETE：现场构造前镜像 SELECT（README §4.4）
         try {
             PreimagePlanner.PreimageQuery preimage;
             if (ps.getSourceStatement() instanceof SQLUpdateStatement update) {
@@ -106,15 +109,9 @@ public class GatewayBridgeImpl implements com.sqlaudit.executor.engine.UnitExecu
                 ps.getOriginalSql(), null, null, List.of(), unit.getInstanceId());
     }
 
-    private static Dialect dialectOf(TicketUnit unit) {
-        String hint = unit.getDialectSpecific();
-        if (hint != null) {
-            try {
-                return Dialect.fromCode(hint);
-            } catch (IllegalArgumentException ignore) {
-                // 落到默认 MYSQL
-            }
-        }
-        return Dialect.MYSQL;
+    /** unit 的实例方言（unit 不再携带方言字段，以实例为准；未知取值保守落 MYSQL）。 */
+    private Dialect dialectOf(TicketUnit unit) {
+        Instance inst = instanceDao.findById(unit.getInstanceId());
+        return inst == null || inst.getDialect() == null ? Dialect.MYSQL : inst.getDialect();
     }
 }

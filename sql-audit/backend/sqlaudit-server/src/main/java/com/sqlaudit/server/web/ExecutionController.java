@@ -2,8 +2,13 @@ package com.sqlaudit.server.web;
 
 import com.sqlaudit.common.enums.StatementType;
 import com.sqlaudit.common.enums.UnitStatus;
+import com.sqlaudit.server.auth.CurrentUser;
+import com.sqlaudit.server.auth.RoleAuthInterceptor;
+import com.sqlaudit.server.service.DataScopeService;
+import com.sqlaudit.server.service.TicketAccessService;
 import com.sqlaudit.storage.dao.TicketUnitDao;
 import com.sqlaudit.storage.model.TicketUnit;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -14,19 +19,26 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 执行监控端点（对齐 frontend/src/api/index.js 的 listExecutions / listTicketUnits）。
+ * 执行监控端点（契约 §6 执行监控）。
  *
- * <p>只读投影：{@code statement} 为 AES-GCM 密文（VARBINARY），不外泄，故映射为
- * 精简 DTO 而非直接返回 {@link TicketUnit}。</p>
+ * <p>{@code GET /api/executions}（{@code execution.view} 权限点）按<strong>实例数据范围</strong>
+ * 过滤；{@code GET /api/executions/ticket/{ticketId}}（{@code basic}）走工单对象级访问
+ * （{@link TicketAccessService}，§4.5）。只读投影：{@code statement} 为密文，
+ * 不外泄，故映射为精简 DTO 而非直接返回 {@link TicketUnit}。</p>
  */
 @RestController
 @RequestMapping("/api/executions")
 public class ExecutionController {
 
     private final TicketUnitDao ticketUnitDao;
+    private final DataScopeService dataScopeService;
+    private final TicketAccessService ticketAccessService;
 
-    public ExecutionController(TicketUnitDao ticketUnitDao) {
+    public ExecutionController(TicketUnitDao ticketUnitDao, DataScopeService dataScopeService,
+                               TicketAccessService ticketAccessService) {
         this.ticketUnitDao = ticketUnitDao;
+        this.dataScopeService = dataScopeService;
+        this.ticketAccessService = ticketAccessService;
     }
 
     /**
@@ -36,14 +48,21 @@ public class ExecutionController {
      * 见 {@code CodedEnumParamBindingConfig}）；不在合法集合内的取值由统一错误出口转 400。</p>
      */
     @GetMapping
-    public List<UnitDto> listByStatus(@RequestParam(required = false) UnitStatus status) {
+    public List<UnitDto> listByStatus(@RequestParam(required = false) UnitStatus status,
+                                      HttpServletRequest request) {
         UnitStatus effective = status == null ? UnitStatus.EXECUTING : status;
-        return ticketUnitDao.listByStatus(effective).stream().map(UnitDto::from).toList();
+        DataScopeService.Scope scope = dataScopeService.requestScope(request);
+        return ticketUnitDao.listByStatus(effective).stream()
+                .filter(u -> u.getInstanceId() != null && scope.covers(u.getInstanceId()))
+                .map(UnitDto::from)
+                .toList();
     }
 
-    /** 工单详情：某工单的全部执行单元（按 unit_order 稳定排序）。 */
+    /** 工单详情：某工单的全部执行单元（按 unit_order 稳定排序；对象级访问）。 */
     @GetMapping("/ticket/{ticketId}")
-    public List<UnitDto> listByTicket(@PathVariable long ticketId) {
+    public List<UnitDto> listByTicket(@PathVariable long ticketId, HttpServletRequest request) {
+        CurrentUser user = RoleAuthInterceptor.currentUser(request);
+        ticketAccessService.requireVisible(user, ticketId);
         return ticketUnitDao.listByTicket(ticketId).stream().map(UnitDto::from).toList();
     }
 

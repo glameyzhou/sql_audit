@@ -92,12 +92,6 @@
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-database-postgresql</artifactId>
         </dependency>
-        <!-- 查询通道演示用 H2（生产替换为生产库只读副本连接池，见 ConnectionProvider javadoc） -->
-        <dependency>
-            <groupId>com.h2database</groupId>
-            <artifactId>h2</artifactId>
-            <scope>runtime</scope>
-        </dependency>
         <!-- 本地账号密码 bcrypt 哈希（版本走 Spring Boot BOM） -->
         <dependency>
             <groupId>org.springframework.security</groupId>

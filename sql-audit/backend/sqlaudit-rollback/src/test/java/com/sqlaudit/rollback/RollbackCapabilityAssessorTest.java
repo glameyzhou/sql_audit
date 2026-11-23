@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 /**
- * 回滚能力评估测试（A-3 验收：§5.2 覆盖率矩阵逐格）。
+ * 回滚能力评估测试（验收：README §4.4 覆盖率矩阵逐格）。
  */
 class RollbackCapabilityAssessorTest {
 
@@ -69,7 +69,7 @@ class RollbackCapabilityAssessorTest {
         return new RuleHit(code, com.sqlaudit.common.enums.RuleSeverity.ERROR, "test");
     }
 
-    // ---------- §5.2 第 1 行：UPDATE + 主键 + 确定性 SET ----------
+    // ---------- README §4.4 第 1 行：UPDATE + 主键 + 确定性 SET ----------
 
     @Test
     void matrix_updateDeterministic_full() {
@@ -84,7 +84,7 @@ class RollbackCapabilityAssessorTest {
         assertEquals(RollbackCoverage.FULL, pg.getCoverage());
     }
 
-    // ---------- §5.2 第 2 行：DELETE ----------
+    // ---------- README §4.4 第 2 行：DELETE ----------
 
     @Test
     void matrix_delete_full() {
@@ -95,7 +95,7 @@ class RollbackCapabilityAssessorTest {
         assertEquals(RollbackGenerator.MIRROR, plan.getGenerator());
     }
 
-    // ---------- §5.2 第 3 行：INSERT 单条 ----------
+    // ---------- README §4.4 第 3 行：INSERT 单条 ----------
 
     @Test
     void matrix_insertSingleExplicitPk_full() {
@@ -118,7 +118,7 @@ class RollbackCapabilityAssessorTest {
         assertEquals(RollbackCoverage.FULL, pg.getCoverage());
     }
 
-    // ---------- §5.2 第 4 行：批量 / INSERT...SELECT / ON DUPLICATE / REPLACE ----------
+    // ---------- README §4.4 第 4 行：批量 / INSERT...SELECT / ON DUPLICATE / REPLACE ----------
 
     @Test
     void matrix_batchInsert_mysqlNone_pgPartial() {
@@ -163,7 +163,7 @@ class RollbackCapabilityAssessorTest {
         assertEquals(UnavailableReason.BATCH_INSERT, plan.getUnavailableReason());
     }
 
-    // ---------- §5.2 无主键行 ----------
+    // ---------- README §4.4 无主键行 ----------
 
     @Test
     void matrix_noPk_none() {
@@ -174,7 +174,7 @@ class RollbackCapabilityAssessorTest {
         assertEquals(UnavailableReason.NO_PRIMARY_KEY, plan.getUnavailableReason());
     }
 
-    // ---------- §5.2 函数/表达式 SET 行 ----------
+    // ---------- README §4.4 函数/表达式 SET 行 ----------
 
     @Test
     void matrix_nondeterministicSet_none() {
@@ -199,7 +199,7 @@ class RollbackCapabilityAssessorTest {
                         hit(RuleCode.R_LIMIT_ORDER_DML)).getUnavailableReason());
     }
 
-    // ---------- §5.2 DDL 行 ----------
+    // ---------- README §4.4 DDL 行 ----------
 
     @Test
     void matrix_reversibleDdl_full() {
@@ -223,7 +223,7 @@ class RollbackCapabilityAssessorTest {
         assertEquals(RollbackGenerator.SNAPSHOT, drop.getGenerator());
     }
 
-    // ---------- §5.2 IoTDB 行 ----------
+    // ---------- README §4.4 IoTDB 行 ----------
 
     @Test
     void matrix_iotdb_none() {

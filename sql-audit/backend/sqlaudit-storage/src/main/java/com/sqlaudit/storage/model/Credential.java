@@ -4,7 +4,7 @@ import com.sqlaudit.common.enums.AccountType;
 import java.time.LocalDateTime;
 
 /**
- * 生产库加密凭据（对应 t_credential 表，设计文档 §5 生产实例与凭据）。
+ * 生产库加密凭据（对应 t_credential 表，生产实例与凭据模型）。
  *
  * <p>唯一写入方：sqlaudit-server（实例新增 / 编辑时随实例保存，见
  * {@code InstanceCredentialService}）；查看凭据须写审计，绝不回显明文。{@code passwordEnc}
@@ -18,12 +18,9 @@ public class Credential {
     /** RO_META / RO_DATA / RW_EXEC 三类生产账号物理隔离 */
     private AccountType accountType;
     private String username;
-    /** AES-GCM 密文（base64），绝不明文落库 */
+    /** AES-GCM 密文文本 ivBase64.ciphertextBase64，绝不明文落库 */
     private String passwordEnc;
-    /** 主密钥版本，轮换用 */
-    private Integer keyVersion;
     private LocalDateTime lastRotatedAt;
-    private LocalDateTime expiresAt;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
@@ -67,28 +64,12 @@ public class Credential {
         this.passwordEnc = passwordEnc;
     }
 
-    public Integer getKeyVersion() {
-        return keyVersion;
-    }
-
-    public void setKeyVersion(Integer keyVersion) {
-        this.keyVersion = keyVersion;
-    }
-
     public LocalDateTime getLastRotatedAt() {
         return lastRotatedAt;
     }
 
     public void setLastRotatedAt(LocalDateTime lastRotatedAt) {
         this.lastRotatedAt = lastRotatedAt;
-    }
-
-    public LocalDateTime getExpiresAt() {
-        return expiresAt;
-    }
-
-    public void setExpiresAt(LocalDateTime expiresAt) {
-        this.expiresAt = expiresAt;
     }
 
     public LocalDateTime getCreatedAt() {

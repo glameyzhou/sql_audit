@@ -3,7 +3,7 @@ package com.sqlaudit.common.model;
 import java.util.Objects;
 
 /**
- * SQL 对象引用（设计文档 §4.1 ParsedStatement.objects）。
+ * SQL 对象引用（README §4.3 ParsedStatement.objects）。
  * <p>对应「目标对象」，用于规则命中、对象白名单、掩码匹配等。</p>
  */
 public class SqlObject {

@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 
 /**
- * 用户账号状态（设计文档 §8 账号与权限）。
+ * 用户账号状态（README §4.5 账号与权限）。
  *
  * <p>对应 {@code t_user.status} 列（存储码 = 枚举名）。特权操作每次实时校验，
  * 登录时 {@link #DISABLED} 直接拒绝。</p>

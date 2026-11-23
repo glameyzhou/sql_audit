@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 
 /**
- * 反向 SQL 生成器（设计文档 §5.9）。
+ * 反向 SQL 生成器（README §4.4）。
  *
  * <p>对应 {@code rollback_sql.generator} 列（存储码 = 枚举名）。</p>
  *
@@ -14,13 +14,13 @@ import com.fasterxml.jackson.annotation.JsonValue;
 public enum RollbackGenerator implements CodedEnum {
     /** 前镜像 → 每行一条反向 DML */
     MIRROR,
-    /** DDL → 反向 DDL（带有效期与前置条件，§5.6） */
+    /** DDL → 反向 DDL（带有效期与前置条件，README §4.4） */
     REVERSE_DDL,
     /** binlog 闪回 */
     BINLOG,
     /** 快照 / 影子表恢复 */
     SNAPSHOT,
-    /** 无生成器（不可回滚的计划占位，§5.1 能力边界） */
+    /** 无生成器（不可回滚的计划占位，README §4.4 能力边界） */
     NONE;
 
     /** DB / JSON 存储码（= 枚举名）。 */

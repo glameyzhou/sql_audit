@@ -28,13 +28,13 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Druid 解析公共实现（设计文档 §4.1 / §4.2）。
+ * Druid 解析公共实现（README §4.3）。
  *
  * <p>MySQL 与 PG 共用本类（DbType 不同）；PG 的完整语法树依赖 S1 spike
  * （libpg_query 绑定）结论，当前以 Druid PG 模式 + 解析失败一律高危作为临时实现。</p>
  *
- * <p><strong>只读判定只走 AST，不用正则</strong>（§4.2；原型里的 lintSql 是演示用的，禁止抄进后端）：
- * 危险子句逐条对应 §4.2 表的每一行，A-1 验收要求每行都有测试用例。</p>
+ * <p><strong>只读判定只走 AST，不用正则</strong>（README §4.3；原型里的 lintSql 是演示用的，禁止抄进后端）：
+ * 危险子句逐条对应 README §4.3 表的每一行，验收要求每行都有测试用例。</p>
  *
  * <p>解析失败铁律：confidence=0 + LOW_CONFIDENCE + readOnly=false，绝不降级放行。</p>
  *
@@ -72,7 +72,7 @@ public abstract class AbstractDruidParser implements DialectParser {
             }
             return result;
         } catch (Exception e) {
-            // 解析失败 = 高危人工审（§4.1 铁律），整体按单条失败语句处理
+            // 解析失败 = 高危人工审（README §4.3 铁律），整体按单条失败语句处理
             return List.of(failed(sql));
         }
     }
@@ -100,20 +100,20 @@ public abstract class AbstractDruidParser implements DialectParser {
         ps.setNormalizedSql(ps.getOriginalSql());
         ps.setParseConfidence(100);
 
-        // EXPLAIN / EXPLAIN ANALYZE（§4.2 第 1 行：ANALYZE 会真实执行，必须非只读）
+        // EXPLAIN / EXPLAIN ANALYZE（README §4.3 第 1 行：ANALYZE 会真实执行，必须非只读）
         SQLStatement target = stmt;
         if (stmt instanceof SQLExplainStatement explain) {
             if (isExplainAnalyze(explain)) {
                 ps.getDangerousClauses().add(DangerousClause.EXPLAIN_ANALYZE);
             }
-            // 普通 EXPLAIN 只读（§4.4：dry-run 只用不带 ANALYZE 的 EXPLAIN）
+            // 普通 EXPLAIN 只读（README §4.3：dry-run 只用不带 ANALYZE 的 EXPLAIN）
             SQLStatement inner = explain.getStatement();
             if (inner != null) {
                 target = inner;
             }
         }
 
-        // 会话级语句（§4.2 第 7 行）：SET / CALL / LOCK TABLES / USE → SESSION_MUTATION
+        // 会话级语句（README §4.3 第 7 行）：SET / CALL / LOCK TABLES / USE → SESSION_MUTATION
         if (target instanceof SQLSetStatement || isSessionMutation(target)) {
             ps.setStatementType(StatementType.OTHER);
             ps.getDangerousClauses().add(DangerousClause.SESSION_MUTATION);
@@ -132,7 +132,7 @@ public abstract class AbstractDruidParser implements DialectParser {
         ps.setContainsFunction(!sink.functionNames.isEmpty());
         ps.getDangerousClauses().addAll(sink.dangerous);
 
-        // SELECT 锁定 / INTO 形态检查（§4.2 第 2、3、4 行），UNION 递归到每个分支
+        // SELECT 锁定 / INTO 形态检查（README §4.3 第 2、3、4 行），UNION 递归到每个分支
         if (target instanceof SQLSelectStatement select) {
             checkSelectDangerous(ps, select.getSelect().getQuery());
         }
@@ -141,7 +141,7 @@ public abstract class AbstractDruidParser implements DialectParser {
         attachWhereAndLimit(ps, target);
         ps.setSourceStatement(target);
 
-        // 只读判定（§4.2 白名单）：SELECT + 无危险子句 + 置信度满
+        // 只读判定（README §4.3 白名单）：SELECT + 无危险子句 + 置信度满
         ps.setReadOnly(type == StatementType.SELECT
                 && ps.getDangerousClauses().isEmpty()
                 && ps.getParseConfidence() >= 100);
@@ -150,7 +150,7 @@ public abstract class AbstractDruidParser implements DialectParser {
 
     /**
      * EXPLAIN ANALYZE 检测（诊断实测）：Druid 把 ANALYZE 存在 {@code type} 字段。
-     * <p>普通 EXPLAIN 的 type 为 null（只读，§4.4 dry-run 允许）；ANALYZE 真实执行，非只读。</p>
+     * <p>普通 EXPLAIN 的 type 为 null（只读，README §4.3 dry-run 允许）；ANALYZE 真实执行，非只读。</p>
      */
     protected boolean isExplainAnalyze(SQLExplainStatement explain) {
         return "ANALYZE".equalsIgnoreCase(explain.getType());
@@ -178,7 +178,7 @@ public abstract class AbstractDruidParser implements DialectParser {
             return;
         }
         if (query instanceof SQLSelectQueryBlock block) {
-            // §4.2 第 2 行：加行锁，影响线上（PG 的 FOR UPDATE 在 forClause，见方言钩子）
+            // README §4.3 第 2 行：加行锁，影响线上（PG 的 FOR UPDATE 在 forClause，见方言钩子）
             if (block.isForUpdate() || block.isForShare()) {
                 ps.getDangerousClauses().add(DangerousClause.FOR_UPDATE_LOCK);
             }
@@ -251,7 +251,7 @@ public abstract class AbstractDruidParser implements DialectParser {
             if (alias != null) {
                 cteNames.add(alias.toLowerCase());
             }
-            // 数据修改 CTE（§4.2 第 5 行）：WITH x AS (DELETE/UPDATE/INSERT ... RETURNING *)
+            // 数据修改 CTE（README §4.3 第 5 行）：WITH x AS (DELETE/UPDATE/INSERT ... RETURNING *)
             // —— 实际写表。Druid 把 CTE 内的 DML 存在 returningStatement 里
             if (entry.getReturningStatement() != null) {
                 dangerous.add(DangerousClause.DATA_MODIFYING_CTE);
@@ -286,7 +286,7 @@ public abstract class AbstractDruidParser implements DialectParser {
         public void onFunction(String methodName) {
             if (methodName != null) {
                 functionNames.add(methodName);
-                // 函数副作用（§4.2 第 6 行）：非白名单函数一律保守判为可能写表
+                // 函数副作用（README §4.3 第 6 行）：非白名单函数一律保守判为可能写表
                 if (!FunctionWhitelist.isPure(methodName)) {
                     dangerous.add(DangerousClause.FUNCTION_SIDE_EFFECT);
                 }

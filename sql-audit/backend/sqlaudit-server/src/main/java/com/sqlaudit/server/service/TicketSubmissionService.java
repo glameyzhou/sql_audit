@@ -2,13 +2,12 @@ package com.sqlaudit.server.service;
 
 import com.sqlaudit.common.enums.CodedEnum;
 import com.sqlaudit.common.enums.Dialect;
-import com.sqlaudit.common.enums.Environment;
 import com.sqlaudit.common.enums.ErrorCode;
 import com.sqlaudit.common.enums.RollbackCoverage;
 import com.sqlaudit.common.enums.RollbackGenerator;
 import com.sqlaudit.common.enums.RiskLevel;
 import com.sqlaudit.common.enums.StatementType;
-import com.sqlaudit.worker.gateway.JdbcTableMetadataProvider.InstanceContext;
+import com.sqlaudit.common.exception.SqlauditException;
 import com.sqlaudit.common.model.ParsedStatement;
 import com.sqlaudit.common.model.RollbackPlan;
 import com.sqlaudit.common.model.RuleHit;
@@ -18,8 +17,14 @@ import com.sqlaudit.rollback.capability.CapabilityContext;
 import com.sqlaudit.rollback.capability.RollbackCapabilityAssessor;
 import com.sqlaudit.rule.engine.AuditOutcome;
 import com.sqlaudit.rule.engine.RuleEngine;
+import com.sqlaudit.rule.risk.ApprovalChain;
+import com.sqlaudit.rule.risk.ApprovalRouter;
 import com.sqlaudit.rule.risk.RiskAssessor;
+import com.sqlaudit.storage.model.Ticket;
+import com.sqlaudit.storage.model.TicketUnit;
+import com.sqlaudit.workflow.ApprovalFlowEngine;
 import com.sqlaudit.workflow.TicketService;
+import com.sqlaudit.worker.gateway.JdbcTableMetadataProvider.InstanceContext;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -31,7 +36,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 提交编排服务（设计文档 §3.1 提交时序）：
+ * 提交编排服务（README §4.2 提交时序）：
  * 解析（parser）→ 规则审核（rule）→ 回滚能力清单（rollback）→ 风险分级（RiskAssessor）
  * → 建单（workflow TicketService）。
  *
@@ -39,25 +44,39 @@ import java.util.Map;
  * <ul>
  *   <li>预览（{@link #preview}）与建单（{@link #submit}）走同一套服务端判定——
  *       前端预览结果仅供参考，<strong>建单时服务端重新跑全链路</strong>，不信任客户端；</li>
- *   <li>ERROR 级命中在建单入口即拒绝（§4.3），不产生 draft 工单；</li>
- *   <li>rollbackSummary（§5.1 可回滚清单）随工单落库。</li>
+ *   <li>ERROR 级命中在建单入口即拒绝（README §4.3），不产生 draft 工单；</li>
+ *   <li><strong>单实例工单</strong>（决定 10）：一个 {@code instanceId}，身份取登录态
+ *       （creatorId 由 controller 传，不再出现在请求体）；</li>
+ *   <li><strong>建单前试解析审批链</strong>（契约 §6）：非 LOW 空链 / 无可审人 →
+ *       {@code APPROVAL_FLOW_NOT_CONFIGURED} / {@code NO_ELIGIBLE_APPROVER} 400，
+ *       <strong>不建单</strong>；</li>
+ *   <li>SQL 长度上限（契约 §4.6）：单工单 SQL 文本 ≤ 1 MiB（UTF-8 字节），超限
+ *       {@code SQL_TOO_LARGE}（400）。</li>
  * </ul>
  */
 @Service
 public class TicketSubmissionService {
 
+    /** 单工单 SQL 文本上限：1 MiB（UTF-8 字节，契约 §4.6）。 */
+    public static final int MAX_TICKET_SQL_BYTES = 1024 * 1024;
+
     private final SqlParserService parser;
     private final RuleEngine ruleEngine;
     private final RollbackCapabilityAssessor capabilityAssessor;
     private final TicketService ticketService;
+    private final ApprovalFlowEngine approvalEngine;
+    private final ApprovalRouter approvalRouter;
 
     public TicketSubmissionService(SqlParserService parser, RuleEngine ruleEngine,
                                    RollbackCapabilityAssessor capabilityAssessor,
-                                   TicketService ticketService) {
+                                   TicketService ticketService, ApprovalFlowEngine approvalEngine,
+                                   ApprovalRouter approvalRouter) {
         this.parser = parser;
         this.ruleEngine = ruleEngine;
         this.capabilityAssessor = capabilityAssessor;
         this.ticketService = ticketService;
+        this.approvalEngine = approvalEngine;
+        this.approvalRouter = approvalRouter;
     }
 
     /** 一个 unit 的预览视图（前端提交页展示；statementType 按存储码序列化）。 */
@@ -73,12 +92,11 @@ public class TicketSubmissionService {
 
     public record RuleHitView(String code, String severity, String message) {
         static RuleHitView from(RuleHit h) {
-            // RuleHit.code 已是 RuleCode 枚举，对外仍给存储码字符串
             return new RuleHitView(h.getCode().getCode(), h.getSeverity().name(), h.getMessage());
         }
     }
 
-    /** 回滚能力预判视图（coverage / generator 按存储码序列化，与此前传字符串时的 JSON 一致）。 */
+    /** 回滚能力预判视图（coverage / generator 按存储码序列化）。 */
     public record RollbackPlanView(RollbackCoverage coverage, RollbackGenerator generator,
                                    String unavailableReason, String note) {
         static RollbackPlanView from(RollbackPlan p) {
@@ -98,10 +116,10 @@ public class TicketSubmissionService {
             String rollbackSummary) {
     }
 
-    /** 提交预览（无副作用；instanceIds 用于元数据路由，单默认实例语义）。 */
-    public PreviewResult preview(String sql, Dialect dialect, List<Long> instanceIds) {
-        InstanceContext.set(instanceIds == null || instanceIds.isEmpty()
-                ? null : instanceIds.get(0));
+    /** 提交预览（无副作用；单实例，instanceId 用于元数据路由）。 */
+    public PreviewResult preview(String sql, Dialect dialect, long instanceId) {
+        requireSqlSize(sql, MAX_TICKET_SQL_BYTES);
+        InstanceContext.set(instanceId <= 0 ? null : instanceId);
         try {
             return doPreview(sql, dialect);
         } finally {
@@ -110,45 +128,65 @@ public class TicketSubmissionService {
     }
 
     /**
-     * 建单（含提交审核 draft → submitted → auditing）。
+     * 建单（含提交审核 draft → submitted → auditing，并立即生成审批节点）。
      *
-     * @throws com.sqlaudit.common.exception.SqlauditException ERROR_RULE_BLOCKED（不建单）
+     * <p>两步提交已合并（影响面评估同步完成）：建单成功后审批节点即存在——
+     * LOW 空链直接 approved，其余进入审批。</p>
+     *
+     * @throws SqlauditException ERROR_RULE_BLOCKED / SQL_TOO_LARGE /
+     *                           APPROVAL_FLOW_NOT_CONFIGURED / NO_ELIGIBLE_APPROVER（不建单）
      */
-    public long submit(String title, long creatorId, List<Long> instanceIds, Environment environment,
+    public long submit(String title, long creatorId, long instanceId,
                        String sql, String shardConfig, Dialect dialect) {
-        // 元数据路由上下文（单默认实例语义，见 defaultInstanceId）：
-        // 预览判定与建单审计都在同一实例上下文内取真实表元数据
-        InstanceContext.set(instanceIds == null || instanceIds.isEmpty()
-                ? null : instanceIds.get(0));
+        requireSqlSize(sql, MAX_TICKET_SQL_BYTES);
+        InstanceContext.set(instanceId <= 0 ? null : instanceId);
         try {
-            return doSubmit(title, creatorId, instanceIds, environment, sql, shardConfig, dialect);
+            return doSubmit(title, creatorId, instanceId, sql, shardConfig, dialect);
         } finally {
             InstanceContext.set(null);
         }
     }
 
-    private long doSubmit(String title, long creatorId, List<Long> instanceIds, Environment environment,
+    private long doSubmit(String title, long creatorId, long instanceId,
                           String sql, String shardConfig, Dialect dialect) {
         PreviewResult preview = doPreview(sql, dialect);
 
-        // ERROR 阻断在入口拒绝（§4.3）——不产生 draft，前端拿到 400 + 命中明细
+        // ERROR 阻断在入口拒绝（README §4.3）——不产生 draft，前端拿到 400 + 命中明细
         if (preview.errorBlocked()) {
-            throw new com.sqlaudit.common.exception.SqlauditException(ErrorCode.ERROR_RULE_BLOCKED,
+            throw new SqlauditException(ErrorCode.ERROR_RULE_BLOCKED,
                     "存在 ERROR 级规则命中，禁止提交（预览详情见 ruleHits）");
         }
 
-        List<com.sqlaudit.storage.model.TicketUnit> units = new ArrayList<>();
+        List<TicketUnit> units = new ArrayList<>();
         List<ParsedStatement> parsed = parser.parse(sql, dialect);
-        for (int i = 0; i < parsed.size(); i++) {
-            units.add(toUnit(parsed.get(i), defaultInstanceId(instanceIds)));
+        for (ParsedStatement ps : parsed) {
+            units.add(toUnit(ps, instanceId));
         }
 
-        var ticket = ticketService.createTicket(title, creatorId, instanceIds, environment,
+        // 建单前试解析审批链（契约 §6：失败 400 且不建单）——传入未持久化的工单即可
+        Ticket draft = new Ticket();
+        draft.setRiskLevel(preview.riskLevel());
+        draft.setInstanceId(instanceId);
+        draft.setCreatorId(creatorId);
+        ApprovalChain chain = approvalRouter.route(preview.riskLevel(), instanceId);
+        approvalEngine.resolveNodes(draft, chain);
+
+        var ticket = ticketService.createTicket(title, creatorId, instanceId,
                 preview.riskLevel(), preview.rollbackSummary(), sql, shardConfig, units);
 
         AuditOutcome outcome = ruleEngine.audit(parsed);
         ticketService.submitForAudit(ticket.getId(), outcome);
+        // 提交即生成审批节点（两步合并）：LOW 空链直接 approved，其余进入审批。
+        // 试解析（上方 resolveNodes）已保证非 LOW 空链 / 无可审人不会走到这里。
+        ticketService.submitForApproval(ticket.getId());
         return ticket.getId();
+    }
+
+    private void requireSqlSize(String sql, int maxBytes) {
+        if (sql != null && sql.getBytes(StandardCharsets.UTF_8).length > maxBytes) {
+            throw new SqlauditException(ErrorCode.SQL_TOO_LARGE,
+                    "SQL 文本过长（上限 " + maxBytes + " 字节）");
+        }
     }
 
     // ------------------------------------------------------------------
@@ -174,8 +212,9 @@ public class TicketSubmissionService {
                     hits.stream().map(RuleHitView::from).toList(),
                     RollbackPlanView.from(plan)));
 
-            // rollback_summary 是 JSON 列（§9）：结构化可回滚清单，不存自由文本。
-            // 这里用裸 ObjectMapper 序列化，枚举一律显式转成存储码字符串，保证落库文本不变
+            // rollback_summary 是 JSON 文本列：结构化可回滚清单，枚举显式转存储码。
+            // previewSql = 提交时推导的反向语句模板（不含前镜像数据，可明文落库），
+            // 供工单详情在「无实际回滚主记录」时预览回滚方向；实际回滚语句以前镜像为准。
             Map<String, Object> entry = new LinkedHashMap<>();
             entry.put("unit", i + 1);
             entry.put("coverage", CodedEnum.code(plan.getCoverage()));
@@ -183,6 +222,7 @@ public class TicketSubmissionService {
             if (plan.getUnavailableReason() != null) {
                 entry.put("unavailableReason", plan.getUnavailableReason().name());
             }
+            entry.put("previewSql", plan.getReverseStatementPreview());
             summaryEntries.add(entry);
         }
 
@@ -191,12 +231,6 @@ public class TicketSubmissionService {
 
         return new PreviewResult(dialect.name(), parsed.size(), risk,
                 outcome.errorBlocked(), unitViews, toJson(summaryEntries));
-    }
-
-    private static long defaultInstanceId(List<Long> instanceIds) {
-        // unit.instance_id 是 NOT NULL（§9）；单实例工单直接取，多实例+多语句的
-        // 精确映射在 W2 后段细化（预览请求按语句声明 instanceId）
-        return instanceIds == null || instanceIds.isEmpty() ? 0L : instanceIds.get(0);
     }
 
     private static String toJson(Object value) {
@@ -208,11 +242,11 @@ public class TicketSubmissionService {
         }
     }
 
-    /** ParsedStatement → TicketUnit（statement 明文 + hash；加密由 W2 存储层做）。 */
-    private static com.sqlaudit.storage.model.TicketUnit toUnit(ParsedStatement ps, long instanceId) {
-        var unit = new com.sqlaudit.storage.model.TicketUnit();
+    /** ParsedStatement → TicketUnit（statement 明文；加密由 JDBC DAO 透明完成）。 */
+    private static TicketUnit toUnit(ParsedStatement ps, long instanceId) {
+        var unit = new TicketUnit();
         unit.setInstanceId(instanceId);
-        unit.setStatement(ps.getOriginalSql().getBytes(StandardCharsets.UTF_8));
+        unit.setStatement(ps.getOriginalSql());
         unit.setStatementHash(sha256(ps.getOriginalSql()));
         unit.setStatementType(ps.getStatementType());
         if (!ps.getObjects().isEmpty()) {

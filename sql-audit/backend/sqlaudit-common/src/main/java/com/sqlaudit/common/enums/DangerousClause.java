@@ -1,11 +1,11 @@
 package com.sqlaudit.common.enums;
 
 /**
- * 危险子句 / 形态标识（设计文档 §4.2 只读判定的危险子句表）。
+ * 危险子句 / 形态标识（README §4.3 只读判定的危险子句表）。
  *
  * <p>只读判定必须走 AST 白名单，任一命中即 not readOnly，强制走审核工单。</p>
  *
- * <p>§4.2 表的每一行对应一个枚举值，A-1 验收要求每一行都有一条用例。</p>
+ * <p>README §4.3 表的每一行对应一个枚举值，验收要求每一行都有一条用例。</p>
  */
 public enum DangerousClause {
     /** EXPLAIN ANALYZE：PG 会真实执行 DML；MySQL 8.0.18+ 也会真实执行 */

@@ -7,7 +7,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 回滚 DAO 接口（设计文档 §5.9 回滚 SQL 生命周期）。
+ * 回滚 DAO 接口（README §4.4 回滚 SQL 生命周期）。
  *
  * <p>存储模型为「主表 rollback_sql + 语句子表 rollback_statement」：
  * 每行一条反向语句，回放时分批流式读取 + 逐条幂等。</p>
@@ -43,4 +43,10 @@ public interface RollbackDao {
 
     /** 回滚管理：全部回滚主记录，按 id 倒序（最新在前）。 */
     List<RollbackSql> listAll();
+
+    /** 回滚管理分页读取（服务端分页），按 id 倒序（最新在前）。{@code limit < 0} 视为取全部。 */
+    List<RollbackSql> listAll(int offset, int limit);
+
+    /** 回滚主记录总数。 */
+    long countAll();
 }

@@ -16,11 +16,11 @@ import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
 
 /**
- * user 的 MySQL 真实现（DDL §8 t_user 表；内存版语义基准 {@code InMemoryUserDao}）。
+ * user 的 MySQL 真实现（t_user 表）。
  *
  * <p>自增 id 回填用 {@code GeneratedKeyHolder}（{@code Statement.RETURN_GENERATED_KEYS}）；
  * 时间戳 {@code DATETIME(3)} 与 {@code LocalDateTime} 经 {@link Timestamp} 互转。
- * 事务边界由调用方保证，本类不开事务。</p>
+ * 事务边界由调用方保证，本类不开事务（两个防自锁方法必须在调用方事务内才有意义）。</p>
  */
 public class MySqlUserDao implements UserDao {
 
@@ -37,9 +37,7 @@ public class MySqlUserDao implements UserDao {
         u.setDisplayName(rs.getString("display_name"));
         u.setEmail(rs.getString("email"));
         u.setSource(UserSource.fromCode(rs.getString("source")));
-        u.setWeworkOpenid(rs.getString("wework_openid"));
         u.setPasswordHash(rs.getString("password_hash"));
-        u.setTotpSecret(rs.getString("totp_secret"));
         u.setStatus(UserStatus.fromCode(rs.getString("status")));
         Timestamp last = rs.getTimestamp("last_login_at");
         u.setLastLoginAt(last == null ? null : last.toLocalDateTime());
@@ -47,8 +45,6 @@ public class MySqlUserDao implements UserDao {
         u.setCreatedAt(created == null ? null : created.toLocalDateTime());
         Timestamp updated = rs.getTimestamp("updated_at");
         u.setUpdatedAt(updated == null ? null : updated.toLocalDateTime());
-        Timestamp deleted = rs.getTimestamp("deleted_at");
-        u.setDeletedAt(deleted == null ? null : deleted.toLocalDateTime());
         return u;
     };
 
@@ -57,24 +53,20 @@ public class MySqlUserDao implements UserDao {
         KeyHolder kh = new GeneratedKeyHolder();
         jdbc.update(conn -> {
             PreparedStatement ps = conn.prepareStatement(
-                    "INSERT INTO t_user (username, display_name, email, source, wework_openid, "
-                            + "password_hash, totp_secret, status, last_login_at, created_at, updated_at, deleted_at) "
-                            + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO t_user (username, display_name, email, source, password_hash, "
+                            + "status, last_login_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
                     Statement.RETURN_GENERATED_KEYS);
             ps.setString(1, user.getUsername());
             ps.setString(2, user.getDisplayName());
             ps.setString(3, user.getEmail());
-            ps.setString(4, CodedEnum.code(user.getSource()));
-            ps.setString(5, user.getWeworkOpenid());
-            ps.setString(6, user.getPasswordHash());
-            ps.setString(7, user.getTotpSecret());
-            ps.setString(8, CodedEnum.code(user.getStatus()));
-            ps.setTimestamp(9, user.getLastLoginAt() == null ? null : Timestamp.valueOf(user.getLastLoginAt()));
-            ps.setTimestamp(10, Timestamp.valueOf(user.getCreatedAt() != null
+            ps.setString(4, CodedEnum.code(user.getSource() != null ? user.getSource() : UserSource.LOCAL));
+            ps.setString(5, user.getPasswordHash());
+            ps.setString(6, CodedEnum.code(user.getStatus() != null ? user.getStatus() : UserStatus.ACTIVE));
+            ps.setTimestamp(7, user.getLastLoginAt() == null ? null : Timestamp.valueOf(user.getLastLoginAt()));
+            ps.setTimestamp(8, Timestamp.valueOf(user.getCreatedAt() != null
                     ? user.getCreatedAt() : LocalDateTime.now()));
-            ps.setTimestamp(11, Timestamp.valueOf(user.getUpdatedAt() != null
+            ps.setTimestamp(9, Timestamp.valueOf(user.getUpdatedAt() != null
                     ? user.getUpdatedAt() : LocalDateTime.now()));
-            ps.setTimestamp(12, user.getDeletedAt() == null ? null : Timestamp.valueOf(user.getDeletedAt()));
             return ps;
         }, kh);
         long id = kh.getKey().longValue();
@@ -96,7 +88,13 @@ public class MySqlUserDao implements UserDao {
 
     @Override
     public List<User> listAll() {
-        return jdbc.query("SELECT * FROM t_user WHERE deleted_at IS NULL ORDER BY id", MAPPER);
+        return jdbc.query("SELECT * FROM t_user ORDER BY id", MAPPER);
+    }
+
+    @Override
+    public List<User> listActive() {
+        return jdbc.query("SELECT * FROM t_user WHERE status=? ORDER BY id",
+                MAPPER, UserStatus.ACTIVE.getCode());
     }
 
     @Override
@@ -120,5 +118,25 @@ public class MySqlUserDao implements UserDao {
     public int updateProfile(long id, String displayName, String email) {
         return jdbc.update("UPDATE t_user SET display_name=?, email=?, updated_at=? WHERE id=?",
                 displayName, email, Timestamp.valueOf(LocalDateTime.now()), id);
+    }
+
+    @Override
+    public int countActiveMetaPermissionHolders() {
+        // 「经任意角色持有任一元权限点的 ACTIVE 用户」计数：必须在 RBAC 写事务内、写之后调用
+        Integer count = jdbc.queryForObject(
+                "SELECT COUNT(DISTINCT u.id) FROM t_user u "
+                        + "JOIN t_user_role ur ON ur.user_id = u.id "
+                        + "JOIN t_role_permission rp ON rp.role_id = ur.role_id "
+                        + "JOIN t_permission p ON p.id = rp.permission_id "
+                        + "WHERE u.status = ? AND p.meta = TRUE",
+                Integer.class, UserStatus.ACTIVE.getCode());
+        return count == null ? 0 : count;
+    }
+
+    @Override
+    public List<Long> lockMetaPermissions() {
+        // 行锁串行化全部并发 RBAC 写操作；须在调用方事务内，事务提交自动释放
+        return jdbc.queryForList(
+                "SELECT id FROM t_permission WHERE meta = TRUE ORDER BY id FOR UPDATE", Long.class);
     }
 }

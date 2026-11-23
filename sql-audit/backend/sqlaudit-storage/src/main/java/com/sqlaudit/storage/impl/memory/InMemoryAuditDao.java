@@ -32,7 +32,7 @@ import java.util.concurrent.locks.ReentrantLock;
  *       ——与 FOR UPDATE 的等待语义一致。</li>
  * </ul>
  *
- * <p>链头初始值（§7.3 创世约定）：{@code last_seq=0}、{@code last_hash=64 个 '0'}。</p>
+ * <p>链头初始值（README §4.1 创世约定）：{@code last_seq=0}、{@code last_hash=64 个 '0'}。</p>
  */
 public class InMemoryAuditDao implements AuditDao {
 
@@ -83,6 +83,21 @@ public class InMemoryAuditDao implements AuditDao {
         }
         result.sort(Comparator.comparing(AuditLog::getSeq));
         return result;
+    }
+
+    @Override
+    public synchronized List<AuditLog> listBySeqRange(long fromSeq, long toSeq, int offset, int limit) {
+        List<AuditLog> sorted = listBySeqRange(fromSeq, toSeq);
+        int from = Math.min(Math.max(offset, 0), sorted.size());
+        int to = limit < 0 ? sorted.size() : Math.min(from + limit, sorted.size());
+        return new ArrayList<>(sorted.subList(from, to));
+    }
+
+    @Override
+    public synchronized long countBySeqRange(long fromSeq, long toSeq) {
+        return logStore.values().stream()
+                .filter(log -> log.getSeq() != null && log.getSeq() >= fromSeq && log.getSeq() <= toSeq)
+                .count();
     }
 
     // ---- 测试辅助（不属于接口） ----

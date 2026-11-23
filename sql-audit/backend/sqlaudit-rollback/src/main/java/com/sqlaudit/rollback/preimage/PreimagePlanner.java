@@ -18,13 +18,13 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 前镜像 SELECT 构造器（设计文档 §5.3 / §5.4）。
+ * 前镜像 SELECT 构造器（README §4.4）。
  *
  * <p><strong>生成时机铁律</strong>：构造出的 SELECT 在 Worker 执行时刻、与原 DML
  * 同一 Connection、同一事务内执行（{@code FOR UPDATE}），本类只产出 SQL 文本，
  * 绝不在审核期执行。</p>
  *
- * <p>列集合规则（§5.3 / §5.4）：</p>
+ * <p>列集合规则（README §4.4）：</p>
  * <ul>
  *   <li>UPDATE 前镜像 = 主键列 + SET 列（只取回滚所需的旧值，不是全表列）；</li>
  *   <li>DELETE 前镜像 = 全部非生成列（反向 INSERT 需要整行旧值；
@@ -32,7 +32,7 @@ import java.util.List;
  *       「The value specified for generated column ... is not allowed」）；</li>
  *   <li>WHERE 与原语句完全一致（复用原 WHERE AST 的克隆，不重新构造，
  *       避免任何语义偏移）。带 LIMIT/ORDER BY 的 DML 已被 R_LIMIT_ORDER_DML 阻断，
- *       不存在需要复现 LIMIT 的场景（§5.3 v2.1 修正）。</li>
+ *       不存在需要复现 LIMIT 的场景（README §4.4 修正）。</li>
  * </ul>
  */
 public class PreimagePlanner {
@@ -94,7 +94,7 @@ public class PreimagePlanner {
             throw new IllegalArgumentException("目标表无主键元数据: " + table.getTableName());
         }
 
-        // 全部非生成列（生成列绝不能进反向 INSERT 的列清单，§5.3）
+        // 全部非生成列（生成列绝不能进反向 INSERT 的列清单，README §4.4）
         List<String> columns = new ArrayList<>();
         for (String col : tm.columns()) {
             if (!tm.generatedColumns().contains(col)) {

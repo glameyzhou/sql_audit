@@ -22,10 +22,10 @@
             <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
-        <!-- H2 内存库：查询通道三层保护的集成测试（版本走 Spring Boot BOM） -->
+        <!-- QueryChannelTest 对本地 Docker MySQL 专用测试库的集成测试（无库时 Assumptions 跳过） -->
         <dependency>
-            <groupId>com.h2database</groupId>
-            <artifactId>h2</artifactId>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

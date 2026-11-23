@@ -5,7 +5,7 @@ import com.fasterxml.jackson.annotation.JsonValue;
 
 /**
  * 语句类型（解析器输出统一中间模型的 statementType）。
- * <p>对应设计文档 §4.1 ParsedStatement；落库列为 {@code t_ticket_unit.statement_type}
+ * <p>对应 README §4.3 ParsedStatement；落库列为 {@code t_ticket_unit.statement_type}
  * （存储码 = 枚举名），见 {@link CodedEnum}。</p>
  */
 public enum StatementType implements CodedEnum {

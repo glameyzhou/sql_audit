@@ -6,17 +6,16 @@ import com.sqlaudit.common.enums.AuditAction;
 import com.sqlaudit.common.enums.AuditResult;
 import com.sqlaudit.common.enums.AuditTargetType;
 import com.sqlaudit.common.enums.CodedEnum;
-import com.sqlaudit.common.enums.RoleCode;
 
 import java.time.OffsetDateTime;
 
 /**
- * 审计事件（设计文档 §7.2 / §7.3 的 canonical 记录）。
+ * 审计事件（README §4.1 审计链的 canonical 记录）。
  *
- * <p><strong>字段顺序即哈希顺序，一旦上线不可改</strong>（§7.3 第 3 点）：
+ * <p><strong>字段顺序即哈希顺序，一旦上线不可改</strong>（README §4.1 第 3 点）：
  * 修改字段序会导致历史链全部断裂。新增字段只能追加到末尾，不能插入中间。</p>
  *
- * <p>canonical JSON 规则（§7.3）：</p>
+ * <p>canonical JSON 规则（README §4.1）：</p>
  * <ul>
  *   <li>字段固定顺序：seq, actor_id, actor_name, actor_role, action, target_type,
  *       target_id, instance_id, detail_plaintext, result, client_ip, user_agent,
@@ -38,7 +37,7 @@ public class AuditEvent {
 
     /**
      * 系统动作的审计角色：状态机自动迁移（LOW 空链自动通过、审批超时置 expired 等）没有人类操作人时
-     * 写 {@code SYSTEM}。它不是可授予的角色（不在 {@link RoleCode} 内），也不是错误码——
+     * 写 {@code SYSTEM}。它不是可授予的角色（{@code t_role} 里没有这一行），也不是错误码——
      * 历史数据就是这个取值，集中定义在这里避免各处手写。
      */
     public static final String SYSTEM_ACTOR_ROLE = "SYSTEM";

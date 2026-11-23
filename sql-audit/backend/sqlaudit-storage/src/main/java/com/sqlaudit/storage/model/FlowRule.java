@@ -1,29 +1,23 @@
 package com.sqlaudit.storage.model;
 
-import com.sqlaudit.common.enums.Environment;
 import com.sqlaudit.common.enums.RiskLevel;
 import java.time.LocalDateTime;
 
 /**
- * 审批流规则实体（对应 t_flow_rule 表，设计文档 §5 审批流）。
+ * 审批流程实体（对应 t_flow_rule 表）——「范围 × 风险等级」一条，至多一条。
  *
- * <p>唯一写入方：sqlaudit-workflow（本轮系统配置 CRUD 经 sqlaudit-server 写入）。
- * {@code instanceId} 为 null 表示全局默认链（L1），非空为实例级覆盖链（L2）。</p>
+ * <p>唯一写入方：sqlaudit-server。{@code instanceId} 为 null 表示全局流程，非空表示
+ * 该实例的专用流程。生效链 = 全局链节点组 + 实例链节点组（实例组排在后面），
+ * 所以实例配置只会让审批更严、不会更松——不再有「链强度比较」那套逻辑。</p>
  */
 public class FlowRule {
 
     private Long id;
     private String name;
-    /** prod / staging / ALL */
-    private Environment environment;
-    /** NULL=全局默认 L1；非空=实例级覆盖 L2 */
+    /** NULL=全局流程；非空=该实例的专用流程 */
     private Long instanceId;
     /** LOW / MEDIUM / HIGH / CRITICAL */
     private RiskLevel riskLevel;
-    /** CRITICAL 不可被任何配置降级 */
-    private Boolean nonOverridable;
-    /** 同 risk_level 多条时取 priority 最高 */
-    private Integer priority;
     private Boolean enabled;
     private Long createdBy;
     private LocalDateTime createdAt;
@@ -45,14 +39,6 @@ public class FlowRule {
         this.name = name;
     }
 
-    public Environment getEnvironment() {
-        return environment;
-    }
-
-    public void setEnvironment(Environment environment) {
-        this.environment = environment;
-    }
-
     public Long getInstanceId() {
         return instanceId;
     }
@@ -67,22 +53,6 @@ public class FlowRule {
 
     public void setRiskLevel(RiskLevel riskLevel) {
         this.riskLevel = riskLevel;
-    }
-
-    public Boolean getNonOverridable() {
-        return nonOverridable;
-    }
-
-    public void setNonOverridable(Boolean nonOverridable) {
-        this.nonOverridable = nonOverridable;
-    }
-
-    public Integer getPriority() {
-        return priority;
-    }
-
-    public void setPriority(Integer priority) {
-        this.priority = priority;
     }
 
     public Boolean getEnabled() {

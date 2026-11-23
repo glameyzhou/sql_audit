@@ -1,8 +1,10 @@
 package com.sqlaudit.storage.impl.jdbc.postgresql;
 
+import com.sqlaudit.common.crypto.SqlCipher;
 import com.sqlaudit.common.enums.ApprovalMode;
 import com.sqlaudit.common.enums.ApprovalResult;
-import com.sqlaudit.common.enums.Environment;
+import com.sqlaudit.common.enums.ApproverType;
+import com.sqlaudit.common.enums.InstanceScope;
 import com.sqlaudit.common.enums.RiskLevel;
 import com.sqlaudit.common.enums.RollbackCoverage;
 import com.sqlaudit.common.enums.RollbackGenerator;
@@ -12,8 +14,13 @@ import com.sqlaudit.storage.model.Approval;
 import com.sqlaudit.storage.model.AuditLog;
 import com.sqlaudit.storage.model.ChainHead;
 import com.sqlaudit.storage.model.ExecLock;
+import com.sqlaudit.storage.model.FlowNode;
+import com.sqlaudit.storage.model.FlowRule;
+import com.sqlaudit.storage.model.PermissionApi;
+import com.sqlaudit.storage.model.Role;
 import com.sqlaudit.storage.model.RollbackSql;
 import com.sqlaudit.storage.model.RollbackStatement;
+import com.sqlaudit.storage.model.TableRemark;
 import com.sqlaudit.storage.model.Ticket;
 import com.zaxxer.hikari.HikariDataSource;
 import org.junit.jupiter.api.AfterAll;
@@ -26,9 +33,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -39,20 +46,28 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 其余 5 个 JDBC DAO 对本地 Docker PostgreSQL 的集成测试，语义对照各自内存版测试，
- * 断言逐条搬自 MySQL 版 {@code MySqlDaosIT}：
+ * 其余 JDBC DAO 对本地 Docker PostgreSQL（独立测试库 sql_audit_it）的集成测试，语义对照各自内存版：
  * <ul>
- *   <li>{@link PostgresTicketDao}：updateStatus 乐观并发（含并发竞争只有一个成功）、JSONB 列双向转换；</li>
- *   <li>{@link PostgresApprovalDao}：updateResult 条件更新（PENDING 终态只允许一次）；</li>
- *   <li>{@link PostgresRollbackDao}：唯一键冲突返回 0、markStatementApplied 幂等 0；</li>
+ *   <li>{@link PostgresTicketDao}：updateStatus 乐观并发（含并发竞争只有一个成功）、单实例列、
+ *       sql_text 加密落库（原字节非明文 + 解密往返）；</li>
+ *   <li>{@link PostgresApprovalDao}：新列（flow_node_id / decided_by 分列）、updateResult 条件更新、
+ *       uk_approval_assignee 并发唯一约束、transfer 原子性（代理人已在本组整笔回滚）；</li>
+ *   <li>{@link PostgresRollbackDao}：唯一键冲突返回 0、markStatementApplied 幂等 0、
+ *       reverse_sql / value_params 加密落库；</li>
  *   <li>{@link PostgresExecLockDao}：tryAcquire 二次 false、条件 release、cleanupExpired；</li>
  *   <li>{@link PostgresAuditDao}：FOR UPDATE 行锁下 seq 递增无空洞、链头推进、listBySeqRange
- *       ——事务边界由调用方管理，测试用 TransactionTemplate 包裹验证。</li>
+ *       ——事务边界由调用方管理，测试用 TransactionTemplate 包裹验证；</li>
+ *   <li>RBAC 数据面：{@link PostgresRoleDao} 三个「整体替换」+ 读回、{@link PostgresPermissionDao}
+ *       接口绑定读取、{@link PostgresUserDao} 防自锁两个查询；</li>
+ *   <li>审批流配置面：{@link PostgresFlowRuleDao} findByScope 判重与删除连带节点、
+ *       {@link PostgresFlowNodeDao} 整体替换；</li>
+ *   <li>表备注词典：{@link PostgresTableRemarkDao} upsert 覆盖不改首次写入人、按库隔离、删除。</li>
  * </ul>
  */
 @Tag("it")
@@ -61,24 +76,38 @@ class PostgresDaosIT {
     private static HikariDataSource ds;
     private static JdbcTemplate jdbc;
     private static TransactionTemplate txTemplate;
+    private static final SqlCipher CIPHER = new SqlCipher();
 
     private static PostgresTicketDao ticketDao;
     private static PostgresApprovalDao approvalDao;
     private static PostgresRollbackDao rollbackDao;
     private static PostgresExecLockDao execLockDao;
     private static PostgresAuditDao auditDao;
+    private static PostgresRoleDao roleDao;
+    private static PostgresPermissionDao permissionDao;
+    private static PostgresUserDao userDao;
+    private static PostgresFlowRuleDao flowRuleDao;
+    private static PostgresFlowNodeDao flowNodeDao;
+    private static PostgresTableRemarkDao tableRemarkDao;
 
     @BeforeAll
     static void initDatabase() throws Exception {
         Assumptions.assumeTrue(PostgresTestSupport.postgresAvailable(), "本地 PostgreSQL 未启动，跳过集成测试");
+        PostgresTestSupport.ensureDatabase();
         ds = PostgresTestSupport.buildDataSource();
         jdbc = new JdbcTemplate(ds);
-        PostgresTestSupport.ensureSchema(ds);
-        ticketDao = new PostgresTicketDao(jdbc);
+        PostgresTestSupport.migrate(ds);
+        ticketDao = new PostgresTicketDao(jdbc, CIPHER);
         approvalDao = new PostgresApprovalDao(jdbc);
-        rollbackDao = new PostgresRollbackDao(jdbc);
+        rollbackDao = new PostgresRollbackDao(jdbc, CIPHER);
         execLockDao = new PostgresExecLockDao(jdbc);
         auditDao = new PostgresAuditDao(jdbc);
+        roleDao = new PostgresRoleDao(jdbc);
+        permissionDao = new PostgresPermissionDao(jdbc);
+        userDao = new PostgresUserDao(jdbc);
+        flowRuleDao = new PostgresFlowRuleDao(jdbc);
+        flowNodeDao = new PostgresFlowNodeDao(jdbc);
+        tableRemarkDao = new PostgresTableRemarkDao(jdbc);
         txTemplate = new TransactionTemplate(new DataSourceTransactionManager(ds));
     }
 
@@ -92,27 +121,28 @@ class PostgresDaosIT {
     @BeforeEach
     void cleanTables() {
         if (ds != null) {
-            PostgresTestSupport.cleanAllTables(jdbc);
+            PostgresTestSupport.cleanAndSeed(jdbc);
         }
     }
 
-    /** DDL 为 TIMESTAMP(3) 毫秒精度：截断到毫秒，避免纳秒读写往返误差。 */
+    /** DDL 为 DATETIME(3) 毫秒精度：截断到毫秒，避免纳秒读写往返误差。 */
     private static LocalDateTime nowMillis() {
         return LocalDateTime.now().truncatedTo(ChronoUnit.MILLIS);
     }
 
     // ------------------------------------------------------------------
-    // TicketDao（对照 InMemoryTicketDaoTest）
+    // TicketDao（单实例 + sql_text 加密）
     // ------------------------------------------------------------------
 
-    private long insertDraftTicket(long creatorId, LocalDateTime createdAt) {
+    private long insertTicket(long creatorId, long instanceId, String sqlText, LocalDateTime createdAt) {
         Ticket ticket = new Ticket();
         ticket.setTitle("t-" + creatorId);
         ticket.setCreatorId(creatorId);
-        ticket.setInstanceIds(new ArrayList<>(List.of(1L, 2L)));
-        ticket.setEnvironment(Environment.PROD);
+        ticket.setInstanceId(instanceId);
         ticket.setRiskLevel(RiskLevel.HIGH);
         ticket.setStatus(TicketStatus.DRAFT);
+        ticket.setRollbackSummary("{\"rollbackable\":[1]}");
+        ticket.setSqlText(sqlText);
         ticket.setTraceId("trace-" + creatorId);
         ticket.setCreatedAt(createdAt);
         ticket.setUpdatedAt(createdAt);
@@ -120,66 +150,59 @@ class PostgresDaosIT {
     }
 
     @Test
-    void Ticket_insert与findById_JSON列双向转换与字段回读一致() {
+    void Ticket_insert与findById_单实例与字段回读一致() {
         LocalDateTime now = nowMillis();
-        Ticket ticket = new Ticket();
-        ticket.setTitle("发布工单");
-        ticket.setCreatorId(100L);
-        ticket.setInstanceIds(List.of(1L, 2L, 3L));
-        ticket.setEnvironment(Environment.PROD);
-        ticket.setRiskLevel(RiskLevel.CRITICAL);
-        ticket.setStatus(TicketStatus.DRAFT);
-        ticket.setRollbackSummary("{\"rollbackable\":[1],\"unrollbackable\":[]}");
-        ticket.setScheduledAt(now.plusHours(2));
-        ticket.setTraceId("trace-1");
-        ticket.setCreatedAt(now);
-        ticket.setUpdatedAt(now);
-        long id = ticketDao.insertTicket(ticket);
+        long id = insertTicket(100L, 7L, "UPDATE t_demo SET a=1 WHERE id=1", now);
 
         Ticket found = ticketDao.findById(id);
         assertNotNull(found);
-        assertEquals("发布工单", found.getTitle());
+        assertEquals("t-100", found.getTitle());
         assertEquals(100L, found.getCreatorId());
-        assertEquals(List.of(1L, 2L, 3L), found.getInstanceIds(), "instance_ids JSONB 列序列化/反序列化");
-        assertEquals(Environment.PROD, found.getEnvironment());
-        assertEquals(RiskLevel.CRITICAL, found.getRiskLevel());
+        assertEquals(7L, found.getInstanceId(), "工单单实例（instance_id 列）");
+        assertEquals(RiskLevel.HIGH, found.getRiskLevel());
         assertEquals(TicketStatus.DRAFT, found.getStatus());
-        // PG jsonb 列会规范化文本格式（冒号后加空格），语义层等价而非字节级透传
-        assertEquals("{\"rollbackable\": [1], \"unrollbackable\": []}", found.getRollbackSummary(),
-                "rollback_summary JSON 字符串语义透传（PG jsonb 规范化格式）");
-        assertEquals(now.plusHours(2), found.getScheduledAt());
-        assertEquals("trace-1", found.getTraceId());
+        assertEquals("{\"rollbackable\":[1]}", found.getRollbackSummary(), "JSON 文本原样透传");
+        assertEquals("UPDATE t_demo SET a=1 WHERE id=1", found.getSqlText(), "解密往返");
+        assertEquals("trace-100", found.getTraceId());
+        assertFalse(found.isNeedsSecondConfirm());
         assertEquals(now, found.getCreatedAt());
     }
 
     @Test
-    void Ticket_insert时rollbackSummary为null_回读null() {
+    void Ticket_sqlText加密落库_原列字节不含明文_解密往返() {
         LocalDateTime now = nowMillis();
-        Ticket ticket = new Ticket();
-        ticket.setTitle("t");
-        ticket.setCreatorId(100L);
-        ticket.setInstanceIds(List.of(1L));
-        ticket.setEnvironment(Environment.STAGING);
-        ticket.setRiskLevel(RiskLevel.LOW);
-        ticket.setStatus(TicketStatus.DRAFT);
-        ticket.setTraceId("trace-1");
-        ticket.setCreatedAt(now);
-        long id = ticketDao.insertTicket(ticket);
+        String plaintext = "UPDATE t_demo SET a=1 WHERE id=1 -- sensitive";
+        long id = insertTicket(100L, 7L, plaintext, now);
 
-        Ticket found = ticketDao.findById(id);
-        assertNull(found.getRollbackSummary(), "rollback_summary 可空");
-        assertNull(found.getScheduledAt());
+        // 直接读原始列（绕过 DAO）：LONGBLOB 里必须是密文，不含明文
+        byte[] raw = jdbc.queryForObject("SELECT sql_text FROM t_ticket WHERE id=?", byte[].class, id);
+        assertNotNull(raw);
+        String rawText = new String(raw, StandardCharsets.UTF_8);
+        assertFalse(rawText.contains("sensitive"), "库里不得有 SQL 明文");
+        assertFalse(rawText.contains("UPDATE t_demo"), "库里不得有 SQL 明文（含子串）");
+        // AES-GCM NoPadding：密文长度 = iv(12B) + 明文长度 + tag(16B)
+        assertEquals(12 + plaintext.getBytes(StandardCharsets.UTF_8).length + 16, raw.length,
+                "密文长度 = iv(12B) + 密文（=明文长度，NoPadding）+ tag(16B)");
+        // SqlCipher 解密往返
+        assertEquals(plaintext, CIPHER.decrypt(raw));
+        // DAO 读出即明文
+        assertEquals(plaintext, ticketDao.findById(id).getSqlText());
     }
 
     @Test
-    void Ticket_findById_不存在返回null() {
-        assertNull(ticketDao.findById(999L));
+    void Ticket_sqlText为null_落库NULL_读回null() {
+        LocalDateTime now = nowMillis();
+        long id = insertTicket(100L, 7L, null, now);
+        assertNull(ticketDao.findById(id).getSqlText());
+        Integer nullCount = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM t_ticket WHERE id=? AND sql_text IS NULL", Integer.class, id);
+        assertEquals(1, nullCount, "null 透传为列 NULL");
     }
 
     @Test
-    void Ticket_updateStatus乐观并发_from匹配返回1并刷新updatedAt_from不匹配返回0_不存在返回0() {
+    void Ticket_updateStatus乐观并发_from匹配返回1_from不匹配返回0_不存在返回0() {
         LocalDateTime now = nowMillis();
-        long id = insertDraftTicket(100L, now);
+        long id = insertTicket(100L, 7L, "SELECT 1", now);
         LocalDateTime changedAt = now.plusMinutes(5);
 
         assertEquals(1, ticketDao.updateStatus(id, TicketStatus.DRAFT, TicketStatus.SUBMITTED, changedAt));
@@ -197,7 +220,7 @@ class PostgresDaosIT {
 
     @Test
     void Ticket_updateStatus并发竞争_同一起点只有一个调用方成功() throws Exception {
-        long id = insertDraftTicket(100L, nowMillis());
+        long id = insertTicket(100L, 7L, "SELECT 1", nowMillis());
         int threads = 8;
         ExecutorService pool = Executors.newFixedThreadPool(threads);
         CountDownLatch startGate = new CountDownLatch(1);
@@ -225,43 +248,95 @@ class PostgresDaosIT {
     }
 
     @Test
-    void Ticket_listByCreator_按创建时间倒序且只含该创建人() {
+    void Ticket_列表三形态_creator_全量_按实例集合() {
         LocalDateTime base = nowMillis();
-        insertDraftTicket(100L, base.minusHours(3));
-        insertDraftTicket(200L, base.minusHours(2));
-        insertDraftTicket(100L, base.minusHours(1));
+        insertTicket(100L, 1L, "SELECT 1", base.minusHours(3));
+        insertTicket(200L, 2L, "SELECT 2", base.minusHours(2));
+        insertTicket(100L, 2L, "SELECT 3", base.minusHours(1));
 
         List<Ticket> mine = ticketDao.listByCreator(100L);
         assertEquals(2, mine.size());
-        assertEquals(1, ticketDao.listByCreator(200L).size());
-        // 最新在前（created_at DESC, id DESC）
-        assertEquals(base.minusHours(1), mine.get(0).getCreatedAt());
-        assertEquals(base.minusHours(3), mine.get(1).getCreatedAt());
+        assertEquals(base.minusHours(1), mine.get(0).getCreatedAt(), "最新在前");
+
+        assertEquals(3, ticketDao.listAll().size(), "全部工单");
+
+        List<Ticket> scoped = ticketDao.listByInstanceIds(List.of(1L));
+        assertEquals(1, scoped.size(), "数据范围过滤按实例集合");
+        assertTrue(scoped.stream().allMatch(t -> t.getInstanceId() == 1L));
+
+        assertTrue(ticketDao.listByInstanceIds(List.of()).isEmpty(),
+                "空集合 = 数据范围为空，返回空列表而非全部");
     }
 
     @Test
-    void Ticket_listByStatus_仅返回匹配状态() {
-        long id = insertDraftTicket(100L, nowMillis());
-        ticketDao.updateStatus(id, TicketStatus.DRAFT, TicketStatus.SUBMITTED, nowMillis());
-        insertDraftTicket(200L, nowMillis());
+    void Ticket_分页读取_creator_全量_按实例集合_页码边界与计数() {
+        LocalDateTime base = nowMillis();
+        insertTicket(100L, 1L, "SELECT 1", base.minusHours(4));
+        insertTicket(200L, 2L, "SELECT 2", base.minusHours(3));
+        insertTicket(100L, 2L, "SELECT 3", base.minusHours(2));
+        insertTicket(100L, 1L, "SELECT 4", base.minusHours(1));
 
+        // 我的工单：creator=100 共 3 条，created_at 倒序分页
+        assertEquals(3L, ticketDao.countByCreator(100L));
+        List<Ticket> minePage1 = ticketDao.listByCreator(100L, 0, 2);
+        assertEquals(2, minePage1.size());
+        assertEquals(base.minusHours(1), minePage1.get(0).getCreatedAt(), "最新在前");
+        assertEquals(base.minusHours(2), minePage1.get(1).getCreatedAt());
+        List<Ticket> minePage2 = ticketDao.listByCreator(100L, 2, 2);
+        assertEquals(1, minePage2.size());
+        assertEquals(base.minusHours(4), minePage2.get(0).getCreatedAt(), "尾页取到最早一条");
+        assertTrue(ticketDao.listByCreator(100L, 9, 2).isEmpty(), "越界页为空");
+        assertEquals(0L, ticketDao.countByCreator(999L));
+
+        // 全部工单：4 条
+        assertEquals(4L, ticketDao.countAll());
+        assertEquals(3, ticketDao.listAll(1, 3).size(), "offset=1 从第二新开始");
+        assertEquals(4, ticketDao.listAll(0, -1).size(), "limit<0 取全部");
+
+        // 按实例集合：inst=1 两条、inst=2 两条；空集合 → 空 + 0
+        assertEquals(2L, ticketDao.countByInstanceIds(List.of(1L)));
+        List<Ticket> scopedPage = ticketDao.listByInstanceIds(List.of(1L), 0, 1);
+        assertEquals(1, scopedPage.size());
+        assertEquals(base.minusHours(1), scopedPage.get(0).getCreatedAt());
+        assertEquals(0L, ticketDao.countByInstanceIds(List.of()));
+        assertTrue(ticketDao.listByInstanceIds(List.of(), 0, 10).isEmpty(),
+                "空集合分页读取同样返回空（非「不过滤」）");
+        assertEquals(4L, ticketDao.countByInstanceIds(List.of(1L, 2L)), "多实例并集计数");
+    }
+
+    @Test
+    void Ticket_listByStatus与二次确认字段() {
+        long id = insertTicket(100L, 1L, "SELECT 1", nowMillis());
+        assertEquals(1, ticketDao.markNeedsSecondConfirm(id, true));
+        assertTrue(ticketDao.findById(id).isNeedsSecondConfirm());
+
+        LocalDateTime confirmedAt = nowMillis().plusMinutes(1);
+        assertEquals(1, ticketDao.updateSecondConfirm(id, 30L, confirmedAt));
+        Ticket found = ticketDao.findById(id);
+        assertEquals(30L, found.getConfirmedBy());
+        assertEquals(confirmedAt, found.getConfirmedAt());
+
+        // 另留一张 DRAFT 工单，验证状态过滤各归各类
+        insertTicket(200L, 1L, "SELECT 2", nowMillis());
+        ticketDao.updateStatus(id, TicketStatus.DRAFT, TicketStatus.SUBMITTED, nowMillis());
         assertEquals(1, ticketDao.listByStatus(TicketStatus.SUBMITTED).size());
         assertEquals(1, ticketDao.listByStatus(TicketStatus.DRAFT).size());
         assertEquals(0, ticketDao.listByStatus(TicketStatus.CLOSED).size());
     }
 
     // ------------------------------------------------------------------
-    // ApprovalDao（对照 InMemoryApprovalDaoTest）
+    // ApprovalDao（新列 + 唯一约束 + 转交原子性）
     // ------------------------------------------------------------------
 
-    private long insertApproval(long ticketId, int nodeOrder, long approverId, ApprovalMode mode,
-                                ApprovalResult result, LocalDateTime createdAt) {
+    private long insertApproval(long ticketId, int nodeOrder, ApproverType type, String ref,
+                                ApprovalMode mode, ApprovalResult result, LocalDateTime createdAt) {
         Approval approval = new Approval();
         approval.setTicketId(ticketId);
-        approval.setNodeId(0L);
+        approval.setFlowNodeId(501L);
         approval.setNodeOrder(nodeOrder);
-        approval.setApproverId(approverId);
         approval.setMode(mode);
+        approval.setApproverType(type);
+        approval.setApproverRef(ref);
         approval.setResult(result);
         approval.setCreatedAt(createdAt);
         return approvalDao.insert(approval);
@@ -272,10 +347,10 @@ class PostgresDaosIT {
         LocalDateTime now = nowMillis();
         long t1 = 1L;
         // 先插 node2 再插 node1（含同 nodeOrder 多行 = 会签组），验证排序稳定
-        insertApproval(t1, 2, 0L, ApprovalMode.AND, ApprovalResult.PENDING, now);
-        long firstOfNode1 = insertApproval(t1, 1, 10L, ApprovalMode.AND, ApprovalResult.PENDING, now);
-        long secondOfNode1 = insertApproval(t1, 1, 20L, ApprovalMode.AND, ApprovalResult.PENDING, now);
-        insertApproval(2L, 1, 0L, ApprovalMode.OR, ApprovalResult.PENDING, now);
+        insertApproval(t1, 2, ApproverType.ROLE, "DBA", ApprovalMode.OR, ApprovalResult.PENDING, now);
+        long firstOfNode1 = insertApproval(t1, 1, ApproverType.USER, "10", ApprovalMode.AND, ApprovalResult.PENDING, now);
+        long secondOfNode1 = insertApproval(t1, 1, ApproverType.ROLE, "LEAD", ApprovalMode.AND, ApprovalResult.PENDING, now);
+        insertApproval(2L, 1, ApproverType.INSTANCE_OWNER, "30", ApprovalMode.OR, ApprovalResult.PENDING, now);
 
         List<Approval> rows = approvalDao.listByTicket(t1);
         assertEquals(3, rows.size());
@@ -283,65 +358,78 @@ class PostgresDaosIT {
         assertEquals(secondOfNode1, rows.get(1).getId());
         assertEquals(2, rows.get(2).getNodeOrder());
         assertTrue(rows.stream().allMatch(r -> r.getTicketId() == t1));
+        // 指派对象与配置来源列
+        assertEquals(501L, rows.get(0).getFlowNodeId(), "flow_node_id 记录生成它的流程节点");
+        assertEquals(ApproverType.USER, rows.get(0).getApproverType());
+        assertEquals("10", rows.get(0).getApproverRef());
+        assertNull(rows.get(0).getDecidedBy(), "未决策时 decided_by 为空（与指派对象分列）");
     }
 
     @Test
-    void Approval_updateResult条件更新_PENDING到APPROVED成功并记录决策人() {
+    void Approval_insert并发重复生成_唯一约束返回0不抛异常() throws Exception {
         LocalDateTime now = nowMillis();
-        long id = insertApproval(1L, 1, 0L, ApprovalMode.AND, ApprovalResult.PENDING, now);
+        int threads = 8;
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        CountDownLatch startGate = new CountDownLatch(1);
+        CountDownLatch done = new CountDownLatch(threads);
+        AtomicInteger inserted = new AtomicInteger();
+        AtomicInteger duplicates = new AtomicInteger();
+
+        for (int i = 0; i < threads; i++) {
+            pool.submit(() -> {
+                try {
+                    startGate.await();
+                    long id = insertApproval(1L, 1, ApproverType.ROLE, "LEAD", ApprovalMode.OR,
+                            ApprovalResult.PENDING, now);
+                    if (id > 0) {
+                        inserted.incrementAndGet();
+                    } else {
+                        duplicates.incrementAndGet();
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    done.countDown();
+                }
+            });
+        }
+        startGate.countDown();
+        assertTrue(done.await(10, TimeUnit.SECONDS));
+        pool.shutdownNow();
+
+        assertEquals(1, inserted.get(), "uk_approval_assignee 下并发重复生成只插入一行");
+        assertEquals(threads - 1, duplicates.get(), "其余调用方拿到 0（视为已被别人生成）");
+    }
+
+    @Test
+    void Approval_updateResult条件更新_写decidedBy_不覆盖指派对象() {
+        LocalDateTime now = nowMillis();
+        long id = insertApproval(1L, 1, ApproverType.ROLE, "LEAD", ApprovalMode.AND, ApprovalResult.PENDING, now);
         LocalDateTime decidedAt = now.plusMinutes(10);
 
         assertEquals(1, approvalDao.updateResult(id, 30L, ApprovalResult.PENDING, ApprovalResult.APPROVED, "同意", decidedAt));
         Approval found = approvalDao.listByTicket(1L).get(0);
         assertEquals(ApprovalResult.APPROVED, found.getResult());
-        assertEquals(30L, found.getApproverId(), "ROLE 占位记录被决策人认领");
+        assertEquals(30L, found.getDecidedBy(), "实际决策人写入 decided_by");
+        assertEquals("LEAD", found.getApproverRef(), "指派对象不被覆盖（消除 approver_id 被覆盖的旧语义）");
+        assertEquals(ApproverType.ROLE, found.getApproverType());
         assertEquals("同意", found.getComment());
         assertEquals(decidedAt, found.getDecidedAt());
-    }
-
-    @Test
-    void Approval_updateResult_已决策记录返回0且不被覆盖() {
-        LocalDateTime now = nowMillis();
-        long id = insertApproval(1L, 1, 10L, ApprovalMode.AND, ApprovalResult.PENDING, now);
-        assertEquals(1, approvalDao.updateResult(id, 10L, ApprovalResult.PENDING, ApprovalResult.APPROVED, "ok", now));
 
         // 已是 APPROVED：以 PENDING 为条件的更新（无论目标是什么）都失败
-        assertEquals(0, approvalDao.updateResult(id, 10L, ApprovalResult.PENDING, ApprovalResult.REJECTED, "改主意", now));
-        Approval found = approvalDao.listByTicket(1L).get(0);
-        assertEquals(ApprovalResult.APPROVED, found.getResult());
-        assertEquals("ok", found.getComment(), "comment 不被覆盖");
+        assertEquals(0, approvalDao.updateResult(id, 30L, ApprovalResult.PENDING, ApprovalResult.REJECTED, "改主意", now));
+        assertEquals("同意", approvalDao.listByTicket(1L).get(0).getComment(), "comment 不被覆盖");
+
+        // 记录不存在
+        assertEquals(0, approvalDao.updateResult(999L, 30L, ApprovalResult.PENDING, ApprovalResult.APPROVED, null, now));
     }
 
     @Test
-    void Approval_updateResult_支持转交TRANSFERRED_记录不存在返回0() {
+    void Approval_listPending_按创建时间排序() {
         LocalDateTime now = nowMillis();
-        long id = insertApproval(1L, 1, 10L, ApprovalMode.OR, ApprovalResult.PENDING, now);
-        assertEquals(1, approvalDao.updateResult(id, 10L, ApprovalResult.PENDING, ApprovalResult.TRANSFERRED, "转交 u20", now));
-        assertEquals(ApprovalResult.TRANSFERRED, approvalDao.listByTicket(1L).get(0).getResult());
-
-        assertEquals(0, approvalDao.updateResult(999L, 10L, ApprovalResult.PENDING, ApprovalResult.APPROVED, null, now));
-    }
-
-    @Test
-    void Approval_listPendingCreatedBefore_只返回超时的PENDING记录() {
-        LocalDateTime now = nowMillis();
-        long overduePending = insertApproval(1L, 1, 0L, ApprovalMode.AND, ApprovalResult.PENDING, now.minusHours(2));
-        insertApproval(1L, 1, 20L, ApprovalMode.AND, ApprovalResult.PENDING, now.minusMinutes(5)); // 未超时
-        insertApproval(1L, 1, 30L, ApprovalMode.AND, ApprovalResult.APPROVED, now.minusHours(3)); // 超时但已决策
-        insertApproval(2L, 1, 0L, ApprovalMode.OR, ApprovalResult.REJECTED, now.minusHours(3));    // 超时但已决策
-
-        List<Approval> overdue = approvalDao.listPendingCreatedBefore(now.minusHours(1));
-        assertEquals(1, overdue.size());
-        assertEquals(overduePending, overdue.get(0).getId());
-        assertNotNull(overdue.get(0).getCreatedAt());
-    }
-
-    @Test
-    void Approval_listPending_全部PENDING按创建时间排序() {
-        LocalDateTime now = nowMillis();
-        long older = insertApproval(1L, 1, 10L, ApprovalMode.AND, ApprovalResult.PENDING, now.minusHours(2));
-        long newer = insertApproval(2L, 1, 20L, ApprovalMode.OR, ApprovalResult.PENDING, now.minusMinutes(5));
-        insertApproval(3L, 1, 30L, ApprovalMode.AND, ApprovalResult.APPROVED, now.minusHours(3)); // 非 PENDING 不含
+        long older = insertApproval(1L, 1, ApproverType.ROLE, "LEAD", ApprovalMode.AND, ApprovalResult.PENDING, now.minusHours(2));
+        long newer = insertApproval(2L, 1, ApproverType.ROLE, "DBA", ApprovalMode.OR, ApprovalResult.PENDING, now.minusMinutes(5));
+        insertApproval(3L, 1, ApproverType.ROLE, "LEAD", ApprovalMode.AND, ApprovalResult.APPROVED, now.minusHours(3));
 
         List<Approval> pending = approvalDao.listPending();
         assertEquals(2, pending.size());
@@ -349,8 +437,58 @@ class PostgresDaosIT {
         assertEquals(newer, pending.get(1).getId());
     }
 
+    @Test
+    void Approval_transfer_原子两步_原记录TRANSFERRED留痕_新记录指向代理人() {
+        LocalDateTime now = nowMillis();
+        long id = insertApproval(1L, 1, ApproverType.ROLE, "LEAD", ApprovalMode.OR, ApprovalResult.PENDING, now);
+
+        long newId = approvalDao.transfer(id, 10L, 20L, now.plusMinutes(1));
+        assertNotEquals(0L, newId, "转交成功返回新记录 id");
+
+        List<Approval> rows = approvalDao.listByTicket(1L);
+        assertEquals(2, rows.size());
+        Approval original = rows.get(0);
+        assertEquals(id, original.getId());
+        assertEquals(ApprovalResult.TRANSFERRED, original.getResult(), "原记录置 TRANSFERRED 留痕");
+        assertEquals(10L, original.getDecidedBy(), "decided_by = 转交人");
+        assertEquals("LEAD", original.getApproverRef(), "原指派对象保留");
+        Approval delegate = rows.get(1);
+        assertEquals(ApproverType.USER, delegate.getApproverType(), "新记录为 USER 型指向代理人");
+        assertEquals("20", delegate.getApproverRef());
+        assertEquals(ApprovalResult.PENDING, delegate.getResult());
+        assertEquals(1, delegate.getNodeOrder(), "代理人落在同一组");
+    }
+
+    @Test
+    void Approval_transfer_代理人已在本组_整笔回滚原记录保持PENDING() {
+        LocalDateTime now = nowMillis();
+        long id = insertApproval(1L, 1, ApproverType.ROLE, "LEAD", ApprovalMode.OR, ApprovalResult.PENDING, now);
+        // 同组已有 USER 20
+        insertApproval(1L, 1, ApproverType.USER, "20", ApprovalMode.OR, ApprovalResult.PENDING, now);
+
+        long newId = approvalDao.transfer(id, 10L, 20L, now.plusMinutes(1));
+        assertEquals(0L, newId, "代理人已在本组（撞唯一键）返回 0");
+
+        // 原记录保持 PENDING（事务回滚，TRANSFERRED 未生效）
+        List<Approval> rows = approvalDao.listByTicket(1L);
+        assertEquals(2, rows.size());
+        assertEquals(ApprovalResult.PENDING, rows.get(0).getResult());
+        assertNull(rows.get(0).getDecidedBy());
+    }
+
+    @Test
+    void Approval_transfer_记录不存在或已决策_返回0不做任何写入() {
+        LocalDateTime now = nowMillis();
+        assertEquals(0L, approvalDao.transfer(999L, 10L, 20L, now), "记录不存在");
+
+        long decided = insertApproval(1L, 1, ApproverType.ROLE, "LEAD", ApprovalMode.OR, ApprovalResult.PENDING, now);
+        assertEquals(1, approvalDao.updateResult(decided, 30L, ApprovalResult.PENDING, ApprovalResult.APPROVED, "ok", now));
+        assertEquals(0L, approvalDao.transfer(decided, 10L, 20L, now), "已决策的记录不可转交");
+        assertEquals(1, approvalDao.listByTicket(1L).size(), "不做任何写入");
+    }
+
     // ------------------------------------------------------------------
-    // RollbackDao（对照 InMemoryRollbackDaoTest）
+    // RollbackDao（反向语句加密）
     // ------------------------------------------------------------------
 
     private long insertRollback(long unitId) {
@@ -361,20 +499,30 @@ class PostgresDaosIT {
         rollbackSql.setGenerator(RollbackGenerator.MIRROR);
         rollbackSql.setStatus(RollbackStatus.GENERATED);
         rollbackSql.setCoverage(RollbackCoverage.FULL);
+        rollbackSql.setPreimageHash("p".repeat(64));
         rollbackSql.setCreatedAt(nowMillis());
         assertEquals(1, rollbackDao.insertRollbackSql(rollbackSql));
         return rollbackSql.getId();
     }
 
+    private RollbackStatement makeStatement(long rollbackId, int stmtOrder, String reverseSql, String valueParams) {
+        RollbackStatement statement = new RollbackStatement();
+        statement.setRollbackId(rollbackId);
+        statement.setStmtOrder(stmtOrder);
+        statement.setReverseSql(reverseSql);
+        statement.setValueParams(valueParams);
+        return statement;
+    }
+
     @Test
-    void Rollback_insertRollbackSql_unitId唯一_重复插入返回0_findByUnitId() {
+    void Rollback_insertRollbackSql_unitId唯一_重复插入返回0_findByUnitId_findById() {
         insertRollback(100L);
         RollbackSql duplicate = new RollbackSql();
         duplicate.setUnitId(100L);
         duplicate.setGenerator(RollbackGenerator.MIRROR);
         duplicate.setStatus(RollbackStatus.GENERATED);
         duplicate.setCoverage(RollbackCoverage.FULL);
-        assertEquals(0, rollbackDao.insertRollbackSql(duplicate), "uk_unit 冲突应返回 0");
+        assertEquals(0, rollbackDao.insertRollbackSql(duplicate), "uk_rollback_unit 冲突应返回 0");
 
         RollbackSql found = rollbackDao.findByUnitId(100L);
         assertNotNull(found);
@@ -384,40 +532,64 @@ class PostgresDaosIT {
         assertEquals(RollbackGenerator.MIRROR, found.getGenerator());
         assertEquals(2, found.getStmtCount());
         assertEquals(64L, found.getTotalBytes());
+        assertEquals("p".repeat(64), found.getPreimageHash());
+        assertEquals(found.getId(), rollbackDao.findById(found.getId()).getId());
         assertNull(rollbackDao.findByUnitId(999L));
+        assertEquals(1, rollbackDao.listAll().size());
     }
 
     @Test
-    void Rollback_insertRollbackStatement_rollbackId加stmtOrder唯一() {
+    void Rollback_反向语句加密落库_原列字节不含明文_解密往返() {
+        long rollbackId = insertRollback(100L);
+        String reverseSql = "UPDATE t_demo SET a=10 WHERE id=1 -- preimage";
+        String valueParams = "{\"id\":1,\"a\":10}";
+        assertEquals(1, rollbackDao.insertRollbackStatement(
+                makeStatement(rollbackId, 1, reverseSql, valueParams)));
+
+        // 原始列（绕过 DAO）不含明文
+        byte[] rawSql = jdbc.queryForObject(
+                "SELECT reverse_sql FROM t_rollback_statement WHERE rollback_id=? AND stmt_order=1",
+                byte[].class, rollbackId);
+        byte[] rawParams = jdbc.queryForObject(
+                "SELECT value_params FROM t_rollback_statement WHERE rollback_id=? AND stmt_order=1",
+                byte[].class, rollbackId);
+        assertFalse(new String(rawSql, StandardCharsets.UTF_8).contains("preimage"), "库里不得有反向语句明文");
+        assertFalse(new String(rawParams, StandardCharsets.UTF_8).contains("\"id\":1"), "库里不得有旧值参数明文");
+        assertEquals(reverseSql, CIPHER.decrypt(rawSql));
+        assertEquals(valueParams, CIPHER.decrypt(rawParams));
+
+        // DAO 读出即明文
+        RollbackStatement read = rollbackDao.listStatements(rollbackId, 0, 10).get(0);
+        assertEquals(reverseSql, read.getReverseSql());
+        assertEquals(valueParams, read.getValueParams());
+    }
+
+    @Test
+    void Rollback_insertRollbackStatement_rollbackId加stmtOrder唯一_valueParams可空() {
         long rollbackId = insertRollback(100L);
 
-        RollbackStatement first = makeStatement(rollbackId, 1);
-        assertEquals(1, rollbackDao.insertRollbackStatement(first));
+        assertEquals(1, rollbackDao.insertRollbackStatement(
+                makeStatement(rollbackId, 1, "UPDATE t SET a=1 WHERE id=1", null)));
+        RollbackStatement duplicateOrder = makeStatement(rollbackId, 1, "x", null);
+        assertEquals(0, rollbackDao.insertRollbackStatement(duplicateOrder), "uk_rollback_stmt_order 冲突应返回 0");
 
-        RollbackStatement duplicateOrder = makeStatement(rollbackId, 1);
-        assertEquals(0, rollbackDao.insertRollbackStatement(duplicateOrder), "uk_rb_order 冲突应返回 0");
-
-        RollbackStatement second = makeStatement(rollbackId, 2);
-        assertEquals(1, rollbackDao.insertRollbackStatement(second));
-
-        // 回读校验 BYTEA 字段往返
         RollbackStatement read = rollbackDao.listStatements(rollbackId, 0, 10).get(0);
-        assertArrayEquals(new byte[] {1, 2, 3}, read.getReverseSql());
-        assertArrayEquals(new byte[] {4, 5, 6}, read.getValueParams());
+        assertEquals("UPDATE t SET a=1 WHERE id=1", read.getReverseSql());
+        assertNull(read.getValueParams(), "value_params 可空（DDL NULL）");
     }
 
     @Test
     void Rollback_listStatements_按stmtOrder升序_分页正确() {
         long rollbackId = insertRollback(100L);
         // 乱序插入 3 条
-        rollbackDao.insertRollbackStatement(makeStatement(rollbackId, 3));
-        rollbackDao.insertRollbackStatement(makeStatement(rollbackId, 1));
-        rollbackDao.insertRollbackStatement(makeStatement(rollbackId, 2));
+        rollbackDao.insertRollbackStatement(makeStatement(rollbackId, 3, "s3", null));
+        rollbackDao.insertRollbackStatement(makeStatement(rollbackId, 1, "s1", null));
+        rollbackDao.insertRollbackStatement(makeStatement(rollbackId, 2, "s2", null));
 
         List<RollbackStatement> all = rollbackDao.listStatements(rollbackId, 0, 10);
         assertEquals(3, all.size());
         assertEquals(1, all.get(0).getStmtOrder());
-        assertEquals(2, all.get(1).getStmtOrder());
+        assertEquals("s1", all.get(0).getReverseSql());
         assertEquals(3, all.get(2).getStmtOrder());
 
         // 分批流式读取：offset + limit
@@ -427,14 +599,14 @@ class PostgresDaosIT {
 
         // 其他 rollback 的语句不混入
         long otherId = insertRollback(200L);
-        rollbackDao.insertRollbackStatement(makeStatement(otherId, 1));
+        rollbackDao.insertRollbackStatement(makeStatement(otherId, 1, "o1", null));
         assertEquals(3, rollbackDao.listStatements(rollbackId, 0, 10).size());
     }
 
     @Test
     void Rollback_markStatementApplied_条件更新幂等() {
         long rollbackId = insertRollback(100L);
-        RollbackStatement stmt = makeStatement(rollbackId, 1);
+        RollbackStatement stmt = makeStatement(rollbackId, 1, "s1", null);
         rollbackDao.insertRollbackStatement(stmt);
         long statementId = stmt.getId();
 
@@ -462,13 +634,23 @@ class PostgresDaosIT {
         assertEquals(0, rollbackDao.updateStatus(99999L, RollbackStatus.VERIFIED, null));
     }
 
-    private RollbackStatement makeStatement(long rollbackId, int stmtOrder) {
-        RollbackStatement statement = new RollbackStatement();
-        statement.setRollbackId(rollbackId);
-        statement.setStmtOrder(stmtOrder);
-        statement.setReverseSql(new byte[] {1, 2, 3});
-        statement.setValueParams(new byte[] {4, 5, 6});
-        return statement;
+    @Test
+    void Rollback_listAll分页_按id倒序_计数() {
+        long r1 = insertRollback(100L);
+        long r2 = insertRollback(200L);
+        insertRollback(300L);
+        insertRollback(400L);
+
+        assertEquals(4L, rollbackDao.countAll());
+        List<RollbackSql> page1 = rollbackDao.listAll(0, 3);
+        assertEquals(3, page1.size());
+        assertTrue(page1.get(0).getId() > page1.get(1).getId(), "id 倒序（最新在前）");
+        List<RollbackSql> page2 = rollbackDao.listAll(3, 3);
+        assertEquals(1, page2.size());
+        assertEquals(r1, page2.get(0).getId(), "最早一条在尾页");
+        assertTrue(rollbackDao.listAll(99, 3).isEmpty(), "越界页为空");
+        assertEquals(4, rollbackDao.listAll(0, -1).size(), "limit<0 取全部");
+        assertTrue(r2 > r1, "自增 id 递增（前提断言）");
     }
 
     // ------------------------------------------------------------------
@@ -526,7 +708,7 @@ class PostgresDaosIT {
 
         // 未过期的还在：unit 30 仍持有 inst:3
         assertFalse(execLockDao.tryAcquire(makeLock("inst:3", 31L, "worker-d", now, now.plusSeconds(30))));
-        // 过期的已被清走：inst:1 可重新抢到（JDBC 版过期锁经 reaper 清理后恢复，见类 javadoc 语义差异说明）
+        // 过期的已被清走：inst:1 可重新抢到（JDBC 版过期锁经 reaper 清理后恢复）
         assertTrue(execLockDao.tryAcquire(makeLock("inst:1", 11L, "worker-e", now, now.plusSeconds(30))));
     }
 
@@ -546,6 +728,8 @@ class PostgresDaosIT {
         log.setInstanceId(1L);
         log.setDetail(new byte[] {1, 2, 3});
         log.setResult("SUCCESS");
+        log.setClientIp("10.0.0.1");
+        log.setUserAgent("sqlaudit-it");
         log.setTraceId("trace-1");
         log.setPrevHash(prevHash);
         log.setHash(hash);
@@ -553,8 +737,8 @@ class PostgresDaosIT {
     }
 
     @Test
-    void Audit_创世链头_lastSeq为0_lastHash是64个0() {
-        // 无锁读即可校验创世状态（cleanAllTables 已重放创世块）
+    void Audit_种子创世链头_lastSeq为0_lastHash是64个0() {
+        // 无锁读即可校验创世状态（cleanAndSeed 已重放种子里的创世块）
         ChainHead head = auditDao.peekChainHead();
         assertEquals(0L, head.getLastSeq());
         assertEquals("0".repeat(64), head.getLastHash());
@@ -588,7 +772,7 @@ class PostgresDaosIT {
         assertEquals(2L, current.getLastSeq());
         assertEquals("hash-2", current.getLastHash());
 
-        // seq 递增无空洞 + prev_hash 链衔接 + detail BYTEA 往返
+        // seq 递增无空洞 + prev_hash 链衔接 + detail 与 client_ip / user_agent 往返
         List<AuditLog> logs = auditDao.listBySeqRange(1L, 2L);
         assertEquals(2, logs.size());
         assertEquals(1L, logs.get(0).getSeq());
@@ -596,6 +780,8 @@ class PostgresDaosIT {
         assertEquals(genesis, logs.get(0).getPrevHash());
         assertEquals("hash-1", logs.get(1).getPrevHash());
         assertArrayEquals(new byte[] {1, 2, 3}, logs.get(0).getDetail());
+        assertEquals("10.0.0.1", logs.get(0).getClientIp(), "审计链规范字段 client_ip 写入");
+        assertEquals("sqlaudit-it", logs.get(0).getUserAgent(), "审计链规范字段 user_agent 写入");
         assertTrue(logs.get(0).getId() != logs.get(1).getId(), "物理主键自增且不覆盖");
     }
 
@@ -615,6 +801,31 @@ class PostgresDaosIT {
         }
 
         assertEquals(0, auditDao.listBySeqRange(100L, 200L).size());
+    }
+
+    @Test
+    void Audit_listBySeqRange分页_页码边界与计数() {
+        // 乱序直插 1..6（缺 seq=5 之外无空洞；分页语义与插入顺序无关）
+        for (long seq = 1; seq <= 4; seq++) {
+            auditDao.insert(makeLog(seq, "prev-" + seq, "hash-" + seq));
+        }
+        auditDao.insert(makeLog(6L, "prev-6", "hash-6"));
+        auditDao.insert(makeLog(5L, "prev-5", "hash-5"));
+
+        assertEquals(6L, auditDao.countBySeqRange(1L, 6L));
+        assertEquals(2L, auditDao.countBySeqRange(2L, 3L), "区间计数按边界收窄");
+
+        List<AuditLog> page1 = auditDao.listBySeqRange(1L, 6L, 0, 2);
+        assertEquals(2, page1.size());
+        assertEquals(1L, page1.get(0).getSeq());
+        assertEquals(2L, page1.get(1).getSeq());
+        List<AuditLog> page3 = auditDao.listBySeqRange(1L, 6L, 4, 2);
+        assertEquals(2, page3.size());
+        assertEquals(5L, page3.get(0).getSeq(), "offset 越过缺号区间后仍按 seq 升序");
+        assertEquals(6L, page3.get(1).getSeq());
+        assertTrue(auditDao.listBySeqRange(1L, 6L, 99, 2).isEmpty(), "越界页为空");
+        assertEquals(6, auditDao.listBySeqRange(1L, 6L, 0, -1).size(), "limit<0 取全部");
+        assertEquals(0L, auditDao.countBySeqRange(100L, 200L));
     }
 
     @Test
@@ -658,5 +869,263 @@ class PostgresDaosIT {
                 assertEquals(logs.get(i - 1).getHash(), logs.get(i).getPrevHash(), "prev_hash 链衔接");
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // RoleDao：整体替换 + 读回（RBAC 数据面）
+    // ------------------------------------------------------------------
+
+    @Test
+    void Role_种子角色读回_经code查_整体替换权限与实例授权() {
+        // 种子：5 个内置角色，SUPER_ADMIN 持有全部权限点
+        Role superAdmin = roleDao.findByCode("SUPER_ADMIN");
+        assertNotNull(superAdmin);
+        assertTrue(superAdmin.isBuiltin(), "内置角色 builtin=TRUE");
+        assertEquals(InstanceScope.ALL, superAdmin.getInstanceScope());
+
+        Role dev = roleDao.findByCode("DEV");
+        List<Long> devPermissions = roleDao.listPermissionIds(dev.getId());
+        assertFalse(devPermissions.isEmpty(), "种子 DEV 授权非空");
+        List<Long> devInstances = roleDao.listInstanceIds(dev.getId());
+        assertTrue(devInstances.isEmpty(), "ALL 数据范围角色不写实例授权行");
+
+        // 建一个自定义角色 + 两个权限点 + 一个实例，再整体替换读回
+        Role custom = new Role();
+        custom.setCode("TEAM_X");
+        custom.setName("团队 X");
+        custom.setDescription("测试自定义角色");
+        custom.setBuiltin(false);
+        custom.setInstanceScope(InstanceScope.SELECTED);
+        long roleId = roleDao.insert(custom);
+        assertTrue(roleId > 0);
+
+        List<Long> permissionIds = jdbc.queryForList(
+                "SELECT id FROM t_permission WHERE code IN ('ticket.submit','query.run') ORDER BY id", Long.class);
+        Long devId = jdbc.queryForObject("SELECT id FROM t_user WHERE username='dev'", Long.class);
+        roleDao.replacePermissions(roleId, permissionIds, 1L);
+        roleDao.replaceInstances(roleId, List.of(7L, 8L), 1L);
+        roleDao.replaceUserRoles(devId, List.of(roleId), 1L);
+
+        assertEquals(permissionIds, roleDao.listPermissionIds(roleId), "权限授权整体替换后按 id 升序读回");
+        assertEquals(List.of(7L, 8L), roleDao.listInstanceIds(roleId), "实例授权整体替换后读回");
+        assertEquals(List.of("TEAM_X"),
+                roleDao.listByUserId(devId).stream().map(Role::getCode).toList(), "用户角色替换后读回");
+        assertEquals(1, roleDao.countUsers(roleId));
+        assertTrue(roleDao.hasActiveMember(roleId, null), "dev 是 ACTIVE 成员");
+        assertFalse(roleDao.hasActiveMember(roleId, devId), "排除 dev 后该角色无人（审批流节点保存的判空依据）");
+
+        // 再替换为空 = 清空
+        roleDao.replaceInstances(roleId, List.of(), null);
+        assertTrue(roleDao.listInstanceIds(roleId).isEmpty(), "空集合清空授权");
+
+        // update：name / description / instance_scope 可改，code / builtin 不动
+        custom.setId(roleId);
+        custom.setName("团队 X2");
+        custom.setDescription("改名后");
+        assertEquals(1, roleDao.update(custom));
+        Role reloaded = roleDao.findById(roleId);
+        assertEquals("TEAM_X", reloaded.getCode(), "code 不被 update 覆盖");
+        assertEquals("团队 X2", reloaded.getName());
+        assertFalse(reloaded.isBuiltin());
+        assertNotNull(reloaded.getUpdatedAt());
+
+        // delete：连带用户关联 / 权限授权 / 实例授权
+        assertEquals(1, roleDao.delete(roleId));
+        assertNull(roleDao.findById(roleId));
+        assertTrue(roleDao.listByUserId(devId).isEmpty());
+        assertEquals(0, roleDao.countUsers(roleId));
+    }
+
+    @Test
+    void Role_内置角色替换权限后防自锁计数可见() {
+        // 种子 SUPER_ADMIN 持有全部权限点（含 meta）→ countActiveMetaPermissionHolders >= 1
+        assertTrue(userDao.countActiveMetaPermissionHolders() >= 1,
+                "种子状态必须满足防自锁不变式（admin 经 SUPER_ADMIN 持有 rbac.manage）");
+        // lockMetaPermissions 只锁元权限行（事务外调用仅作冒烟，语义测试在事务内才有意义）
+        List<Long> locked = userDao.lockMetaPermissions();
+        assertEquals(1, locked.size(), "只有 rbac.manage 一个元权限点");
+        Integer metaCount = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM t_permission WHERE meta = TRUE", Integer.class);
+        assertEquals(metaCount, locked.size());
+    }
+
+    // ------------------------------------------------------------------
+    // PermissionDao：目录 + 接口绑定（只读数据面）
+    // ------------------------------------------------------------------
+
+    @Test
+    void Permission_目录与接口绑定读回_角色授权对() {
+        var permissions = permissionDao.listAll();
+        assertTrue(permissions.size() >= 14, "权限点目录非空（basic + 13 业务权限点）");
+        assertTrue(permissions.get(0).isAllUsers(), "basic 是 all_users");
+        assertTrue(permissions.stream().anyMatch(p -> p.isMeta()), "rbac.manage 是元权限");
+
+        var basic = permissionDao.findByCode("basic");
+        assertNotNull(basic);
+        List<PermissionApi> basicApis = permissionDao.listApisByPermission(basic.getId());
+        assertTrue(basicApis.stream().anyMatch(a ->
+                        "GET".equals(a.getHttpMethod()) && "/api/tickets".equals(a.getUrlPattern())),
+                "接口绑定按「方法 + 处理器模式」原文存储");
+        assertTrue(permissionDao.listAllApis().size() > basicApis.size(), "全部绑定 > 单权限点绑定");
+
+        // 角色授权对：SUPER_ADMIN → 全部业务权限点
+        // （basic 为 all_users，种子按契约 §2.4 不写授权行——它对所有人默认放行，
+        //  所以「角色持有」的断言对象是非 all_users 的权限点）
+        Role superAdmin = roleDao.findByCode("SUPER_ADMIN");
+        List<long[]> pairs = permissionDao.listRolePermissionPairs();
+        assertFalse(pairs.isEmpty());
+        long held = pairs.stream().filter(pair -> pair[0] == superAdmin.getId()).count();
+        long nonAllUsers = permissions.stream().filter(p -> !p.isAllUsers()).count();
+        assertEquals(nonAllUsers, held, "SUPER_ADMIN 经角色持有全部非 all_users 权限点");
+        var queryRun = permissionDao.findByCode("query.run");
+        assertNotNull(queryRun);
+        assertTrue(permissionDao.listRoleIdsByPermission(queryRun.getId()).stream()
+                        .anyMatch(id -> id.longValue() == superAdmin.getId().longValue()),
+                "listRoleIdsByPermission 反向查角色（非 all_users 权限点）");
+    }
+
+    // ------------------------------------------------------------------
+    // FlowRuleDao + FlowNodeDao：范围判重、节点整体替换、删除连带
+    // ------------------------------------------------------------------
+
+    @Test
+    void Flow_种子全局流程_findByScope判重_update不改范围_删除连带节点() {
+        FlowRule medium = flowRuleDao.findByScope(null, RiskLevel.MEDIUM);
+        assertNotNull(medium, "种子全局 MEDIUM 流程");
+        assertNull(medium.getInstanceId());
+        assertTrue(medium.getEnabled());
+        assertNotNull(medium.getUpdatedAt());
+        assertEquals(List.of("LEAD"), flowNodeDao.listByFlowRule(medium.getId())
+                .stream().map(FlowNode::getApproverRef).toList(), "种子 MEDIUM 节点 = LEAD");
+
+        // 全量加载：4 条全局流程 × 各自节点
+        assertEquals(4, flowRuleDao.listAll().size());
+        assertTrue(flowNodeDao.listAll().size() >= 6, "种子节点 LEAD/LEAD+DBA/LEAD+DBA+ADMIN 共 6 条");
+
+        // findByScope 对实例范围与全局范围互不混淆
+        assertNull(flowRuleDao.findByScope(9L, RiskLevel.MEDIUM), "实例专用流程尚不存在");
+
+        // update 只改 name / enabled
+        medium.setName("全局 · MEDIUM v2");
+        medium.setEnabled(false);
+        assertEquals(1, flowRuleDao.update(medium));
+        FlowRule reloaded = flowRuleDao.findById(medium.getId());
+        assertEquals("全局 · MEDIUM v2", reloaded.getName());
+        assertFalse(reloaded.getEnabled());
+        assertNull(reloaded.getInstanceId(), "范围不被 update 覆盖");
+        assertEquals(RiskLevel.MEDIUM, reloaded.getRiskLevel(), "风险等级不被 update 覆盖");
+
+        // 新建实例专用流程 + 整体替换节点 + 删除连带
+        FlowRule instanceFlow = new FlowRule();
+        instanceFlow.setName("实例 9 · HIGH");
+        instanceFlow.setInstanceId(9L);
+        instanceFlow.setRiskLevel(RiskLevel.HIGH);
+        instanceFlow.setEnabled(true);
+        long flowId = flowRuleDao.insert(instanceFlow);
+        assertTrue(flowId > 0);
+        assertNotNull(flowRuleDao.findByScope(9L, RiskLevel.HIGH));
+
+        FlowNode n1 = new FlowNode();
+        n1.setNodeOrder(1);
+        n1.setApproverType(ApproverType.USER);
+        n1.setApproverRef("10");
+        n1.setMode(ApprovalMode.AND);
+        FlowNode n2 = new FlowNode();
+        n2.setNodeOrder(1);
+        n2.setApproverType(ApproverType.USER);
+        n2.setApproverRef("20");
+        n2.setMode(ApprovalMode.AND);
+        FlowNode n3 = new FlowNode();
+        n3.setNodeOrder(2);
+        n3.setApproverType(ApproverType.INSTANCE_OWNER);
+        n3.setApproverRef("*");
+        n3.setMode(ApprovalMode.OR);
+        assertEquals(3, flowNodeDao.replaceNodes(flowId, List.of(n1, n2, n3)));
+
+        List<FlowNode> nodes = flowNodeDao.listByFlowRule(flowId);
+        assertEquals(3, nodes.size());
+        assertEquals(flowId, nodes.get(0).getFlowRuleId(), "flowRuleId 由 replaceNodes 统一赋值");
+        assertEquals(List.of("10", "20", "*"), nodes.stream().map(FlowNode::getApproverRef).toList());
+        assertEquals(2, nodes.get(2).getNodeOrder());
+
+        // 再整体替换 = 旧节点全删
+        FlowNode n4 = new FlowNode();
+        n4.setNodeOrder(1);
+        n4.setApproverType(ApproverType.ROLE);
+        n4.setApproverRef("DBA");
+        n4.setMode(ApprovalMode.OR);
+        assertEquals(1, flowNodeDao.replaceNodes(flowId, List.of(n4)));
+        assertEquals(List.of("DBA"), flowNodeDao.listByFlowRule(flowId)
+                .stream().map(FlowNode::getApproverRef).toList());
+
+        // 删流程连带节点（单事务）
+        assertEquals(1, flowRuleDao.delete(flowId));
+        assertNull(flowRuleDao.findById(flowId));
+        assertTrue(flowNodeDao.listByFlowRule(flowId).isEmpty(), "删除流程连带节点");
+        // deleteByFlowRule 也可单独调用
+        assertEquals(1, flowNodeDao.deleteByFlowRule(medium.getId()));
+        assertTrue(flowNodeDao.listByFlowRule(medium.getId()).isEmpty());
+    }
+
+    @Test
+    void Flow_实例专用流程唯一约束_库级兜底() {
+        FlowRule flow = new FlowRule();
+        flow.setName("实例 5 · LOW");
+        flow.setInstanceId(5L);
+        flow.setRiskLevel(RiskLevel.LOW);
+        flow.setEnabled(true);
+        assertTrue(flowRuleDao.insert(flow) > 0);
+
+        FlowRule duplicate = new FlowRule();
+        duplicate.setName("实例 5 · LOW 重复");
+        duplicate.setInstanceId(5L);
+        duplicate.setRiskLevel(RiskLevel.LOW);
+        duplicate.setEnabled(true);
+        org.junit.jupiter.api.Assertions.assertThrows(Exception.class, () -> flowRuleDao.insert(duplicate),
+                "uk_flow_scope_risk(instance_id, risk_level) 库级唯一约束");
+    }
+
+    // ------------------------------------------------------------------
+    // TableRemarkDao（表备注词典）
+    // ------------------------------------------------------------------
+
+    @Test
+    void TableRemark_upsert覆盖与查询_createdBy保持首次写入人() {
+        Long adminId = jdbc.queryForObject("SELECT id FROM t_user WHERE username='admin'", Long.class);
+        Long devId = jdbc.queryForObject("SELECT id FROM t_user WHERE username='dev'", Long.class);
+
+        TableRemark r = new TableRemark();
+        r.setInstanceId(9L);
+        r.setSchemaName("public");
+        r.setTableName("t_demo");
+        r.setRemark("订单主表");
+        r.setCreatedBy(adminId);
+        assertEquals(1, tableRemarkDao.upsert(r), "首次写入影响 1 行");
+
+        List<TableRemark> list = tableRemarkDao.findByInstanceAndSchema(9L, "public");
+        assertEquals(1, list.size());
+        assertEquals("t_demo", list.get(0).getTableName());
+        assertEquals("订单主表", list.get(0).getRemark());
+        assertEquals(adminId, list.get(0).getCreatedBy());
+        assertNotNull(list.get(0).getCreatedAt());
+
+        // 覆盖：remark 更新、created_by 保持首次写入人（ON CONFLICT DO UPDATE）
+        TableRemark update = new TableRemark();
+        update.setInstanceId(9L);
+        update.setSchemaName("public");
+        update.setTableName("t_demo");
+        update.setRemark("订单主表（改）");
+        update.setCreatedBy(devId);
+        assertEquals(1, tableRemarkDao.upsert(update), "PG ON CONFLICT DO UPDATE 影响 1 行");
+        List<TableRemark> after = tableRemarkDao.findByInstanceAndSchema(9L, "public");
+        assertEquals(1, after.size());
+        assertEquals("订单主表（改）", after.get(0).getRemark());
+        assertEquals(adminId, after.get(0).getCreatedBy(), "覆盖不改首次写入人");
+
+        // 按库隔离 + 删除（清空备注语义）
+        assertTrue(tableRemarkDao.findByInstanceAndSchema(9L, "other").isEmpty());
+        assertEquals(1, tableRemarkDao.delete(9L, "public", "t_demo"));
+        assertEquals(0, tableRemarkDao.delete(9L, "public", "t_demo"), "再删 0 行");
+        assertTrue(tableRemarkDao.findByInstanceAndSchema(9L, "public").isEmpty());
     }
 }

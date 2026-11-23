@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * LIMIT 注入测试（设计文档 §6.2 三层保护第 1 层 + 三种拼接出错 case）。
+ * LIMIT 注入测试（README §4.1 三层保护第 1 层 + 三种拼接出错 case）。
  */
 class LimitInjectorTest {
 

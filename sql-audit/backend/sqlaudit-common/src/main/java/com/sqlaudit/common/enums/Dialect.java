@@ -5,7 +5,7 @@ import com.fasterxml.jackson.annotation.JsonValue;
 
 /**
  * SQL 方言。
- * <p>对应设计文档 §2.2 / §4.1，三类生产库账号物理隔离。</p>
+ * <p>对应 README §3.1 / README §4.3，三类生产库账号物理隔离。</p>
  * <p>对应 {@code t_instance.dialect} 列（存储码 = 枚举名），见 {@link CodedEnum}。</p>
  */
 public enum Dialect implements CodedEnum {

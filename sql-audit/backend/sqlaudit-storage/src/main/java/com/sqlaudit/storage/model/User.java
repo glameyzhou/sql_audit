@@ -5,10 +5,11 @@ import com.sqlaudit.common.enums.UserStatus;
 import java.time.LocalDateTime;
 
 /**
- * 用户实体（对应 t_user 表，设计文档 §8 账号与权限）。
+ * 用户实体（对应 t_user 表）。
  *
- * <p>唯一写入方：sqlaudit-auth。三种账号来源：企微（WEWORK，走 OAuth 免密）与
- * 本地应急账号（LOCAL，bcrypt 密码 + 可选 TOTP）。特权操作每次实时校验 status。</p>
+ * <p>唯一写入方：sqlaudit-server。账号来源见 {@link UserSource}（当前只用 LOCAL，
+ * bcrypt 密码；企微 OAuth 未实现）。<strong>没有删除用户的功能，停用即可</strong>
+ * （无 deleted_at 列），{@code status} 每请求实时校验，停用即刻失效。</p>
  */
 public class User {
 
@@ -20,18 +21,13 @@ public class User {
     private String email;
     /** WEWORK / LOCAL */
     private UserSource source;
-    /** 企微 userid/openid；source=WEWORK 时非空 */
-    private String weworkOpenid;
-    /** 本地账号 bcrypt 哈希；source=LOCAL 时非空 */
+    /** bcrypt 哈希；source=LOCAL 时非空 */
     private String passwordHash;
-    /** 本地账号 TOTP 密钥（加密） */
-    private String totpSecret;
     /** ACTIVE / DISABLED */
     private UserStatus status;
     private LocalDateTime lastLoginAt;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
-    private LocalDateTime deletedAt;
 
     public Long getId() {
         return id;
@@ -73,28 +69,12 @@ public class User {
         this.source = source;
     }
 
-    public String getWeworkOpenid() {
-        return weworkOpenid;
-    }
-
-    public void setWeworkOpenid(String weworkOpenid) {
-        this.weworkOpenid = weworkOpenid;
-    }
-
     public String getPasswordHash() {
         return passwordHash;
     }
 
     public void setPasswordHash(String passwordHash) {
         this.passwordHash = passwordHash;
-    }
-
-    public String getTotpSecret() {
-        return totpSecret;
-    }
-
-    public void setTotpSecret(String totpSecret) {
-        this.totpSecret = totpSecret;
     }
 
     public UserStatus getStatus() {
@@ -127,13 +107,5 @@ public class User {
 
     public void setUpdatedAt(LocalDateTime updatedAt) {
         this.updatedAt = updatedAt;
-    }
-
-    public LocalDateTime getDeletedAt() {
-        return deletedAt;
-    }
-
-    public void setDeletedAt(LocalDateTime deletedAt) {
-        this.deletedAt = deletedAt;
     }
 }

@@ -2,7 +2,6 @@ package com.sqlaudit.worker.gateway;
 
 import com.sqlaudit.common.crypto.CredentialCrypto;
 import com.sqlaudit.common.enums.Dialect;
-import com.sqlaudit.common.enums.Environment;
 import com.sqlaudit.common.enums.InstanceStatus;
 import com.sqlaudit.storage.impl.jdbc.mysql.MySqlCredentialDao;
 import com.sqlaudit.storage.impl.jdbc.mysql.MySqlInstanceDao;
@@ -216,9 +215,9 @@ class JdbcStructureFingerprintProviderIT {
 
     private static String readV1Ddl() throws Exception {
         try (InputStream in = JdbcStructureFingerprintProviderIT.class.getClassLoader()
-                .getResourceAsStream("db/migration/mysql/V1__init.sql")) {
+                .getResourceAsStream("db/migration/mysql/V1__schema.sql")) {
             if (in == null) {
-                throw new IllegalStateException("classpath 下未找到 db/migration/mysql/V1__init.sql");
+                throw new IllegalStateException("classpath 下未找到 db/migration/mysql/V1__schema.sql");
             }
             return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }
@@ -251,7 +250,6 @@ class JdbcStructureFingerprintProviderIT {
         Instance inst = new Instance();
         inst.setName(name);
         inst.setDialect(Dialect.MYSQL);
-        inst.setEnvironment(Environment.PROD);
         inst.setOwnerId(1L);
         inst.setHost(HOST);
         inst.setPort(PORT);
@@ -265,8 +263,8 @@ class JdbcStructureFingerprintProviderIT {
         // 凭据加密存储：与 provider 解密端共用同一 CredentialCrypto 密钥（默认开发密钥）
         String passwordEnc = CredentialCrypto.encrypt(PASSWORD);
         platformJdbc.update(
-                "INSERT INTO t_credential (instance_id, account_type, username, password_enc, key_version) "
-                        + "VALUES (?, 'RO_META', ?, ?, 1)",
+                "INSERT INTO t_credential (instance_id, account_type, username, password_enc) "
+                        + "VALUES (?, 'RO_META', ?, ?)",
                 targetInstanceId, USER, passwordEnc);
     }
 }

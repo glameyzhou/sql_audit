@@ -80,6 +80,27 @@ class InMemoryAuditDaoTest {
         assertEquals(0, dao.listBySeqRange(100L, 200L).size());
     }
 
+    @Test
+    void listBySeqRange分页_页码边界与计数() {
+        for (long seq = 1; seq <= 5; seq++) {
+            dao.insert(makeLog(seq, "prev-" + seq, "hash-" + seq));
+        }
+
+        assertEquals(5L, dao.countBySeqRange(1L, 5L));
+        assertEquals(2L, dao.countBySeqRange(2L, 3L), "区间计数按边界收窄");
+
+        List<AuditLog> page1 = dao.listBySeqRange(1L, 5L, 0, 2);
+        assertEquals(2, page1.size());
+        assertEquals(1L, page1.get(0).getSeq());
+        assertEquals(2L, page1.get(1).getSeq());
+        List<AuditLog> page3 = dao.listBySeqRange(1L, 5L, 4, 2);
+        assertEquals(1, page3.size());
+        assertEquals(5L, page3.get(0).getSeq());
+        assertTrue(dao.listBySeqRange(1L, 5L, 99, 2).isEmpty(), "越界页为空");
+        assertEquals(5, dao.listBySeqRange(1L, 5L, 0, -1).size(), "limit<0 取全部");
+        assertEquals(0L, dao.countBySeqRange(100L, 200L));
+    }
+
     private AuditLog makeLog(long seq, String prevHash, String hash) {
         AuditLog log = new AuditLog();
         log.setSeq(seq);

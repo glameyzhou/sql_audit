@@ -8,12 +8,12 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 回滚计划（设计文档 §5.2 / §5.9）。
+ * 回滚计划（README §4.4）。
  *
- * <p>提交预览时给出「本单可回滚 / 不可回滚」清单（§5.1 能力边界）。
+ * <p>提交预览时给出「本单可回滚 / 不可回滚」清单（README §4.4 能力边界）。
  * 覆盖率 + 不可用原因，对应 {@code rollback_sql.coverage} / {@code unavailable_reason}。</p>
  *
- * <p>契约要点（§5.9）：</p>
+ * <p>契约要点（README §4.4）：</p>
  * <ul>
  *   <li>生成时机：前镜像在 Worker 执行时刻、同一连接同一事务内采集，审核/审批阶段不提前生成；</li>
  *   <li>预览阶段只给出「回滚能力预判」，不落地前镜像值；</li>

@@ -6,7 +6,7 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import java.util.Set;
 
 /**
- * 工单状态机（设计文档 §3.2）。
+ * 工单状态机（README §4.2）。
  *
  * <pre>
  * draft → submitted → auditing → (approved | rejected) → scheduled → executing
@@ -21,9 +21,9 @@ import java.util.Set;
  *   <li>{@code partially_succeeded}：多语句工单不是事务，部分成功需按 unit 倒序回滚。</li>
  * </ul>
  *
- * <p>非法迁移必须由调用方（sqlaudit-workflow）抛异常，不得静默忽略（§B-3 验收）。</p>
+ * <p>非法迁移必须由调用方（sqlaudit-workflow）抛异常，不得静默忽略（验收）。</p>
  *
- * <p>存储码为小写（{@code t_ticket.status}，§3.2），见 {@link CodedEnum}。</p>
+ * <p>存储码为小写（{@code t_ticket.status}，README §4.2），见 {@link CodedEnum}。</p>
  */
 public enum TicketStatus implements CodedEnum {
     DRAFT("draft"),

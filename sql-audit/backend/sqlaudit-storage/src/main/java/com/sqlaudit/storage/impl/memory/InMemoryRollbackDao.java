@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * {@link RollbackDao} 的内存 fake 实现（W0-3，供流 A 单测解耦真实数据库）。
  *
- * <p>语义对齐设计文档 §5.9 与接口 javadoc：</p>
+ * <p>语义对齐README §4.4 与接口 javadoc：</p>
  * <ul>
  *   <li>唯一约束以内存判重模拟：rollback_sql.unit_id 唯一、
  *       rollback_statement 的 (rollback_id, stmt_order) 唯一，冲突返回 0；</li>
@@ -124,6 +124,19 @@ public class InMemoryRollbackDao implements RollbackDao {
         return result;
     }
 
+    @Override
+    public synchronized List<RollbackSql> listAll(int offset, int limit) {
+        List<RollbackSql> sorted = listAll();
+        int from = Math.min(Math.max(offset, 0), sorted.size());
+        int to = limit < 0 ? sorted.size() : Math.min(from + limit, sorted.size());
+        return new ArrayList<>(sorted.subList(from, to));
+    }
+
+    @Override
+    public synchronized long countAll() {
+        return rollbackStore.size();
+    }
+
 
     // ---- 内部工具 ----
 
@@ -138,9 +151,6 @@ public class InMemoryRollbackDao implements RollbackDao {
         dest.setCoverage(src.getCoverage());
         dest.setUnavailableReason(src.getUnavailableReason());
         dest.setPreimageHash(src.getPreimageHash());
-        dest.setBinlogStart(src.getBinlogStart());
-        dest.setBinlogEnd(src.getBinlogEnd());
-        dest.setSnapshotUri(src.getSnapshotUri());
         dest.setExpiresAt(src.getExpiresAt());
         dest.setCreatedAt(src.getCreatedAt());
         return dest;

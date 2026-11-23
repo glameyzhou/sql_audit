@@ -9,7 +9,7 @@ import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
- * 查询门禁（设计文档 §6.2 查询链路第一跳）。
+ * 查询门禁（README §4.1 查询链路第一跳）。
  *
  * <p>只读判定完全复用 A-1 parser 契约（{@link SqlParserService} +
  * {@link ParsedStatement#isReadOnly()}），本类不重新实现任何解析/判定逻辑。
@@ -17,7 +17,7 @@ import java.util.stream.Collectors;
  * <ul>
  *   <li>多条语句 → 拒绝（查询通道单语句）；</li>
  *   <li>非只读（isReadOnly=false 或命中 dangerousClauses）→ 拒绝并给出原因，
- *       用户可降级走审核工单（§6.2 流程图右侧分支）；</li>
+ *       用户可降级走审核工单（README §4.1 流程图右侧分支）；</li>
  *   <li>解析失败（LOW_CONFIDENCE）→ parser 已判 readOnly=false，同上拒绝。</li>
  * </ul>
  */

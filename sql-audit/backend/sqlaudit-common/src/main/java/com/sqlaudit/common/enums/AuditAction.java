@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 
 /**
- * 审计动作（设计文档 §7.2 事件表，{@code t_audit_log.action}）。
+ * 审计动作（README §4.1 事件表，{@code t_audit_log.action}）。
  *
  * <p>审计日志是 append-only 的 hash 链：历史行里有什么值就得原样读出来重算哈希，所以
  * {@code AuditEvent} / {@code AuditLog} 的字段保持 String；本枚举只约束<strong>代码里手写的
@@ -15,7 +15,7 @@ import com.fasterxml.jackson.annotation.JsonValue;
  * 与 {@code ROLLBACK_EXECUTE} 等其余动作同风格，方便按动作检索与告警路由。</p>
  */
 public enum AuditAction implements CodedEnum {
-    /** 登录（§7.2 事件表） */
+    /** 登录（README §4.1 事件表） */
     LOGIN("LOGIN"),
     /** 创建本地账号 */
     USER_CREATE("USER_CREATE"),
@@ -27,6 +27,12 @@ public enum AuditAction implements CodedEnum {
     ROLE_ASSIGN("ROLE_ASSIGN"),
     /** 配置角色-权限点映射 */
     PERMISSION_ASSIGN("PERMISSION_ASSIGN"),
+    /** 新增角色（RBAC 角色管理） */
+    ROLE_CREATE("ROLE_CREATE"),
+    /** 修改角色（权限点 / 数据范围等） */
+    ROLE_UPDATE("ROLE_UPDATE"),
+    /** 删除角色 */
+    ROLE_DELETE("ROLE_DELETE"),
     /** 新增实例 */
     INSTANCE_CREATE("INSTANCE_CREATE"),
     /** 修改实例 */
@@ -49,12 +55,14 @@ public enum AuditAction implements CodedEnum {
     QUERY_EXECUTED("QUERY_EXECUTED"),
     /** 工单状态迁移 */
     TICKET_STATE_CHANGE("TICKET_STATE_CHANGE"),
-    /** 执行单元执行（§7.2 事件表） */
+    /** 执行单元执行（README §4.1 事件表） */
     UNIT_EXEC("UNIT_EXEC"),
     /** 回滚回放（整次） */
     ROLLBACK_EXECUTE("ROLLBACK_EXECUTE"),
     /** 回滚回放（逐条反向语句） */
-    ROLLBACK_STATEMENT_APPLIED("ROLLBACK_STATEMENT_APPLIED");
+    ROLLBACK_STATEMENT_APPLIED("ROLLBACK_STATEMENT_APPLIED"),
+    /** 设置 / 清空表备注（PUT /api/table-remarks；detail 里区分 set / clear） */
+    TABLE_REMARK_UPDATE("TABLE_REMARK_UPDATE");
 
     private final String code;
 

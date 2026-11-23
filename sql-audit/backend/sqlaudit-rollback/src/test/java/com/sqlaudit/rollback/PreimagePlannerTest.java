@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 前镜像构造测试（§5.3 / §5.4：列集合规则 + WHERE 复用 + FOR UPDATE + 生成列排除）。
+ * 前镜像构造测试（README §4.4：列集合规则 + WHERE 复用 + FOR UPDATE + 生成列排除）。
  */
 class PreimagePlannerTest {
 
@@ -45,7 +45,7 @@ class PreimagePlannerTest {
         ParsedStatement ps = parse("UPDATE t SET a = 1, b = 'x' WHERE id IN (1, 2, 3)");
         PreimagePlanner.PreimageQuery q = planner.plan(ps, META);
 
-        // 列序：主键在前 + SET 列（§5.4 示例：SELECT pk,a,b FROM t WHERE <原 WHERE> FOR UPDATE）
+        // 列序：主键在前 + SET 列（README §4.4 示例：SELECT pk,a,b FROM t WHERE <原 WHERE> FOR UPDATE）
         assertEquals(List.of("id", "a", "b"), q.columns());
         String flat = q.sqlText().toLowerCase().replaceAll("\\s+", " ");
         assertTrue(flat.contains("for update"), "前镜像必须 FOR UPDATE（与 DML 同事务锁行）");
@@ -68,7 +68,7 @@ class PreimagePlannerTest {
                 (com.alibaba.druid.sql.ast.statement.SQLDeleteStatement) ps.getSourceStatement(),
                 META, Dialect.MYSQL);
 
-        // 生成列必须从列清单排除（§5.3：反向 INSERT 报 generated column 错误）
+        // 生成列必须从列清单排除（README §4.4：反向 INSERT 报 generated column 错误）
         assertEquals(List.of("id", "a", "b"), q.columns());
         assertFalse(q.columns().contains("gen_col"));
         assertTrue(q.sqlText().toLowerCase().contains("for update"));

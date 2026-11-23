@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 
 /**
- * 审计结果（设计文档 §7.2，{@code t_audit_log.result}）。
+ * 审计结果（README §4.1，{@code t_audit_log.result}）。
  *
  * <p>与 {@link AuditAction} 同一约定：只约束代码里手写的取值，{@code AuditEvent} /
  * {@code AuditLog} 字段仍为 String，落库值取 {@link #getCode()}。</p>

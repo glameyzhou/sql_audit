@@ -5,9 +5,8 @@ import com.fasterxml.jackson.annotation.JsonValue;
 
 /**
  * 规则严重级别。
- * <p>对应设计文档 §4.3：ERROR 阻断提交，WARN 只提示。</p>
- * <p>对应 {@code t_rule.severity} / {@code t_audit_result.level} 列（存储码 = 枚举名），
- * 见 {@link CodedEnum}。</p>
+ * <p>对应 README §4.3：ERROR 阻断提交，WARN 只提示。</p>
+ * <p>对应 {@code t_rule.severity} 列（存储码 = 枚举名），见 {@link CodedEnum}。</p>
  */
 public enum RuleSeverity implements CodedEnum {
     /** 阻断 */

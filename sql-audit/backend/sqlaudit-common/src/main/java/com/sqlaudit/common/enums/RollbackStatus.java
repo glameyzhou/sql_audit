@@ -6,7 +6,7 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import java.util.Set;
 
 /**
- * 回滚 SQL 生命周期（设计文档 §5.9）。
+ * 回滚 SQL 生命周期（README §4.4）。
  *
  * <pre>
  * generated → verified（语法自检 + 影子库回放 / affected_rows 对账）
@@ -27,7 +27,7 @@ public enum RollbackStatus implements CodedEnum {
     /** 无法生成（覆盖率 NONE 或校验失败） */
     NOT_AVAILABLE("not_available"),
     /**
-     * 回放失败且一条都没应用（执行结局态）。不在 §5.9 的规划态里，是 RollbackExecutor
+     * 回放失败且一条都没应用（执行结局态）。不在 README §4.4 的规划态里，是 RollbackExecutor
      * 回放中断时实际写入的取值，纳入枚举以免库里出现枚举之外的值。
      */
     FAILED("failed"),

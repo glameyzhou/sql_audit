@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * DDL 逆向映射（设计文档 §5.6 可逆向映射表）。
+ * DDL 逆向映射（README §4.4 可逆向映射表）。
  *
  * <table>
  *   <tr><th>原 DDL</th><th>反向</th><th>前置条件</th></tr>
@@ -24,7 +24,7 @@ import java.util.Optional;
  *
  * <p>破坏性 DDL（DROP/TRUNCATE/DROP COLUMN/MODIFY）不走本映射（影子表/列投影，
  * 能力评估已判 NONE）。不认识的 DDL 形态返回 empty → 上层标 not_available，
- * 绝不猜测（§5.6：反向 DDL 带前置条件，宁可拒绝也不生成错误语句）。</p>
+ * 绝不猜测（README §4.4：反向 DDL 带前置条件，宁可拒绝也不生成错误语句）。</p>
  *
  * <p>变更窗口写入检测（RENAME/CREATE 的前置条件）在回滚执行前做
  * （binlog / 审计 / 行数比对），本类只产出语句与前置条件描述。</p>
@@ -61,7 +61,7 @@ public class DdlReverseMapper {
                 return Optional.empty();
             }
             // 多 item 的 ALTER（如两条 ADD COLUMN）逆向无法逐条完整覆盖，
-            // 只映射第一条会生成不完整反向 SQL——一律拒映射转人工（§5.2 矩阵口径）
+            // 只映射第一条会生成不完整反向 SQL——一律拒映射转人工（README §4.4 矩阵口径）
             if (alter.getItems().size() != 1) {
                 return Optional.empty();
             }

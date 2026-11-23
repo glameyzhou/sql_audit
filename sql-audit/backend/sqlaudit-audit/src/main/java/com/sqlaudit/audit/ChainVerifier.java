@@ -12,7 +12,7 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * hash 链完整性校验（设计文档 §7.3「定期校验任务比对链完整性，断裂即告警」）。
+ * hash 链完整性校验（README §4.1「定期校验任务比对链完整性，断裂即告警」）。
  *
  * <p>逐条校验两件事：</p>
  * <ol>
@@ -25,12 +25,12 @@ import java.util.List;
  *       {@code SHA256(prev_hash || seq || canonical_json)} 与存储的 hash 比对。</li>
  * </ol>
  *
- * <p>哈希算明文不算密文（§7.3 第 2 点），所以校验需要解密权限——这一点在运维
+ * <p>哈希算明文不算密文（README §4.1 第 2 点），所以校验需要解密权限——这一点在运维
  * SOP 中写明。校验不修改任何数据，结果以 {@link ChainVerifyResult} 返回、不抛
  * 业务异常（区间内记录缺失/解密失败等均记为断裂）。</p>
  *
  * <p>局限（口径诚实）：链尾之后的记录被整段删除无法从区间内部察觉，需配合
- * §7.3 的「链头外置」WORM 每日锚点比对。</p>
+ * README §4.1 的「链头外置」WORM 每日锚点比对。</p>
  */
 public class ChainVerifier {
 

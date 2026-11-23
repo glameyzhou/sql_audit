@@ -13,11 +13,12 @@ import com.sqlaudit.rollback.reverse.ReverseSqlGenerator;
 import com.sqlaudit.rollback.reverse.ReverseStatement;
 import com.sqlaudit.rule.TableMetadataProvider;
 import com.sqlaudit.worker.gateway.JdbcTableMetadataProvider.InstanceContext;
+import com.sqlaudit.storage.dao.InstanceDao;
+import com.sqlaudit.storage.model.Instance;
 import com.sqlaudit.storage.model.TicketUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -28,7 +29,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * 反向 SQL 落库桥（§5.3 步骤 4：执行成功后用前镜像生成反向语句并持久化）。
+ * 反向 SQL 落库桥（README §4.4 步骤 4：执行成功后用前镜像生成反向语句并持久化）。
  *
  * <p>生成规则按原语句类型分流（ReverseSqlGenerator）：</p>
  * <ul>
@@ -43,7 +44,7 @@ public class RollbackPersisterImpl implements UnitExecutionEngine.RollbackPersis
 
     private static final Logger log = LoggerFactory.getLogger(RollbackPersisterImpl.class);
 
-    /** 回滚有效期（§5.9：默认 24h）。 */
+    /** 回滚有效期（README §4.4：默认 24h）。 */
     private static final Duration ROLLBACK_TTL = Duration.ofHours(24);
 
     private final RollbackLifecycleService lifecycle;
@@ -52,12 +53,15 @@ public class RollbackPersisterImpl implements UnitExecutionEngine.RollbackPersis
     private final SqlParserService parser;
     /** 真实表元数据（INSERT 反向主键推导）；worker 装配传 RO_META 真实现，测试传 stub。 */
     private final TableMetadataProvider metadata;
+    /** 实例方言来源（unit 不再携带方言字段）。 */
+    private final InstanceDao instanceDao;
 
     public RollbackPersisterImpl(RollbackLifecycleService lifecycle, SqlParserService parser,
-                                 TableMetadataProvider metadata) {
+                                 TableMetadataProvider metadata, InstanceDao instanceDao) {
         this.lifecycle = lifecycle;
         this.parser = parser;
         this.metadata = Objects.requireNonNull(metadata, "metadata");
+        this.instanceDao = Objects.requireNonNull(instanceDao, "instanceDao");
     }
 
     @Override
@@ -90,8 +94,8 @@ public class RollbackPersisterImpl implements UnitExecutionEngine.RollbackPersis
     }
 
     /**
-     * 前镜像行集归一：列名转小写（H2 等库元数据返回大写列名；反向 SQL 的列名来自
-     * AST 是小写，不归一则 row.get(col) 全为 null）、值含 null 的行转可变 List
+     * 前镜像行集归一：列名转小写（库元数据返回的列名大小写与 AST 里的小写列名
+     * 可能不一致，不归一则 row.get(col) 全为 null）、值含 null 的行转可变 List
      * （ReverseStatement 的 List.copyOf 不容 null——参数化值本身允许 null）。
      */
     private static List<Map<String, Object>> normalizePreimage(List<Map<String, Object>> rows) {
@@ -111,7 +115,7 @@ public class RollbackPersisterImpl implements UnitExecutionEngine.RollbackPersis
 
     private List<ReverseStatement> buildReverse(TicketUnit unit, ProductionGateway.ExecutionResult result) {
         String table = tableName(unit);
-        String sql = new String(unit.getStatement(), StandardCharsets.UTF_8);
+        String sql = unit.getStatement();
         var parsed = parser.parse(sql, dialectOf(unit));
         if (parsed.isEmpty()) {
             throw new IllegalStateException("重解析失败: " + sql);
@@ -131,7 +135,7 @@ public class RollbackPersisterImpl implements UnitExecutionEngine.RollbackPersis
             case INSERT -> insertReverse(ps, unit, result);
             case DDL -> {
                 // DDL 无前镜像：反向语句由 DdlReverseMapper 按 AST 形态生成
-                // （CREATE TABLE → DROP TABLE IF EXISTS 等，§5.2 可逆 DDL 全覆盖）
+                // （CREATE TABLE → DROP TABLE IF EXISTS 等，README §4.4 可逆 DDL 全覆盖）
                 Optional<DdlReverseMapper.DdlReverse> mapped =
                         ddlMapper.map(ps.getSourceStatement(), dialectOf(unit));
                 if (mapped.isEmpty()) {
@@ -182,7 +186,7 @@ public class RollbackPersisterImpl implements UnitExecutionEngine.RollbackPersis
     }
 
     /**
-     * INSERT 反向（DELETE WHERE pk，§5.4/§5.5）：
+     * INSERT 反向（DELETE WHERE pk，README §4.4）：
      * <ul>
      *   <li>显式主键：目标列 + VALUES 全在语句里，主键列名取真实元数据
      *       （primaryKeyColumns ∩ 目标列，按列序取值）；</li>
@@ -318,15 +322,9 @@ public class RollbackPersisterImpl implements UnitExecutionEngine.RollbackPersis
         return rows == null ? List.of() : rows;
     }
 
-    private static Dialect dialectOf(TicketUnit unit) {
-        String hint = unit.getDialectSpecific();
-        if (hint != null) {
-            try {
-                return Dialect.fromCode(hint);
-            } catch (IllegalArgumentException ignore) {
-                // 默认 MYSQL
-            }
-        }
-        return Dialect.MYSQL;
+    /** unit 的实例方言（unit 不再携带方言字段，以实例为准；未知取值保守落 MYSQL）。 */
+    private Dialect dialectOf(TicketUnit unit) {
+        Instance inst = instanceDao.findById(unit.getInstanceId());
+        return inst == null || inst.getDialect() == null ? Dialect.MYSQL : inst.getDialect();
     }
 }

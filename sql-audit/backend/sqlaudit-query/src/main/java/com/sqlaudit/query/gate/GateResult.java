@@ -3,7 +3,7 @@ package com.sqlaudit.query.gate;
 import com.sqlaudit.common.model.ParsedStatement;
 
 /**
- * 查询门禁判定结果（设计文档 §6.2 查询链路第一跳：parser 只读判定）。
+ * 查询门禁判定结果（README §4.1 查询链路第一跳：parser 只读判定）。
  *
  * @param allowed         是否放行进入查询通道
  * @param reason          拒绝原因（放行时为 null）

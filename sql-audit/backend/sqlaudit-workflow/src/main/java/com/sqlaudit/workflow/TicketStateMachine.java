@@ -12,14 +12,14 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * 工单状态机（设计文档 §3.2，B-3 验收核心）。
+ * 工单状态机（README §4.2，验收核心）。
  *
  * <p>迁移合法性判定复用已冻结契约 {@link TicketStatus#canTransitionTo(TicketStatus)}：
  * 非法迁移<strong>抛 {@link IllegalStateTransitionException}，绝不静默忽略</strong>；
  * 合法迁移通过 {@link TicketDao#updateStatus} 的条件更新落库（乐观并发），
  * 影响行数 0 说明状态已被并发修改 → 抛冲突异常。</p>
  *
- * <p>状态在内存中以 {@link TicketStatus} 枚举流转；DB 中存小写存储码（§3.2），
+ * <p>状态在内存中以 {@link TicketStatus} 枚举流转；DB 中存小写存储码（README §4.2），
  * 枚举与存储码的编解码由存储层经 {@link TicketStatus#getCode()} /
  * {@link TicketStatus#fromCode(String)} 完成，本类不再做字符串转换。</p>
  *
@@ -49,7 +49,7 @@ public class TicketStateMachine {
         Objects.requireNonNull(ticket, "ticket");
         TicketStatus from = Objects.requireNonNull(ticket.getStatus(), "ticket.status");
 
-        // 非法迁移必须抛异常而不是静默忽略（§B-3 验收）
+        // 非法迁移必须抛异常而不是静默忽略（验收）
         if (!from.canTransitionTo(target)) {
             throw new IllegalStateTransitionException(from.name(), target.name());
         }

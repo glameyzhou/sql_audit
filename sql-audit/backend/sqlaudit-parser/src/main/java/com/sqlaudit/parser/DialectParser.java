@@ -5,12 +5,12 @@ import com.sqlaudit.common.model.ParsedStatement;
 import java.util.List;
 
 /**
- * 方言解析器接口（设计文档 §4.1 三方言解析策略）。
+ * 方言解析器接口（README §4.3 三方言解析策略）。
  *
  * <p>实现职责：多语句拆分（一条语句 = 一个 unit）、归一化到 {@link ParsedStatement}、
- * AST 白名单只读判定（§4.2）。</p>
+ * AST 白名单只读判定（README §4.3）。</p>
  *
- * <p>通用铁律（§4.1）：解析失败 = 高危 = 必须人工审核，绝不「降级放行」——
+ * <p>通用铁律（README §4.3）：解析失败 = 高危 = 必须人工审核，绝不「降级放行」——
  * 实现必须在解析失败时返回 {@code parseConfidence=0} 且 {@code isReadOnly=false}
  * 的单条结果，而不是抛异常或跳过。</p>
  */

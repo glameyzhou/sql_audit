@@ -4,23 +4,23 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 生产库事务边界抽象（设计文档 §5.3 事务边界 + §5.4/§5.5 方言差异）。
+ * 生产库事务边界抽象（README §4.4 事务边界与方言差异）。
  *
  * <p><strong>这是整个系统正确性最敏感的接口</strong>。实现必须保证：</p>
  * <ol>
  *   <li><strong>同一 Connection、同一事务</strong>：前镜像 SELECT FOR UPDATE 与 DML
- *       在同一个事务内执行（§5.3，v1 致命错误修正）；</li>
+ *       在同一个事务内执行（README §4.4，v1 致命错误修正）；</li>
  *   <li><strong>隔离级别固定</strong>：PG 显式 REPEATABLE READ（SET TRANSACTION ISOLATION
  *       LEVEL），MySQL 保持默认 RR 且禁止降级 RC；每次执行前 assert 当前会话隔离级别
- *       （云厂商/中间件可能改默认值，§5.3 实现要点）；</li>
+ *       （云厂商/中间件可能改默认值，README §4.4 实现要点）；</li>
  *   <li><strong>对账先行</strong>：COMMIT 前比对 affectedRows == preimageRows.size()，
- *       不等则回滚事务并返回 RECONCILE_FAILED（引擎层转 needs_confirm，§5.3 硬门禁）；</li>
+ *       不等则回滚事务并返回 RECONCILE_FAILED（引擎层转 needs_confirm，README §4.4 硬门禁）；</li>
  *   <li>MySQL 前提：Connector/J 的 useAffectedRows 保持默认 false（getUpdateCount 返回
- *       matched rows 才能对账，§5.3）；INSERT 无前镜像不做对账。</li>
+ *       matched rows 才能对账，README §4.4）；INSERT 无前镜像不做对账。</li>
  * </ol>
  *
  * <p>生产实现（W2）：rw_exec 账号连接池 + JDBC；单测用 fake 验证协议编排。
- * IoTDB 实现可声明不支持前镜像（快照 SOP，§5.7）。</p>
+ * IoTDB 实现可声明不支持前镜像（快照 SOP，README §4.4）。</p>
  */
 public interface ProductionGateway {
 
@@ -67,7 +67,7 @@ public interface ProductionGateway {
         public static ExecutionResult reconcileFailure(long preimageCount, long affectedCount) {
             return new ExecutionResult(Outcome.RECONCILE_FAILED, null, affectedCount, null,
                     "affected_rows(" + affectedCount + ") != preimage_rows(" + preimageCount
-                            + ")，事务已回滚（§5.3 硬门禁）");
+                            + ")，事务已回滚（硬门禁）");
         }
 
         public static ExecutionResult executionError(String message) {

@@ -22,7 +22,7 @@ import java.sql.Statement;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 结构指纹提供者（§3.5 结构漂移门禁的数据源）：按实例 + 表重算当前 DDL 结构指纹。
+ * 结构指纹提供者（README §4.2 结构漂移门禁的数据源）：按实例 + 表重算当前 DDL 结构指纹。
  *
  * <p>执行前门禁把「审核时记录的 {@code ddl_fingerprint}」与「执行前的当前结构」比对，
  * 重算需要连生产库（RO_META 只读凭据）取 DDL 文本：</p>
@@ -41,7 +41,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p><strong>IoTDB 设计取舍</strong>：IoTDB 没有 SHOW CREATE TABLE 等价的结构导出，
  * 取不到结构指纹。返回常量让审核期与执行期「永远一致」——结构漂移门禁对 IoTDB 实例
- * 恒不触发；结构的意外变更由审核期 IoTDB 白名单（§4.2）与快照恢复 SOP（§5.7）兜底，
+ * 恒不触发；结构的意外变更由审核期 IoTDB 白名单（README §4.3）与快照恢复 SOP（README §4.4）兜底，
  * 此取舍已在常量命名中显式标注，避免误读为「指纹相同」。</p>
  */
 public class JdbcStructureFingerprintProvider implements ExecutionGate.StructureFingerprintProvider {
@@ -75,7 +75,7 @@ public class JdbcStructureFingerprintProvider implements ExecutionGate.Structure
             return IOTDB_NO_FINGERPRINT;
         }
 
-        // 2. RO_META 凭据（§3.5：结构指纹走只读元数据账号，与执行账号物理隔离）
+        // 2. RO_META 凭据（README §4.2：结构指纹走只读元数据账号，与执行账号物理隔离）
         Credential cred = credentialDao.findByInstanceAndType(instanceId, AccountType.RO_META);
         if (cred == null) {
             throw new IllegalStateException("实例缺少 RO_META 凭据: id=" + instanceId);
@@ -112,7 +112,7 @@ public class JdbcStructureFingerprintProvider implements ExecutionGate.Structure
                 }
             }
             // PG：information_schema.columns 聚合重建表结构骨架（列名 + 类型 + 非空）。
-            // 设计文档原写 pg_get_tabledef——实测 PG 16 已无此函数（was removed），
+            // 原设计按 pg_get_tabledef 实现——实测 PG 16 已无此函数（was removed），
             // 改用 information_schema（PG 官方稳定视图）；骨架不含约束/索引，
             // 漂移检测主目标是「列级结构变化」（增删列/改类型），够用且确定性好。
             // 表不存在时 string_agg 结果为空集 → rs.next() false → null。

@@ -27,7 +27,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>按实例路由建 JDBC 连接池，单事务内执行 DML。回滚执行走「无前镜像」路径：
  * 反向语句通常带主键 WHERE、逐行幂等，直接执行并返回 affected 由调用方校验
- * （不做 SELECT FOR UPDATE，§5.6 回放阶段）。仍保留前镜像路径（preimageSql 非空时
+ * （不做 SELECT FOR UPDATE，README §4.4 回放阶段）。仍保留前镜像路径（preimageSql 非空时
  * SELECT → DML → affected==preimage 对账）以保证接口契约完整。</p>
  *
  * <p>RW_EXEC 凭据从 {@link CredentialDao} 读取，密文经 {@link CredentialCrypto} 解密
@@ -73,7 +73,7 @@ public class JdbcProductionGateway implements ProductionGateway {
             conn.setAutoCommit(false);
             try {
                 if (request.preimageSql() != null) {
-                    // 前镜像路径：SELECT → DML → affected==preimage 对账（§5.3）
+                    // 前镜像路径：SELECT → DML → affected==preimage 对账（README §4.4）
                     List<Map<String, Object>> preimage = readPreimage(conn, request.preimageSql());
                     long affected = executeUpdate(conn, request.statementSql());
                     if (affected != preimage.size()) {

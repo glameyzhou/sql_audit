@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 
 /**
- * 回滚覆盖率（设计文档 §5.2 覆盖率矩阵）。
+ * 回滚覆盖率（README §4.4 覆盖率矩阵）。
  * <p>对应 {@code rollback_sql.coverage} 列，也是提交预览「可回滚清单」的判定依据。</p>
  * <p>存储码 = 枚举名，见 {@link CodedEnum}。</p>
  */

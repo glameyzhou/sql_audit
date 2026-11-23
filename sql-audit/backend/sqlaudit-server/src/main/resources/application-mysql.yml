@@ -1,6 +1,11 @@
 # MySQL 方言（在家 dev）：datasource + Flyway + MySql* DAO（MysqlProfileConfig @Profile("mysql")）。
 # 连接经环境变量覆盖：SQLAUDIT_DB_URL / SQLAUDIT_DB_USER / SQLAUDIT_DB_PASSWORD
+# 注：测试 profile it 同时激活 mysql（方言装配），但其 datasource/Flyway 指向独立测试库
+# sql_audit_it——本文件在 it 下整段让位，避免默认开发库 sql-audit 被测试上下文连上。
 spring:
+  config:
+    activate:
+      on-profile: "mysql & !it"
   datasource:
     url: ${SQLAUDIT_DB_URL:jdbc:mysql://127.0.0.1:3306/sql-audit?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
     username: ${SQLAUDIT_DB_USER:root}
@@ -15,5 +20,7 @@ spring:
 
   flyway:
     enabled: true
+    # MySQL 方言迁移（V1__schema.sql 20 张表 + V2__seed.sql 种子）
     locations: classpath:db/migration/mysql
-    baseline-on-migrate: true
+    # 指向已有表却无迁移历史的库直接报错，不静默 baseline（重构后需 drop 重建库）
+    baseline-on-migrate: false

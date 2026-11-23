@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * AuditEvent canonical JSON 黄金用例（设计文档 §7.3 / W0-2 验收）。
+ * AuditEvent canonical JSON 黄金用例（README §4.1）。
  *
  * <p>目的：锁死 canonical 字段序、命名、日期格式、NULL 规则与 hash 公式。
  * 后人一旦重构改了字段序或格式，本测试必须变红。</p>
@@ -39,7 +39,7 @@ class AuditEventCanonicalTest {
 
     @Test
     void canonicalJson_isExactAndOrdered() {
-        // 字段序 = §7.3 定义的固定顺序；无缩进、无空格；数字不加引号；
+        // 字段序 = README §4.1 定义的固定顺序；无缩进、无空格；数字不加引号；
         // created_at 用 yyyy-MM-dd'T'HH:mm:ss.SSSXXX，毫秒满 3 位
         String expected = "{\"seq\":1,\"actor_id\":1001,\"actor_name\":\"文曜\","
                 + "\"actor_role\":\"DBA\",\"action\":\"UNIT_EXEC\",\"target_type\":\"TICKET_UNIT\","
@@ -67,7 +67,7 @@ class AuditEventCanonicalTest {
 
         String json = CanonicalJson.toJson(event);
 
-        // NULL 必须是 JSON null，且键不省略（§7.3 第 2 点）
+        // NULL 必须是 JSON null，且键不省略（README §4.1 第 2 点）
         assertTrue(json.contains("\"target_id\":null"), "target_id 应为 null 而非省略");
         assertTrue(json.contains("\"instance_id\":null"), "instance_id 应为 null 而非省略");
         assertTrue(json.contains("\"detail_plaintext\":null"), "detail_plaintext 应为 null 而非省略");
@@ -76,7 +76,7 @@ class AuditEventCanonicalTest {
     @Test
     void computeHash_isStableGoldenValue() {
         // 黄金 hash：固定输入 → 固定 SHA256。任何字段序/命名/日期格式/NULL 规则的改动
-        // 都会让此断言变红——这正是 hash 链契约的守卫（§7.3 / W0-2 验收）。
+        // 都会让此断言变红——这正是 hash 链契约的守卫（README §4.1）。
         String hash = CanonicalJson.computeHash(CanonicalJson.GENESIS_HASH, 1L, sampleEvent());
 
         assertEquals("f4460841bcbb29ae85540487181623ebf2bfe15a1670c621322cf1232240d54e", hash,

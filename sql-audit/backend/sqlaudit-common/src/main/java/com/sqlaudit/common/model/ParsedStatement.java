@@ -8,13 +8,13 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 解析器输出统一中间模型（设计文档 §4.1）。
+ * 解析器输出统一中间模型（README §4.3）。
  *
  * <p>三方言（MySQL/PG/IoTDB）解析后归一化到本模型，下游 rule/rollback/query 只依赖它。</p>
  *
  * <p>契约要点：</p>
  * <ul>
- *   <li>解析失败 → {@code parseConfidence=0}，绝不「降级放行」或假装解析成功（§4.1 铁律）；</li>
+ *   <li>解析失败 → {@code parseConfidence=0}，绝不「降级放行」或假装解析成功（README §4.3 铁律）；</li>
  *   <li>{@code whereAst}/{@code limitAst} 是方言原生 AST 节点，由 parser 模块填充，
  *       common 层用 {@link Object} 占位以避免引入具体 AST 库依赖，下游使用时强转。</li>
  * </ul>
@@ -25,10 +25,10 @@ public class ParsedStatement {
     private StatementType statementType;
     private List<SqlObject> objects = new ArrayList<>();
 
-    /** 只读判定结果：true 表示可走查询免审通道（§4.2 AST 白名单） */
+    /** 只读判定结果：true 表示可走查询免审通道（README §4.3 AST 白名单） */
     private boolean isReadOnly;
 
-    /** 命中的危险子句（§4.2 表），空表示无危险子句 */
+    /** 命中的危险子句（README §4.3 表），空表示无危险子句 */
     private List<DangerousClause> dangerousClauses = new ArrayList<>();
 
     /** 方言原生 AST 节点（WHERE 子句），parser 填充，下游强转 */

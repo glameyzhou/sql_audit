@@ -4,13 +4,13 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * 查询通道执行结果（设计文档 §6.2）。
+ * 查询通道执行结果（README §4.1）。
  *
  * <p><strong>query_log 落库所需字段已带齐</strong>（W2 集成时直接取用，本模块不落库）：
  * {@code instanceId} / {@code sql}（原文，落库前由调用方加密）/
  * {@code rowCount} / {@code elapsedMs} / {@code truncated}；
  * {@code sqlHash} 由调用方对 {@link #sql} 计算，{@code userId} / {@code traceId} /
- * {@code clientIp} 来自请求上下文。结果集本身不落库（§6.2：query_log 只存 SQL 全文、行数、耗时、截断标记）。</p>
+ * {@code clientIp} 来自请求上下文。结果集本身不落库（README §4.1：query_log 只存 SQL 全文、行数、耗时、截断标记）。</p>
  *
  * <p>结果页「平台已注入 LIMIT 1000」文案由 {@link #notice} 支撑
  * （来自 LIMIT 注入层的 injected / tightened / originalLimit / effectiveLimit）。</p>

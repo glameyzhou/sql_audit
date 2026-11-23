@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 
 /**
- * 内置审核规则编码（设计文档 §4.3，首版 26 条；V2 种子 {@code t_rule.code}）。
+ * 内置审核规则编码（README §4.3，首版 26 条；V2 种子 {@code t_rule.code}）。
  *
  * <p>用途：<strong>代码里引用规则</strong>（规则定义、规则命中 {@code RuleHit.code}、按规则码
  * 分级的 RiskAssessor、把命中转译为不可回滚原因的回滚能力评估、执行前门禁）一律用本枚举，
@@ -35,7 +35,7 @@ public enum RuleCode implements CodedEnum {
     R_PARSE_FAILED,
     R_PREIMAGE_TOO_LARGE,
     R_ROLLBACK_UNAVAILABLE,
-    /** 执行期规则（§3.5）：提交期不触发，worker 执行前比对结构指纹 */
+    /** 执行期规则（README §4.2）：提交期不触发，worker 执行前比对结构指纹 */
     R_SCHEMA_DRIFT,
     R_SELECT_STAR,
     R_SENSITIVE_COLUMN,

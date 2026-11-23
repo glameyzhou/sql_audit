@@ -2,7 +2,6 @@ package com.sqlaudit.storage.impl.jdbc.mysql;
 
 import com.sqlaudit.common.enums.CodedEnum;
 import com.sqlaudit.common.enums.Dialect;
-import com.sqlaudit.common.enums.Environment;
 import com.sqlaudit.common.enums.InstanceStatus;
 import com.sqlaudit.storage.dao.InstanceDao;
 import com.sqlaudit.storage.model.Instance;
@@ -17,11 +16,11 @@ import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
 
 /**
- * instance 的 MySQL 真实现（DDL §4 t_instance 表；内存版语义基准 {@code InMemoryInstanceDao}）。
+ * instance 的 MySQL 真实现（t_instance 表）。
  *
- * <p>删除为软删（置 deleted_at）；{@code listAll()} / {@code findById()} 过滤已删记录。
- * 自增 id 回填用 {@code GeneratedKeyHolder}（{@code Statement.RETURN_GENERATED_KEYS}）。
- * 事务边界由调用方保证，本类不开事务。</p>
+ * <p>删除为软删（置 deleted_at）；{@code listAll()} / {@code findById()} 只返回未删除记录，
+ * {@link #findByName} 也只匹配未删除行——软删实例的名字可以复用，「未删除实例中 name 唯一」
+ * 由服务层据此校验（实例名无库级唯一约束）。</p>
  */
 public class MySqlInstanceDao implements InstanceDao {
 
@@ -36,19 +35,12 @@ public class MySqlInstanceDao implements InstanceDao {
         u.setId(rs.getLong("id"));
         u.setName(rs.getString("name"));
         u.setDialect(Dialect.fromCode(rs.getString("dialect")));
-        u.setEnvironment(Environment.fromCode(rs.getString("environment")));
-        long ownerId = rs.getLong("owner_id");
-        u.setOwnerId(rs.wasNull() ? null : ownerId);
+        u.setOwnerId(rs.getLong("owner_id"));
         u.setHost(rs.getString("host"));
-        int port = rs.getInt("port");
-        u.setPort(rs.wasNull() ? null : port);
+        u.setPort(rs.getObject("port", Integer.class));
         u.setDefaultSchema(rs.getString("default_schema"));
-        u.setReplicaDsn(rs.getString("replica_dsn"));
-        long credentialId = rs.getLong("credential_id");
-        u.setCredentialId(rs.wasNull() ? null : credentialId);
         u.setStatus(InstanceStatus.fromCode(rs.getString("status")));
-        long createdBy = rs.getLong("created_by");
-        u.setCreatedBy(rs.wasNull() ? null : createdBy);
+        u.setCreatedBy(rs.getLong("created_by"));
         Timestamp created = rs.getTimestamp("created_at");
         u.setCreatedAt(created == null ? null : created.toLocalDateTime());
         Timestamp updated = rs.getTimestamp("updated_at");
@@ -71,30 +63,37 @@ public class MySqlInstanceDao implements InstanceDao {
     }
 
     @Override
+    public Instance findByName(String name) {
+        List<Instance> result = jdbc.query(
+                "SELECT * FROM t_instance WHERE name=? AND deleted_at IS NULL LIMIT 1", MAPPER, name);
+        return result.isEmpty() ? null : result.get(0);
+    }
+
+    @Override
     public long insert(Instance instance) {
         KeyHolder kh = new GeneratedKeyHolder();
         jdbc.update(conn -> {
             PreparedStatement ps = conn.prepareStatement(
-                    "INSERT INTO t_instance (name, dialect, environment, owner_id, host, port, "
-                            + "default_schema, replica_dsn, credential_id, status, created_by, "
-                            + "created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO t_instance (name, dialect, owner_id, host, port, default_schema, "
+                            + "status, created_by, created_at, updated_at, deleted_at) "
+                            + "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                     Statement.RETURN_GENERATED_KEYS);
             ps.setString(1, instance.getName());
             ps.setString(2, CodedEnum.code(instance.getDialect()));
-            ps.setString(3, CodedEnum.code(instance.getEnvironment()));
-            ps.setLong(4, instance.getOwnerId());
-            ps.setString(5, instance.getHost());
-            ps.setInt(6, instance.getPort());
-            ps.setString(7, instance.getDefaultSchema());
-            ps.setString(8, instance.getReplicaDsn());
-            setNullableLong(ps, 9, instance.getCredentialId());
-            ps.setString(10, CodedEnum.code(instance.getStatus() != null ? instance.getStatus() : InstanceStatus.ACTIVE));
-            ps.setLong(11, instance.getCreatedBy());
-            ps.setTimestamp(12, Timestamp.valueOf(instance.getCreatedAt() != null
-                    ? instance.getCreatedAt() : LocalDateTime.now()));
-            ps.setTimestamp(13, Timestamp.valueOf(instance.getUpdatedAt() != null
-                    ? instance.getUpdatedAt() : LocalDateTime.now()));
-            ps.setTimestamp(14, instance.getDeletedAt() == null ? null : Timestamp.valueOf(instance.getDeletedAt()));
+            ps.setLong(3, instance.getOwnerId());
+            ps.setString(4, instance.getHost());
+            ps.setInt(5, instance.getPort());
+            ps.setString(6, instance.getDefaultSchema());
+            ps.setString(7, CodedEnum.code(instance.getStatus() != null
+                    ? instance.getStatus() : InstanceStatus.ACTIVE));
+            ps.setLong(8, instance.getCreatedBy());
+            LocalDateTime now = LocalDateTime.now();
+            ps.setTimestamp(9, Timestamp.valueOf(instance.getCreatedAt() != null
+                    ? instance.getCreatedAt() : now));
+            ps.setTimestamp(10, Timestamp.valueOf(instance.getUpdatedAt() != null
+                    ? instance.getUpdatedAt() : now));
+            ps.setTimestamp(11, instance.getDeletedAt() == null
+                    ? null : Timestamp.valueOf(instance.getDeletedAt()));
             return ps;
         }, kh);
         long id = kh.getKey().longValue();
@@ -104,19 +103,16 @@ public class MySqlInstanceDao implements InstanceDao {
 
     @Override
     public int update(Instance instance) {
+        // 全量更新（软删行不更新）；updated_at 显式写（不用 ON UPDATE，与 PG 行为一致）
         return jdbc.update(
-                "UPDATE t_instance SET name=?, dialect=?, environment=?, owner_id=?, host=?, port=?, "
-                        + "default_schema=?, replica_dsn=?, credential_id=?, status=?, updated_at=? "
-                        + "WHERE id=? AND deleted_at IS NULL",
+                "UPDATE t_instance SET name=?, dialect=?, owner_id=?, host=?, port=?, default_schema=?, "
+                        + "status=?, updated_at=? WHERE id=? AND deleted_at IS NULL",
                 instance.getName(),
                 CodedEnum.code(instance.getDialect()),
-                CodedEnum.code(instance.getEnvironment()),
                 instance.getOwnerId(),
                 instance.getHost(),
                 instance.getPort(),
                 instance.getDefaultSchema(),
-                instance.getReplicaDsn(),
-                instance.getCredentialId(),
                 CodedEnum.code(instance.getStatus()),
                 Timestamp.valueOf(LocalDateTime.now()),
                 instance.getId());
@@ -125,15 +121,7 @@ public class MySqlInstanceDao implements InstanceDao {
     @Override
     public int delete(long id) {
         return jdbc.update(
-                "UPDATE t_instance SET deleted_at=? WHERE id=? AND deleted_at IS NULL",
-                Timestamp.valueOf(LocalDateTime.now()), id);
-    }
-
-    private static void setNullableLong(PreparedStatement ps, int index, Long value) throws java.sql.SQLException {
-        if (value == null) {
-            ps.setNull(index, java.sql.Types.BIGINT);
-        } else {
-            ps.setLong(index, value);
-        }
+                "UPDATE t_instance SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL",
+                Timestamp.valueOf(LocalDateTime.now()), Timestamp.valueOf(LocalDateTime.now()), id);
     }
 }

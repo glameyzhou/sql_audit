@@ -1,20 +1,21 @@
 # 公共配置 + 命名组合（profile group）。
 # 启动用 SPRING_PROFILES_ACTIVE=<组名>，组名 = 环境 + 方言，一个词搞定：
-#   dev-home    = dev + mysql     在家开发（MySQL 本机）
-#   dev-company = dev + postgres  公司开发（PG，地址走 SQLAUDIT_PG_URL 注入）
-#   test        = test + postgres 公司测试（PG test 库）
-#   prod        = prod + postgres 公司生产（PG prod 库）
-# 也可直接手写组合：SPRING_PROFILES_ACTIVE=dev,mysql / dev,postgres / test,h2 …
+#   dev-home    = dev + mysql      在家开发（MySQL 本机）
+#   dev-company = dev + postgres   公司开发（PG，地址走 SQLAUDIT_PG_URL 注入）
+#   test        = test + postgres  公司测试（PG test 库）
+#   prod        = prod + postgres  公司生产（PG prod 库）
+# 也可直接手写组合：SPRING_PROFILES_ACTIVE=dev,mysql / dev,postgres。
+# 平台库只有 MySQL / PostgreSQL 两个方言：未激活任何方言 profile 时启动失败
+# （DataSource 缺失），没有默认内存方言。
 spring:
   profiles:
     group:
       dev-home: [dev, mysql]
-#      dev-company: [dev, postgres]
-      dev-company: [dev, mysql]
+      dev-company: [dev, postgres]
       test: [test, postgres]
       prod: [prod, postgres]
   flyway:
-    enabled: false            # memory 默认方言无库，禁用 Flyway；mysql/postgres/h2 方言各自启用
+    enabled: false            # 方言 yml（mysql/postgres）各自启用并指定迁移目录
 
 server:
   port: 8888
@@ -22,3 +23,9 @@ server:
 logging:
   level:
     com.sqlaudit: INFO
+
+# worker 执行循环开关：已并入 server 单进程，默认随 server 启动；
+# 自动化测试（profile it）关闭，只装配 bean、不启动循环线程。
+sqlaudit:
+  worker:
+    enabled: true

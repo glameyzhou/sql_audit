@@ -12,7 +12,7 @@ import java.security.SecureRandom;
 import java.util.Arrays;
 
 /**
- * 审计明细 AES-256-GCM 加解密（设计文档 §7.3：detail 密文落库、哈希算明文）。
+ * 审计明细 AES-256-GCM 加解密（README §4.1：detail 密文落库、哈希算明文）。
  *
  * <p>密文格式：{@code iv(12B) || ciphertext+tag(128-bit)}，随机 nonce 每次加密都不同。
  * 密钥 32 字节，读取顺序：环境变量 {@code SQLAUDIT_DETAIL_KEY}（base64 或 UTF-8 补齐）→

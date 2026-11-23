@@ -1,7 +1,7 @@
 package com.sqlaudit.common.enums;
 
 /**
- * 回滚不可用的原因（设计文档 §5.2 / §5.4 / §5.6 / §5.7）。
+ * 回滚不可用的原因（README §4.4）。
  * <p>对应 {@code rollback_sql.unavailable_reason}，用于提交预览时显式告知用户「为什么回滚不了」。</p>
  */
 public enum UnavailableReason {

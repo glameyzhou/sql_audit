@@ -3,7 +3,7 @@ package com.sqlaudit.storage.model;
 import java.time.LocalDateTime;
 
 /**
- * 审计链头实体（对应 chain_head 表，设计文档 §7.3 单写入点）。
+ * 审计链头实体（对应 chain_head 表，README §4.1 单写入点）。
  * <p>单行表（恒 id=1），行锁串行化并发写，seq 连续无空洞。</p>
  * <p>唯一写入方：sqlaudit-audit。</p>
  */

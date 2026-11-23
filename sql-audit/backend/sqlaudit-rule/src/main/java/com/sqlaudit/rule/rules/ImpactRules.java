@@ -11,14 +11,14 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 需要影响面评估的规则组（设计文档 §4.3 / §4.4）。
+ * 需要影响面评估的规则组（README §4.3）。
  *
  * <p>R_AFFECT_TOO_MANY / R_LOW_PEAK_WINDOW / R_PREIMAGE_TOO_LARGE。</p>
  *
- * <p>影响面评估<strong>异步</strong>（§4.4：COUNT(*) 超时 3s 装不进审核接口 P95 &lt; 500ms）：
+ * <p>影响面评估<strong>异步</strong>（README §4.3：COUNT(*) 超时 3s 装不进审核接口 P95 &lt; 500ms）：
  * 首轮同步审核 ctx.impact()=null 时本组规则全部跳过；异步评估完成后由
  * {@link com.sqlaudit.rule.engine.RuleEngine#assessImpact} 二次触发。
- * 评估未完成的工单不允许提交审批（workflow 层守卫）。</p>
+ * 评估未完成的工单提交接口直接拒绝（评估已并入提交链路同步完成，无独立提交审批步骤）。</p>
  */
 public final class ImpactRules {
 

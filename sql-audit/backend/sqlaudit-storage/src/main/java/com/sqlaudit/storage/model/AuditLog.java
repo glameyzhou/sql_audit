@@ -3,7 +3,7 @@ package com.sqlaudit.storage.model;
 import java.time.LocalDateTime;
 
 /**
- * 审计日志实体（对应 audit_log 表，设计文档 §7.2 / §7.3）。
+ * 审计日志实体（对应 audit_log 表，README §4.1）。
  *
  * <p>append-only + hash 链。关键约定：</p>
  * <ul>

@@ -18,6 +18,12 @@ public interface InstanceDao {
     /** 按 id 查（未找到或已软删返回 {@code null}）。 */
     Instance findById(long id);
 
+    /**
+     * 按名称查未删除实例（服务层据此校验「未删除实例中 name 唯一」；未找到返回 {@code null}）。
+     * 软删的同名实例不参与判重——名字可以复用。
+     */
+    Instance findByName(String name);
+
     /** 插入实例，回填自增 id。 */
     long insert(Instance instance);
 

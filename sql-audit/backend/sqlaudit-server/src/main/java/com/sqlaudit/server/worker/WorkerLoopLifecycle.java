@@ -13,8 +13,9 @@ import org.springframework.boot.ApplicationRunner;
  * 启动执行循环线程；Spring 关闭时由 bean 的 {@code destroyMethod = "stop"} 触发
  * {@link #stop()}，置停并中断休眠、等待当前轮收尾——与 REST 生命周期同进同退。</p>
  *
- * <p>本类仅在真库方言（mysql/postgres/h2）profile 下装配（见
- * {@code WorkerIntegrationConfig}），memory 默认不启动 worker 循环。</p>
+ * <p>本类仅在开关 {@code sqlaudit.worker.enabled}（默认 true）打开时装配（见
+ * {@code WorkerIntegrationConfig}）；开关关闭时只装配 worker bean、不启动循环线程
+ * （自动化测试 profile it 即此形态）。</p>
  */
 public class WorkerLoopLifecycle implements ApplicationRunner {
 

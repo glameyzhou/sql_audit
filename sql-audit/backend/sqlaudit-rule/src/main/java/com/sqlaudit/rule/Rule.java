@@ -5,7 +5,7 @@ import com.sqlaudit.common.model.RuleHit;
 import java.util.List;
 
 /**
- * 规则接口：一条内置规则的可执行判定（设计文档 §4.3）。
+ * 规则接口：一条内置规则的可执行判定（README §4.3）。
  *
  * <p>实现约束：</p>
  * <ul>

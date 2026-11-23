@@ -1,12 +1,12 @@
 package com.sqlaudit.query.limit;
 
 /**
- * LIMIT 注入结果（设计文档 §6.2 三层保护第 1 层）。
+ * LIMIT 注入结果（README §4.1 三层保护第 1 层）。
  *
  * <p>注入层失败（{@code unsupported=true}）不抛异常，调用方继续用原 SQL
  * 走 setMaxRows + 流式 cancel 兜底（第 2、3 层）。</p>
  *
- * <p>与 §4.3「不改写用户 SQL」的边界：查询通道的 LIMIT 注入是保护性收紧，
+ * <p>与 README §4.3「不改写用户 SQL」的边界：查询通道的 LIMIT 注入是保护性收紧，
  * 结果必须带 rewrittenSql 供前端展示「平台已注入 LIMIT N」，让用户知道自己跑的是什么。</p>
  *
  * @param rewrittenSql   实际执行的 SQL：注入/收紧时为改写后 SQL，否则与原 SQL 相同
@@ -35,7 +35,7 @@ public record InjectionResult(
         return new InjectionResult(sql, originalLimit, originalLimit, false, false, false);
     }
 
-    /** 结果页提示文案（§6.2：必须展示「平台已注入 LIMIT N」）。 */
+    /** 结果页提示文案（README §4.1：必须展示「平台已注入 LIMIT N」）。 */
     public String notice() {
         if (injected) {
             return "平台已注入 LIMIT " + effectiveLimit;

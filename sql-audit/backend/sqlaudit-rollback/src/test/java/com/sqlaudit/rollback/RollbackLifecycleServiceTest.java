@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 回滚生命周期测试（§5.9：落库子表 + 语法自检 + 依赖检测 hash + 阈值）。
+ * 回滚生命周期测试（README §4.4：落库子表 + 语法自检 + 依赖检测 hash + 阈值）。
  */
 class RollbackLifecycleServiceTest {
 

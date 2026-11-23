@@ -1,29 +1,42 @@
 package com.sqlaudit.storage.dao;
 
 import com.sqlaudit.storage.model.Permission;
+import com.sqlaudit.storage.model.PermissionApi;
 
 import java.util.List;
 
 /**
- * 权限点存储（对应 t_permission / t_role_permission 表，见 sql-audit-rbac-权限可配置化设计.md）。
+ * 权限点目录与接口绑定的<strong>只读</strong>访问（对应 t_permission / t_permission_api）。
  *
- * <p>目录由 {@code PermissionCode} 枚举在启动时同步（insert-if-absent）；角色 ↔ 权限点的
- * 覆盖配置只在 {@code customized=true} 后生效，未配置时走代码兜底（{@code PermissionCode#getDefaultRoles()}）。</p>
+ * <p>目录与绑定由 Flyway 的 {@code V2__seed.sql} 维护（界面只读、无写接口）：权限点要
+ * 新增 / 改名 / 改绑定都走迁移文件，少一处手写副本就少一处漂移。「角色 → 权限点」的授权
+ * 是可配置的，写接口在 {@link RoleDao}。</p>
+ *
+ * <p>鉴权判定只用两张表的全量快照（拦截器启动时加载、RBAC 写操作后重载）：
+ * 「接口 → 权限点集合」来自 {@link #listAllApis()}，「角色 → 权限点集合」来自
+ * {@link #listRolePermissionPairs()}，「所有人默认拥有」来自 {@link #listAll()} 的
+ * {@code allUsers} 标志。</p>
  */
 public interface PermissionDao {
 
-    /** 权限点目录（含 customized 标志，按 id 升序）。 */
+    /** 权限点目录，按 (sort, id) 升序（界面分组展示顺序）。 */
     List<Permission> listAll();
 
     /** 按 code 查权限点；未找到返回 {@code null}。 */
     Permission findByCode(String code);
 
-    /** 插入权限点（枚举目录 seed 用）。 */
-    void insert(Permission permission);
+    /** 全部接口绑定，按 (permission_id, http_method, url_pattern) 升序。 */
+    List<PermissionApi> listAllApis();
 
-    /** 某权限点已授权的角色 code 列表（customized=true 时生效；未配置返回空）。 */
-    List<String> listRoleCodes(long permissionId);
+    /** 某权限点绑定的接口。 */
+    List<PermissionApi> listApisByPermission(long permissionId);
 
-    /** 重设某权限点的授权角色（删旧 + 插新，并置 customized=true；roleIds 可为空=关闭该权限点）。 */
-    void replaceRolePermissions(long permissionId, List<Long> roleIds, Long grantedBy);
+    /**
+     * 全部「角色 → 权限点」授权对，元素为 {@code [roleId, permissionId]}，
+     * 按 (role_id, permission_id) 升序。供鉴权缓存一次性加载，避免 N 次查询。
+     */
+    List<long[]> listRolePermissionPairs();
+
+    /** 持有某权限点的角色 id（权限目录页展示「哪些角色有这项」）。 */
+    List<Long> listRoleIdsByPermission(long permissionId);
 }

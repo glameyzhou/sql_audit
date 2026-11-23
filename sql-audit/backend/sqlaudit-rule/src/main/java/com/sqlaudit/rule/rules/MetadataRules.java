@@ -13,7 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 需要表元数据的规则组（设计文档 §4.3）。
+ * 需要表元数据的规则组（README §4.3）。
  *
  * <p>R_NO_PK / R_OBJECT_NOT_ALLOWED / R_SENSITIVE_COLUMN / R_FULL_TABLE_SCAN。</p>
  *
@@ -94,7 +94,11 @@ public final class MetadataRules {
                         return;
                     }
                     TableMetadataProvider.TableMetadata tm = meta.getTable(obj.getSchema(), obj.getName());
-                    if (tm == null || !tm.whitelisted()) {
+                    if (tm == null) {
+                        // 无法解析或不存在：未限定库名且实例无默认库、库名写错、凭据/连接失败等
+                        // 都会走到这里——与「表存在但不在白名单」是两种完全不同的情况
+                        hits.add(hit("目标对象无法解析或不存在（请确认库名前缀或实例默认库）: " + obj));
+                    } else if (!tm.whitelisted()) {
                         hits.add(hit("目标对象不在实例白名单: " + obj));
                     }
                 });

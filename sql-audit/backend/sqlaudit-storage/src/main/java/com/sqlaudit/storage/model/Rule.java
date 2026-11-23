@@ -6,11 +6,12 @@ import com.sqlaudit.common.enums.RuleStatementType;
 import java.time.LocalDateTime;
 
 /**
- * 审核规则实体（对应 t_rule 表，设计文档 §6 规则）。
+ * 审核规则实体（对应 t_rule 表）。
  *
- * <p>唯一写入方：sqlaudit-rule（本轮系统配置 CRUD 经 sqlaudit-server 写入）。
- * {@code params} 为 JSON 文本（阈值等），存储层按 JSON 文本透传，对外序列化为
- * JSON 值（对象/数组/标量）以便前端直接读写。</p>
+ * <p>唯一写入方：sqlaudit-server。{@code params} 为 JSON 文本（阈值等）：DDL 里是
+ * {@code TEXT} 列，DAO 用 {@code setString} / {@code getString} <strong>原样读写</strong>，
+ * 不经过任何方言 JSON 类型（PG 的 jsonb 会规范化空白、重排 key，无法字节级透传）。
+ * 模型层保持 String，是否解析成 JSON 值由上层决定。</p>
  */
 public class Rule {
 
@@ -25,10 +26,11 @@ public class Rule {
     private RuleSeverity severity;
     /** 是否启用 */
     private Boolean enabled;
-    /** 阈值等 JSON */
-    private Object params;
+    /** 阈值等 JSON 文本（原样透传，不解析） */
+    private String params;
     private String description;
     private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
 
     public Long getId() {
         return id;
@@ -78,11 +80,11 @@ public class Rule {
         this.enabled = enabled;
     }
 
-    public Object getParams() {
+    public String getParams() {
         return params;
     }
 
-    public void setParams(Object params) {
+    public void setParams(String params) {
         this.params = params;
     }
 
@@ -100,5 +102,13 @@ public class Rule {
 
     public void setCreatedAt(LocalDateTime createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public LocalDateTime getUpdatedAt() {
+        return updatedAt;
+    }
+
+    public void setUpdatedAt(LocalDateTime updatedAt) {
+        this.updatedAt = updatedAt;
     }
 }

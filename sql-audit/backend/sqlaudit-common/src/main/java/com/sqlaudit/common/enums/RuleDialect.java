@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 
 /**
- * 审核规则适用的方言（设计文档 §6 规则，{@code t_rule.dialect}）。
+ * 审核规则适用的方言（README §4.3 规则，{@code t_rule.dialect}）。
  *
  * <p>与 {@link Dialect}（实例实际连的库）不同：这里多一个 {@link #ALL} 表示「不限方言」——
  * 规则配置页从下拉里选，取值收进枚举后拼错会立刻 400，而不是被当自由文本写进库。</p>

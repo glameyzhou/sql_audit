@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 
 /**
- * 执行前门禁编码（设计文档 §3.5，{@code ExecutionGate.GateResult.failedGate}）。
+ * 执行前门禁编码（README §4.2，{@code ExecutionGate.GateResult.failedGate}）。
  *
  * <p>门禁未通过时写进执行单元的 error_message（形如 {@code R_SCHEMA_DRIFT: 表结构与审核时不一致…}），
  * worker 侧按门禁做补偿（{@link #APPROVAL_TTL} 超时把工单置 expired）。取值沿用历史口径：

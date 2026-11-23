@@ -1,9 +1,9 @@
 package com.sqlaudit.rule;
 
 /**
- * 影响面评估结果（设计文档 §4.4）。
+ * 影响面评估结果（README §4.3）。
  *
- * <p><strong>口径（§4.4 v2.1 补充）</strong>：</p>
+ * <p><strong>口径（README §4.3 补充）</strong>：</p>
  * <ul>
  *   <li>影响面评估<strong>异步</strong>执行（COUNT(*) 超时 3s 装不进审核接口 P95 &lt; 500ms），
  *       规则审核同步返回；本对象在异步任务完成后作为二次评估输入；</li>

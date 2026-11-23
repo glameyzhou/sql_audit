@@ -11,6 +11,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * {@link InMemoryRollbackDao} 单测：唯一键判重、分页按序读取、逐条幂等回放。
@@ -109,12 +110,31 @@ class InMemoryRollbackDaoTest {
         assertEquals(0, dao.updateStatus(99999L, RollbackStatus.VERIFIED, null));
     }
 
+    @Test
+    void listAll分页_按id倒序_计数() {
+        long r1 = insertRollback(100L);
+        long r2 = insertRollback(200L);
+        insertRollback(300L);
+        insertRollback(400L);
+
+        assertEquals(4L, dao.countAll());
+        List<RollbackSql> page1 = dao.listAll(0, 3);
+        assertEquals(3, page1.size());
+        assertTrue(page1.get(0).getId() > page1.get(1).getId(), "id 倒序（最新在前）");
+        List<RollbackSql> page2 = dao.listAll(3, 3);
+        assertEquals(1, page2.size());
+        assertEquals(r1, page2.get(0).getId(), "最早一条在尾页");
+        assertTrue(dao.listAll(99, 3).isEmpty(), "越界页为空");
+        assertEquals(4, dao.listAll(0, -1).size(), "limit<0 取全部");
+        assertTrue(r2 > r1, "自增 id 递增（前提断言）");
+    }
+
     private RollbackStatement makeStatement(long rollbackId, int stmtOrder) {
         RollbackStatement statement = new RollbackStatement();
         statement.setRollbackId(rollbackId);
         statement.setStmtOrder(stmtOrder);
-        statement.setReverseSql(new byte[] {1, 2, 3});
-        statement.setValueParams(new byte[] {4, 5, 6});
+        statement.setReverseSql("UPDATE t_demo SET a=10 WHERE id=1");
+        statement.setValueParams("{\"a\":10}");
         return statement;
     }
 }

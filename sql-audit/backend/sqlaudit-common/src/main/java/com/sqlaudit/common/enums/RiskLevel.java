@@ -5,7 +5,7 @@ import com.fasterxml.jackson.annotation.JsonValue;
 
 /**
  * 风险分级。
- * <p>对应设计文档 §4.5 风险分级 → 审批路由。</p>
+ * <p>对应 README §4.3 风险分级 → 审批路由。</p>
  * <p>对应 {@code t_ticket.risk_level} / {@code t_flow_rule.risk_level} 列（存储码 = 枚举名），
  * 见 {@link CodedEnum}。</p>
  */

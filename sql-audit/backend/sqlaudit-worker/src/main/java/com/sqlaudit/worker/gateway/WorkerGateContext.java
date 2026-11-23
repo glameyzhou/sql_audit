@@ -25,18 +25,17 @@ import com.sqlaudit.storage.model.TicketUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 
 /**
- * 执行前门禁上下文（§3.5 的 worker 侧装配）：为 {@link ExecutionGate} 提供门禁所需的
+ * 执行前门禁上下文（README §4.2 的 worker 侧装配）：为 {@link ExecutionGate} 提供门禁所需的
  * 外部数据——审批通过时间（审批时效门禁）、回滚能力复核（执行前重估），并在门禁失败时
  * 做门禁专属补偿（审批超时置 expired）。
  *
- * <p>口径（§3.5）：</p>
+ * <p>口径（README §4.2）：</p>
  * <ul>
  *   <li>{@link #approvedAt}：工单审批记录中 result=APPROVED 的 decidedAt 最大值；
  *       无 APPROVED 记录返回 null（时效门禁跳过）；查询异常 log.warn 后按 null 处理；</li>
@@ -44,7 +43,7 @@ import java.util.Objects;
  *       ruleEngine 首轮审核取该语句命中 → assessor 重估，coverage != NONE 视为仍可回滚；
  *       <strong>任何异常 → log.warn + false（安全侧：复核不了就阻断执行）</strong>；</li>
  *   <li>{@link #onGateFailure}：APPROVAL_TTL 失败时把工单 approved → expired
- *       （§3.5「置 expired，需重新审批」），失败只记 warn 不阻断引擎的 unit 置 failed 流程。</li>
+ *       （README §4.2「置 expired，需重新审批」），失败只记 warn 不阻断引擎的 unit 置 failed 流程。</li>
  * </ul>
  */
 public class WorkerGateContext implements GateContext {
@@ -101,7 +100,7 @@ public class WorkerGateContext implements GateContext {
                 return false;
             }
             Dialect dialect = dialectOf(inst);
-            String sql = new String(unit.getStatement(), StandardCharsets.UTF_8);
+            String sql = unit.getStatement();
             List<ParsedStatement> parsed = parser.parse(sql, dialect);
             if (parsed.isEmpty()) {
                 log.warn("[gate] unit 语句解析为空（安全侧阻断执行）: unit={}", unit.getId());
@@ -126,7 +125,7 @@ public class WorkerGateContext implements GateContext {
             return;
         }
         try {
-            // §3.5：审批超时 → 置 expired，需重新审批（expired 为终态，重新走审批 = 新工单）
+            // README §4.2：审批超时 → 置 expired，需重新审批（expired 为终态，重新走审批 = 新工单）
             ticketDao.updateStatus(unit.getTicketId(), TicketStatus.APPROVED, TicketStatus.EXPIRED,
                     LocalDateTime.now());
         } catch (Exception e) {

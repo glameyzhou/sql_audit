@@ -17,8 +17,8 @@ import java.util.Set;
  * （按存储码、大小写不敏感），与 JSON 请求体的 {@code @JsonCreator fromCode} 口径一致。
  *
  * <p>为什么需要它：Spring 默认的 String→Enum 转换是 {@code Enum.valueOf(常量名)}——大小写
- * 敏感且只认常量名，而 {@code UnitStatus} / {@code Environment} / {@code TicketStatus} 等
- * 的存储码是小写（{@code executing} / {@code prod}），前端按存储码传参
+ * 敏感且只认常量名，而 {@code UnitStatus} / {@code TicketStatus} 等
+ * 的存储码是小写（{@code executing} / {@code auditing}），前端按存储码传参
  * （如 {@code GET /api/executions?status=executing}），默认转换会直接 400。</p>
  *
  * <p>只对实现了 {@link CodedEnum} 的枚举生效，其余枚举维持 Spring 默认行为；空白字符串

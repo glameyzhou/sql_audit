@@ -1,20 +1,20 @@
 package com.sqlaudit.query.channel;
 
 /**
- * 查询通道保护参数（设计文档 §6.2 保护表：行数 / 超时 / 结果大小）。
+ * 查询通道保护参数（README §4.1 保护表：行数 / 超时 / 结果大小）。
  *
  * <p>不可变；默认 maxLimit=1000、queryTimeoutSeconds=10。</p>
  */
 public final class QueryOptions {
 
-    /** 默认行数上限（§6.2：LIMIT 默认 1000，可配） */
+    /** 默认行数上限（README §4.1：LIMIT 默认 1000，可配） */
     public static final int DEFAULT_MAX_LIMIT = 1000;
-    /** 默认查询超时秒数（§6.2：10s） */
+    /** 默认查询超时秒数（README §4.1：10s） */
     public static final int DEFAULT_QUERY_TIMEOUT_SECONDS = 10;
 
     private final int maxLimit;
     private final int queryTimeoutSeconds;
-    /** 单行字节上限（§6.2 结果大小；字节上限校验 TODO，W2 掩码/导出阶段实现） */
+    /** 单行字节上限（README §4.1 结果大小；字节上限校验 TODO，W2 掩码/导出阶段实现） */
     private final int maxRowBytes;
     /** 结果总字节上限（同上 TODO） */
     private final long maxTotalBytes;

@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * 风险分级（设计文档 §4.5）。
+ * 风险分级（README §4.3）。
  *
  * <table>
  *   <tr><th>等级</th><th>判定</th><th>审批链</th></tr>
@@ -22,11 +22,11 @@ import java.util.Set;
  *
  * <p>命中 CRITICAL 码集合（破坏性 DDL / 回滚不可用 / 前镜像超限 / 解析失败）→ CRITICAL；
  * 其余任一 ERROR → HIGH；仅 WARN → MEDIUM；无命中 → LOW。
- * 影响面未知（§4.4）升一级。</p>
+ * 影响面未知（README §4.3）升一级。</p>
  */
 public final class RiskAssessor {
 
-    /** 直接定级 CRITICAL 的规则码（§4.5：不可回滚与解析失败是硬底线）。 */
+    /** 直接定级 CRITICAL 的规则码（README §4.3：不可回滚与解析失败是硬底线）。 */
     public static final Set<RuleCode> CRITICAL_CODES = EnumSet.of(
             RuleCode.R_DDL_DESTRUCTIVE,
             RuleCode.R_ROLLBACK_UNAVAILABLE,
@@ -41,7 +41,7 @@ public final class RiskAssessor {
      *
      * @param hits         全部命中（工单级汇总）
      * @param statementType 工单主语句类型（无命中时 DML → MEDIUM，其他 → LOW）
-     * @param impactUnknown 影响面未知（§4.4：升一级）
+     * @param impactUnknown 影响面未知（README §4.3：升一级）
      */
     public static com.sqlaudit.common.enums.RiskLevel assess(List<RuleHit> hits,
                                                              StatementType statementType,

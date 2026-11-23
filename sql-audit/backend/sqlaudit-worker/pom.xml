@@ -33,7 +33,7 @@
             <groupId>com.sqlaudit</groupId>
             <artifactId>sqlaudit-rollback</artifactId>
         </dependency>
-        <!-- 执行前门禁（§3.5）：WorkerLoop 的 ticketCanExecute 过滤直接依赖审批流引擎的 canExecute -->
+        <!-- 执行前门禁（README §4.2）：WorkerLoop 的 ticketCanExecute 过滤直接依赖审批流引擎的 canExecute -->
         <dependency>
             <groupId>com.sqlaudit</groupId>
             <artifactId>sqlaudit-workflow</artifactId>
@@ -54,11 +54,6 @@
             <artifactId>slf4j-api</artifactId>
         </dependency>
 
-        <dependency>
-            <groupId>com.h2database</groupId>
-            <artifactId>h2</artifactId>
-            <scope>test</scope>
-        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>

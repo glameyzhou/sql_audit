@@ -11,7 +11,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * {@link ExecLockDao} 的内存 fake 实现（W0-3，供流 A 单测解耦真实数据库）。
  *
- * <p>语义对齐设计文档 §3.5 执行前门禁：</p>
+ * <p>语义对齐README §4.2 执行前门禁：</p>
  * <ul>
  *   <li>{@code tryAcquire} 原子：lock_key 不存在则插入；已存在且未过期则<strong>不可剥夺</strong>
  *       （owner 相同也一样返回 false）；已过期才允许覆盖抢占；</li>

@@ -6,37 +6,44 @@ import com.sqlaudit.common.enums.ApproverType;
 import java.time.LocalDateTime;
 
 /**
- * 审批记录实体（对应 approval 表，设计文档 §8.2 / §9）。
+ * 审批记录实体（对应 t_approval 表）——提交工单时按生效链一次性生成。
  *
- * <p>同一 {@code (ticketId, nodeOrder)} 下多行 = 会签 / 或签组（DDL 注释）。</p>
+ * <p>同一 {@code (ticketId, nodeOrder)} 下多行 = 一组（会签 / 或签）。生效链 =
+ * 全局链节点组 + 实例链节点组，{@code nodeOrder} 是<strong>重新编号后</strong>的组序
+ * （全局组在前、实例组在后），不等于 {@code t_flow_node.node_order}。</p>
  *
- * <p>关键字段约定：</p>
+ * <p><strong>指派对象与决策人分列存储</strong>（消除旧模型里 {@code approver_id = 0} /
+ * {@code node_id = 0} 的魔数）：</p>
  * <ul>
- *   <li>{@code mode}：{@link com.sqlaudit.common.enums.ApprovalMode}，AND 会签 / OR 或签（存储码 = 枚举名）；</li>
- *   <li>{@code result}：{@link com.sqlaudit.common.enums.ApprovalResult}，PENDING / APPROVED / REJECTED / TRANSFERRED；</li>
- *   <li>{@code approverId}：B-3 阶段审批链节点为 ROLE 占位，取 {@code 0} 表示「按角色解析」，
- *       W2 装配时由 workflow 补角色 → 用户解析（§8.2 flow_node.approver_type=ROLE）；
- *       决策时 updateResult 会把实际决策人写入本字段。</li>
+ *   <li>{@code flowNodeId}：生成本记录的 {@code t_flow_node.id}——流程配置可被改写，
+ *       留下它才能复现「当时用的是哪条配置」；</li>
+ *   <li>{@code approverType} + {@code approverRef}：<strong>指派对象</strong>，两者都 NOT NULL。
+ *       USER = 用户 id；ROLE = 角色 code；INSTANCE_OWNER = 提交时解析出的负责人用户 id（快照）。
+ *       引擎对缺失值一律拒绝决策，不再有「ref 为 NULL 就跳过角色校验」的越权口子；</li>
+ *   <li>{@code decidedBy}：<strong>实际决策人</strong>（认领 ROLE 记录、决策、转交、跳过时写入），
+ *       与指派信息互不覆盖。</li>
  * </ul>
+ *
+ * <p>唯一约束 {@code (ticket_id, node_order, approver_type, approver_ref)} 防并发重复生成。</p>
  */
 public class Approval {
 
     private Long id;
     private Long ticketId;
-    /** 关联 flow_node；B-3 无 flow_node 记录，占位 0，W2 装配时补 */
-    private Long nodeId;
-    /** 节点顺序，1..n；同 nodeOrder 多行 = 会签/或签组 */
+    /** 生成本记录的 t_flow_node.id（审批配置可追溯） */
+    private Long flowNodeId;
+    /** 生效链中的组序，1..n；同值多行 = 会签/或签组 */
     private Integer nodeOrder;
-    /** 审批人；ROLE 占位节点为 0（按角色解析） */
-    private Long approverId;
-    /** 节点审批人类型（ROLE/USER/INSTANCE_OWNER，§8.2） */
-    private ApproverType approverType;
-    /** 审批人 ref（ROLE=角色码，USER=用户id，INSTANCE_OWNER=owner） */
-    private String approverRef;
     /** AND 会签 / OR 或签 */
     private ApprovalMode mode;
-    /** PENDING/APPROVED/REJECTED/TRANSFERRED */
+    /** 指派对象类型（USER/ROLE/INSTANCE_OWNER） */
+    private ApproverType approverType;
+    /** 指派对象：USER=用户 id；ROLE=角色 code；INSTANCE_OWNER=负责人用户 id（快照） */
+    private String approverRef;
+    /** PENDING/APPROVED/REJECTED/TRANSFERRED/SKIPPED */
     private ApprovalResult result;
+    /** 实际决策人（认领 / 决策 / 转交 / 跳过时写入） */
+    private Long decidedBy;
     private String comment;
     private LocalDateTime decidedAt;
     private LocalDateTime createdAt;
@@ -57,12 +64,12 @@ public class Approval {
         this.ticketId = ticketId;
     }
 
-    public Long getNodeId() {
-        return nodeId;
+    public Long getFlowNodeId() {
+        return flowNodeId;
     }
 
-    public void setNodeId(Long nodeId) {
-        this.nodeId = nodeId;
+    public void setFlowNodeId(Long flowNodeId) {
+        this.flowNodeId = flowNodeId;
     }
 
     public Integer getNodeOrder() {
@@ -73,12 +80,12 @@ public class Approval {
         this.nodeOrder = nodeOrder;
     }
 
-    public Long getApproverId() {
-        return approverId;
+    public ApprovalMode getMode() {
+        return mode;
     }
 
-    public void setApproverId(Long approverId) {
-        this.approverId = approverId;
+    public void setMode(ApprovalMode mode) {
+        this.mode = mode;
     }
 
     public ApproverType getApproverType() {
@@ -97,20 +104,20 @@ public class Approval {
         this.approverRef = approverRef;
     }
 
-    public ApprovalMode getMode() {
-        return mode;
-    }
-
-    public void setMode(ApprovalMode mode) {
-        this.mode = mode;
-    }
-
     public ApprovalResult getResult() {
         return result;
     }
 
     public void setResult(ApprovalResult result) {
         this.result = result;
+    }
+
+    public Long getDecidedBy() {
+        return decidedBy;
+    }
+
+    public void setDecidedBy(Long decidedBy) {
+        this.decidedBy = decidedBy;
     }
 
     public String getComment() {

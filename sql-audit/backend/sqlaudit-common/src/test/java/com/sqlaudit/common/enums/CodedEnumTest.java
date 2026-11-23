@@ -145,15 +145,15 @@ class CodedEnumTest {
         assertEquals(List.of("generated", "verified", "applied", "expired", "not_available", "failed", "partial"),
                 codes(RollbackStatus.class));
         assertEquals(List.of("FULL", "PARTIAL", "NONE"), codes(RollbackCoverage.class));
-        assertEquals(List.of("prod", "test", "dev", "staging", "ALL"), codes(Environment.class));
         assertEquals(List.of("ACTIVE", "DISABLED"), codes(UserStatus.class));
         assertEquals(List.of("ACTIVE", "DISABLED"), codes(InstanceStatus.class));
+        assertEquals(List.of("ALL", "SELECTED"), codes(InstanceScope.class));
         assertEquals(List.of("WEWORK", "LOCAL"), codes(UserSource.class));
         assertEquals(List.of("RO_META", "RO_DATA", "RW_EXEC"), codes(AccountType.class));
-        assertEquals(List.of("DEV", "LEAD", "DBA", "ADMIN"), codes(RoleCode.class));
         assertEquals(List.of("MIRROR", "REVERSE_DDL", "BINLOG", "SNAPSHOT", "NONE"), codes(RollbackGenerator.class));
         assertEquals(List.of("AND", "OR"), codes(ApprovalMode.class));
-        assertEquals(List.of("PENDING", "APPROVED", "REJECTED", "TRANSFERRED"), codes(ApprovalResult.class));
+        assertEquals(List.of("PENDING", "APPROVED", "REJECTED", "TRANSFERRED", "SKIPPED"),
+                codes(ApprovalResult.class));
         assertEquals(List.of("USER", "ROLE", "INSTANCE_OWNER"), codes(ApproverType.class));
         assertEquals(List.of("MYSQL", "PG", "IOTDB"), codes(Dialect.class));
         assertEquals(List.of("LOW", "MEDIUM", "HIGH", "CRITICAL"), codes(RiskLevel.class));
@@ -164,13 +164,15 @@ class CodedEnumTest {
         assertEquals(List.of("SELECT", "INSERT", "UPDATE", "DELETE", "DDL", "ALL"), codes(RuleStatementType.class));
         // 审计动作：统一大写下划线命名
         assertEquals(List.of("LOGIN", "USER_CREATE", "USER_UPDATE", "PASSWORD_RESET", "ROLE_ASSIGN",
-                        "PERMISSION_ASSIGN",
+                        "PERMISSION_ASSIGN", "ROLE_CREATE", "ROLE_UPDATE", "ROLE_DELETE",
                         "INSTANCE_CREATE", "INSTANCE_UPDATE", "INSTANCE_DELETE", "RULE_CREATE", "RULE_UPDATE",
                         "RULE_DELETE", "FLOW_CREATE", "FLOW_UPDATE", "FLOW_DELETE", "QUERY_EXECUTED",
-                        "TICKET_STATE_CHANGE", "UNIT_EXEC", "ROLLBACK_EXECUTE", "ROLLBACK_STATEMENT_APPLIED"),
+                        "TICKET_STATE_CHANGE", "UNIT_EXEC", "ROLLBACK_EXECUTE", "ROLLBACK_STATEMENT_APPLIED",
+                        "TABLE_REMARK_UPDATE"),
                 codes(AuditAction.class));
-        assertEquals(List.of("user", "instance", "rule", "flow_rule", "ticket", "TICKET_UNIT", "SESSION",
-                        "rollback", "rollback_statement", "permission"), codes(AuditTargetType.class));
+        assertEquals(List.of("user", "role", "instance", "rule", "flow_rule", "ticket", "TICKET_UNIT", "SESSION",
+                        "rollback", "rollback_statement", "permission", "table_remark"),
+                codes(AuditTargetType.class));
         assertEquals(List.of("SUCCESS", "REJECTED", "FAILED", "PARTIAL"), codes(AuditResult.class));
         // 门禁码沿用历史口径：两道门直接借用规则码
         assertEquals(List.of("APPROVAL_TTL", "R_SCHEMA_DRIFT", "R_ROLLBACK_UNAVAILABLE"), codes(GateCode.class));
@@ -178,27 +180,38 @@ class CodedEnumTest {
         assertEquals(List.of("BUSINESS_ERROR", "UNAUTHORIZED", "FORBIDDEN", "INVALID_REQUEST",
                         "ILLEGAL_STATE_TRANSITION", "INTERNAL_ERROR", "CREDENTIAL_CRYPTO", "INSTANCE_NOT_FOUND",
                         "IOTDB_NOT_SUPPORTED", "RO_META_CREDENTIAL_MISSING", "RO_META_CREDENTIAL_INVALID",
-                        "META_QUERY_FAILED", "USERNAME_EXISTS", "EMPTY_UNITS", "EMPTY_INSTANCES",
+                        "META_QUERY_FAILED", "USERNAME_EXISTS", "USER_NOT_FOUND", "ROLE_NOT_FOUND",
+                        "BUILTIN_ROLE_IMMUTABLE", "RBAC_LOCKOUT", "EMPTY_UNITS", "EMPTY_INSTANCES",
                         "ERROR_RULE_BLOCKED", "IMPACT_ASSESSMENT_INCOMPLETE", "FINGERPRINT_CAPTURE_FAILED",
-                        "TICKET_STATE_CONFLICT", "TICKET_NOT_FOUND", "TICKET_NOT_AUDITING", "APPROVAL_NODES_EXIST",
+                        "TICKET_STATE_CONFLICT", "INSTANCE_OUT_OF_SCOPE", "SQL_TOO_LARGE",
+                        "TICKET_NOT_FOUND", "TICKET_NOT_AUDITING", "TICKET_ACCESS_DENIED",
+                        "APPROVAL_FLOW_NOT_CONFIGURED", "NO_ELIGIBLE_APPROVER", "DUPLICATE_FLOW",
+                        "FLOW_NOT_FOUND", "FLOW_NODE_INVALID", "APPROVAL_NODES_EXIST",
                         "SELF_APPROVAL_FORBIDDEN", "SELF_CONFIRM_FORBIDDEN", "APPROVAL_ALREADY_DECIDED",
                         "APPROVAL_TARGET_NOT_FOUND", "NO_PENDING_APPROVAL", "ROLLBACK_NOT_FOUND",
                         "ROLLBACK_INVALID_STATUS", "ROLLBACK_NOT_EXECUTABLE", "ROLLBACK_EXPIRED", "ROLLBACK_NO_UNIT",
                         "ROLLBACK_NO_INSTANCE", "ROLLBACK_PARAM_PARSE_FAILED"), codes(ErrorCode.class));
     }
 
-    /** 环境的存储码大小写不统一（{@code prod} / {@code ALL}），精确匹配优先、大小写不敏感兜底。 */
+    /** 小写存储码（工单状态）精确匹配优先、大小写不敏感兜底，非法取值必须被拒而不是静默落库。 */
     @Test
-    void environmentCodesResolveDespiteMixedCase() {
-        assertEquals(Environment.PROD, Environment.fromCode("prod"));
-        assertEquals(Environment.ALL, Environment.fromCode("ALL"));
-        assertEquals(Environment.PROD, Environment.fromCode("PROD"));
-        assertEquals(Environment.ALL, Environment.fromCode("all"));
-        assertEquals(Environment.STAGING, Environment.fromCode("staging"), "历史数据仍可读");
-        // 枚举之外的环境（DDL / 前端都没有的取值）必须被拒绝，而不是静默落库
+    void mixedCaseCodesResolveAndUnknownIsRejected() {
+        assertEquals(TicketStatus.DRAFT, TicketStatus.fromCode("draft"));
+        assertEquals(TicketStatus.DRAFT, TicketStatus.fromCode("DRAFT"));
+        assertEquals(InstanceScope.ALL, InstanceScope.fromCode("ALL"));
+        assertEquals(InstanceScope.SELECTED, InstanceScope.fromCode("selected"));
+
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-                () -> Environment.fromCode("qa"));
-        assertTrue(e.getMessage().contains("[prod, test, dev, staging, ALL]"), e.getMessage());
+                () -> InstanceScope.fromCode("some"));
+        assertTrue(e.getMessage().contains("[ALL, SELECTED]"), e.getMessage());
+    }
+
+    /** 去环境化（2026-11-23）：业务层不再有 environment 维度，对应枚举已删除。 */
+    @Test
+    void environmentEnumIsGone() throws IOException {
+        assertTrue(codedEnums().stream().map(Class::getSimpleName).noneMatch(
+                n -> n.equals("Environment") || n.equals("RoleCode") || n.equals("PermissionCode")),
+                "Environment / RoleCode / PermissionCode 必须已从枚举包移除");
     }
 
     @Test
