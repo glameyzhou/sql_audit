@@ -21,7 +21,13 @@
                 :key="inst.id"
                 :label="instanceLabel(inst)"
                 :value="inst.id"
-              />
+              >
+                <span>{{ inst.name || '未命名实例' }}</span>
+                <span class="option-meta">
+                  <DbBadge v-if="inst.dialect" :dialect="inst.dialect" />
+                  <span v-if="inst.defaultSchema">· 默认库 {{ inst.defaultSchema }}</span>
+                </span>
+              </el-option>
             </el-select>
           </el-form-item>
           <el-form-item label="数据库">
@@ -49,7 +55,8 @@
           </el-form-item>
           <el-form-item label="连接信息">
             <div v-if="currentInstance" class="inst-meta">
-              <el-tag size="small" effect="light" type="info">{{ currentInstance.dialect || '?' }}</el-tag>
+              <DbBadge v-if="currentInstance.dialect" :dialect="currentInstance.dialect" />
+              <span v-else class="meta-text dim">?</span>
               <span class="meta-text mono">{{ hostPort(currentInstance) }}</span>
               <span class="meta-text">默认库 {{ currentInstance.defaultSchema || '-' }}</span>
             </div>
@@ -57,11 +64,6 @@
               {{ instanceLoading ? '实例加载中…' : (instanceList.length ? '未选择实例' : '无可用实例') }}
             </span>
           </el-form-item>
-        </div>
-
-        <!-- 环境过滤兜底：当前环境无实例时展示全部并提示 -->
-        <div v-if="envMismatch" class="env-hint">
-          当前环境（{{ globalEnv }}）下没有可用实例，已展示全部实例
         </div>
 
         <!-- 工作台：左「数据表」+ 右「SQL 编辑 + 结果预览」 -->
@@ -88,11 +90,25 @@
               <div v-else class="browser-list">
                 <div
                   v-for="t in tables"
-                  :key="t"
-                  class="browser-item mono"
-                  title="点击生成 SELECT 并预览最近 20 行"
+                  :key="t.name"
+                  class="browser-item"
+                  title="点击查看表结构，双击预览前 10 行"
                   @click="pickTable(t)"
-                >{{ t }}</div>
+                  @dblclick="previewTenRows(t)"
+                >
+                  <div class="browser-item-main">
+                    <span class="browser-name mono">{{ t.name }}</span>
+                    <el-button
+                      v-if="session.can(API.TABLE_REMARK_UPDATE)"
+                      class="remark-edit"
+                      link
+                      size="small"
+                      title="编辑备注"
+                      @click.stop="openRemarkDialog(t)"
+                    >备注</el-button>
+                  </div>
+                  <div v-if="remarkOf(t)" class="browser-remark">{{ remarkOf(t) }}</div>
+                </div>
               </div>
             </div>
           </div>
@@ -100,7 +116,7 @@
           <div class="editor-col">
             <div class="pane-head">
               <span>SQL 工作台</span>
-              <span class="pane-hint">点表名 → 生成 SELECT，并在下方预览最近 20 行</span>
+              <span class="pane-hint">表结构请点左侧表查看；SHOW/DESC 等语句在只读通道不可用</span>
             </div>
 
           <!-- textarea 透明文字 + 背后 <pre> 高亮层（同字体同 padding，滚动同步） -->
@@ -146,6 +162,82 @@
               <span class="run-hint">查询经 LIMIT 三层保护并写入审计链</span>
             </div>
 
+            <!-- 表结构面板（点左侧表名打开；查询通道只读，SHOW/DESC 不可用） -->
+            <div v-if="structure" class="structure-panel">
+              <div class="result-head">
+                <span class="result-title">表结构 · {{ structure.table }}</span>
+                <div class="structure-actions">
+                  <el-button
+                    type="primary"
+                    size="small"
+                    :disabled="structure.loading || structure.error || !structure.columns.length"
+                    @click="previewTenRows(structure.table)"
+                  >查看前 10 行</el-button>
+                  <el-button size="small" @click="structure = null">关闭</el-button>
+                </div>
+              </div>
+              <div v-loading="structure.loading" class="structure-body">
+                <div v-if="structure.error" class="browser-state err">
+                  表结构加载失败（可能是权限不足或表不存在）
+                </div>
+                <el-table
+                  v-else
+                  :data="structure.columns"
+                  size="small"
+                  class="structure-table"
+                  max-height="320"
+                >
+                  <el-table-column prop="ordinal" label="#" width="52" />
+                  <el-table-column prop="name" label="字段" min-width="150">
+                    <template #default="{ row }"><span class="mono">{{ row.name }}</span></template>
+                  </el-table-column>
+                  <el-table-column prop="dataType" label="类型" min-width="130">
+                    <template #default="{ row }"><span class="mono">{{ row.dataType }}</span></template>
+                  </el-table-column>
+                  <el-table-column label="可空" width="70">
+                    <template #default="{ row }">{{ row.nullable ? '是' : '否' }}</template>
+                  </el-table-column>
+                  <el-table-column label="键" width="90">
+                    <template #default="{ row }">
+                      <el-tag v-if="keyLabel(row.key)" size="small" effect="light" type="info">
+                        {{ keyLabel(row.key) }}
+                      </el-tag>
+                      <span v-else class="meta-text dim">—</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="默认值" min-width="120">
+                    <template #default="{ row }">
+                      <span class="mono">{{ row.defaultValue ?? '—' }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="注释" min-width="170" show-overflow-tooltip>
+                    <template #default="{ row }">{{ row.comment || '—' }}</template>
+                  </el-table-column>
+                </el-table>
+              </div>
+            </div>
+
+            <!-- 表备注编辑弹窗 -->
+            <el-dialog
+              v-model="remarkDialog.visible"
+              :title="'表备注 · ' + remarkDialog.table"
+              width="420px"
+              append-to-body
+            >
+              <el-input
+                v-model="remarkDialog.remark"
+                type="textarea"
+                :rows="3"
+                maxlength="255"
+                show-word-limit
+                placeholder="平台侧备注（优先于原库注释显示）；留空保存 = 清除备注"
+              />
+              <template #footer>
+                <el-button @click="remarkDialog.visible = false">取消</el-button>
+                <el-button type="primary" :loading="remarkDialog.saving" @click="saveRemark">保存</el-button>
+              </template>
+            </el-dialog>
+
             <!-- 失败 -->
             <el-alert
               v-if="result && result.success === false"
@@ -159,7 +251,7 @@
             <!-- 成功：结果紧贴编辑器下方展示（点表预览与手动查询共用） -->
             <div v-if="result && result.success" class="result-inline">
               <div class="result-head">
-                <span class="result-title">{{ previewMode ? '数据预览（最近 20 行）' : '查询结果' }}</span>
+                <span class="result-title">{{ previewMode ? '数据预览（前 10 行）' : '查询结果' }}</span>
               </div>
       <div class="info-bar">
         <div class="info-item">
@@ -225,33 +317,21 @@
 import { ref, reactive, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../../api'
+import { API } from '../../api/capabilities'
 import { useSessionStore } from '../../stores/session'
-import { envMeta } from '../../constants'
+import DbBadge from '../../components/DbBadge.vue'
 
+// 能力判断（菜单 / 按钮显隐走接口能力，不认角色码）
 const session = useSessionStore()
 
 // ==================== 实例选择 ====================
 
-const instanceList = ref([])      // api.listUserInstances 全量结果
+// 后端已按当前用户角色的数据范围过滤，前端不再做二次筛选
+const instanceList = ref([])
 const instanceLoading = ref(false)
 const instanceId = ref(null)
 
-// 全局环境（session.env；尚未注入时为 null，不过滤）
-const globalEnv = computed(() => session.env || '')
-
-// 环境过滤：有匹配只展示匹配项；无匹配兜底展示全部（envMismatch 提示）
-const envMatched = computed(() => {
-  const all = instanceList.value || []
-  if (!globalEnv.value) return all
-  const g = String(globalEnv.value).toLowerCase()
-  return all.filter((i) => String(i.environment || '').toLowerCase() === g)
-})
-const instanceOptions = computed(() =>
-  envMatched.value.length ? envMatched.value : (instanceList.value || [])
-)
-const envMismatch = computed(() =>
-  !!globalEnv.value && !envMatched.value.length && instanceOptions.value.length > 0
-)
+const instanceOptions = computed(() => instanceList.value || [])
 
 const currentInstance = computed(() =>
   (instanceList.value || []).find((i) => i.id === instanceId.value) || null
@@ -260,8 +340,8 @@ const currentInstance = computed(() =>
 const currentDialect = computed(() => currentInstance.value?.dialect || '')
 
 function instanceLabel(inst) {
-  const envLabel = envMeta(inst.environment).label
-  return `${inst.name || '未命名实例'} · ${inst.dialect || '?'} · ${envLabel}`
+  const schema = inst.defaultSchema ? ` · 默认库 ${inst.defaultSchema}` : ''
+  return `${inst.name || '未命名实例'} · ${inst.dialect || '?'}${schema}`
 }
 
 function hostPort(inst) {
@@ -275,9 +355,9 @@ async function loadInstances() {
   instanceLoading.value = true
   try {
     instanceList.value = (await api.listUserInstances()) || []
-    // 默认选中第一个（环境匹配优先）
+    // 默认选中第一个实例，省去一次点击
     if (instanceList.value.length && instanceId.value == null) {
-      instanceId.value = (instanceOptions.value[0] || instanceList.value[0]).id
+      instanceId.value = instanceList.value[0].id
     }
   } catch {
     /* 拦截器已提示 */
@@ -290,6 +370,7 @@ async function loadInstances() {
 // ==================== 库 / 表两列浏览 ====================
 
 const databases = ref([])
+// 表列表元素 = { name, comment }（comment 为原库原生注释，可为 null）
 const tables = ref([])
 const selectedDb = ref('')
 const dbLoading = ref(false)
@@ -304,6 +385,9 @@ let tableSeq = 0
 // 列名缓存：表标识符 → 列名数组（随库/表切换失效）
 const columnCache = new Map()
 
+// 平台备注词典：表名 → 备注（平台备注优先于原生注释展示）
+const remarks = ref(new Map())
+
 async function loadDatabases() {
   const id = instanceId.value
   if (id == null) return
@@ -312,6 +396,8 @@ async function loadDatabases() {
   dbError.value = false
   selectedDb.value = ''
   tables.value = []
+  remarks.value = new Map()
+  structure.value = null
   columnCache.clear()
   tableError.value = false
   try {
@@ -339,11 +425,14 @@ async function loadTables() {
   const seq = ++tableSeq
   tableLoading.value = true
   tableError.value = false
+  remarks.value = new Map()
+  structure.value = null
   try {
     const list = await api.listTables(id, db)
     if (seq !== tableSeq) return
     tables.value = list || []
     columnCache.clear()
+    await loadRemarks(seq)
   } catch {
     if (seq !== tableSeq) return
     tableError.value = true
@@ -353,9 +442,41 @@ async function loadTables() {
   }
 }
 
+/** 拉平台备注词典（失败静默置空——原生注释仍在表列表里展示）。 */
+async function loadRemarks(seq = tableSeq) {
+  const id = instanceId.value
+  const db = selectedDb.value
+  if (id == null || !db) {
+    remarks.value = new Map()
+    return
+  }
+  let list
+  try {
+    list = await api.listTableRemarks(id, db)
+  } catch {
+    list = []
+  }
+  if (seq !== tableSeq) return
+  const m = new Map()
+  for (const r of list || []) {
+    if (r && r.tableName != null) m.set(r.tableName, r.remark || '')
+  }
+  remarks.value = m
+}
+
+/** 展示备注：平台备注优先，回落原生注释，都没有则不显示。 */
+function remarkOf(t) {
+  const name = t?.name ?? String(t)
+  const platform = remarks.value.get(name)
+  if (platform) return platform
+  return t?.comment || ''
+}
+
 // 数据库切换（下拉）→ 重新拉表清单；空值（清空 / 切实例）时清空表列表
 watch(selectedDb, (db) => {
   tables.value = []
+  remarks.value = new Map()
+  structure.value = null
   tableError.value = false
   closeSuggests()
   if (db) loadTables()
@@ -366,21 +487,79 @@ function quoteIdent(name) {
   return currentDialect.value.toUpperCase() === 'PG' ? `"${name}"` : `\`${name}\``
 }
 
-// 点表 → 生成 SELECT，并在编辑器下方预览最近 20 行
-function pickTable(t) {
+// ==================== 表结构面板 + 表备注 ====================
+
+// 结构面板状态：{ table, loading, error, columns }；null = 未打开
+const structure = ref(null)
+
+// 点表（单击）→ 打开表结构面板（不再自动跑 SELECT）
+async function pickTable(t) {
   if (!selectedDb.value) return
+  const name = t?.name ?? String(t)
+  structure.value = { table: name, loading: true, error: false, columns: [] }
+  try {
+    const cols = await api.listTableStructure(instanceId.value, selectedDb.value, name)
+    if (structure.value?.table !== name) return
+    structure.value = { table: name, loading: false, error: false, columns: cols || [] }
+  } catch {
+    if (structure.value?.table !== name) return
+    structure.value = { table: name, loading: false, error: true, columns: [] }
+  }
+}
+
+/** 生成 SELECT ... LIMIT 10（PG 的 schema.table 限定名拆开引用）。 */
+function buildPreviewSelect(name) {
   if (currentDialect.value.toUpperCase() === 'PG') {
     // PG：后端 listTables 返回 schema.table 限定名；数据库只是连接上下文不写进 SQL，
     // 拆成 "schema"."table" 分别引用，避免 "库"."schema.table" 这类非法限定
-    const dot = t.indexOf('.')
-    form.sql = dot > 0
-      ? `SELECT * FROM ${quoteIdent(t.slice(0, dot))}.${quoteIdent(t.slice(dot + 1))} LIMIT 20`
-      : `SELECT * FROM ${quoteIdent(t)} LIMIT 20`
-  } else {
-    form.sql = `SELECT * FROM ${quoteIdent(selectedDb.value)}.${quoteIdent(t)} LIMIT 20`
+    const dot = name.indexOf('.')
+    return dot > 0
+      ? `SELECT * FROM ${quoteIdent(name.slice(0, dot))}.${quoteIdent(name.slice(dot + 1))} LIMIT 10`
+      : `SELECT * FROM ${quoteIdent(name)} LIMIT 10`
   }
+  return `SELECT * FROM ${quoteIdent(selectedDb.value)}.${quoteIdent(name)} LIMIT 10`
+}
+
+// 预览前 10 行（结构面板按钮 / 表列表双击）
+function previewTenRows(t) {
+  if (!selectedDb.value) return
+  const name = t?.name ?? String(t)
+  form.sql = buildPreviewSelect(name)
   nextTick(() => taRef.value?.focus())
   run(true)
+}
+
+// 表备注弹窗
+const remarkDialog = reactive({ visible: false, table: '', remark: '', saving: false })
+
+function openRemarkDialog(t) {
+  const name = t?.name ?? String(t)
+  remarkDialog.table = name
+  remarkDialog.remark = remarks.value.get(name) || ''
+  remarkDialog.visible = true
+}
+
+async function saveRemark() {
+  remarkDialog.saving = true
+  try {
+    await api.saveTableRemark({
+      instanceId: instanceId.value,
+      schemaName: selectedDb.value,
+      tableName: remarkDialog.table,
+      remark: remarkDialog.remark.trim()
+    })
+    remarkDialog.visible = false
+    await loadRemarks()
+  } catch {
+    /* 拦截器已提示 */
+  } finally {
+    remarkDialog.saving = false
+  }
+}
+
+// 键代码 → 中文标签（MySQL：PRI/UNI/MUL；PG：PRI/UNI）
+function keyLabel(key) {
+  return { PRI: '主键', UNI: '唯一', MUL: '索引' }[key] || ''
 }
 
 // 实例切换：重置库表并加载新实例的库
@@ -392,6 +571,8 @@ watch(instanceId, () => {
     selectedDb.value = ''
     databases.value = []
     tables.value = []
+    remarks.value = new Map()
+    structure.value = null
   }
 })
 
@@ -418,7 +599,7 @@ async function run(preview = false) {
   previewMode.value = preview
   running.value = true
   try {
-    result.value = await api.runQuery(instanceId.value, form.sql, currentDialect.value, session.user?.id)
+    result.value = await api.runQuery(instanceId.value, form.sql, currentDialect.value)
   } catch {
     result.value = null
   } finally {
@@ -525,7 +706,7 @@ function buildSuggestions(prefix) {
     if (k.startsWith(up)) out.push({ text: k, kind: '关键字', insert: k + ' ' })
   }
   for (const t of tables.value || []) {
-    const name = String(t)
+    const name = String(t?.name ?? t)
     if (name.toLowerCase().startsWith(low)) out.push({ text: name, kind: '表', insert: name })
   }
   return out.slice(0, 8)
@@ -544,7 +725,7 @@ function dotContextAtCaret(value, caret) {
 function buildTableAliasMap(sql) {
   const bareToFull = new Map()
   for (const t of tables.value || []) {
-    const full = String(t)
+    const full = String(t?.name ?? t)
     const bare = full.split('.').pop().replace(/[`"]/g, '')
     if (bare && !bareToFull.has(bare)) bareToFull.set(bare, full)
   }
@@ -802,21 +983,15 @@ onBeforeUnmount(() => {
 }
 .card-title { font-size: 13px; font-weight: 650; color: var(--sa-text); }
 
+/* 实例下拉选项：名称在左、方言徽章与默认库在右（与提交变更页一致） */
+.option-meta { float: right; font-size: 11px; color: var(--sa-text-3); margin-left: 12px; display: inline-flex; align-items: center; gap: 6px; }
+
 .q-form { margin-top: 16px; }
 .form-row { display: flex; align-items: flex-start; gap: 20px; flex-wrap: wrap; }
 
 .inst-meta { display: flex; align-items: center; gap: 10px; min-height: 32px; }
 .meta-text { font-size: 12px; color: var(--sa-text-2); }
 .meta-text.dim { color: var(--sa-text-3); }
-
-.env-hint {
-  font-size: 12px;
-  color: var(--sa-warning);
-  background: var(--sa-warning-soft);
-  border-radius: var(--sa-radius-sm);
-  padding: 6px 10px;
-  margin-bottom: 14px;
-}
 
 /* ---- 工作台：左表列表 + 右编辑器/结果 ---- */
 .workbench {
@@ -852,19 +1027,52 @@ onBeforeUnmount(() => {
 .db-picker { display: flex; align-items: center; gap: 6px; }
 .browser-list { display: flex; flex-direction: column; gap: 1px; }
 .browser-item {
-  padding: 5px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 10px;
   font-size: 12.5px;
   color: var(--sa-text-2);
   border-radius: 5px;
   cursor: pointer;
+}
+.browser-item:hover { background: var(--sa-surface-3); color: var(--sa-text); }
+.browser-item.active { background: var(--sa-brand-soft); color: var(--sa-brand-2); font-weight: 600; }
+.browser-item-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+.browser-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.browser-remark {
+  font-size: 11px;
+  color: var(--sa-text-3);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.browser-item:hover { background: var(--sa-surface-3); color: var(--sa-text); }
-.browser-item.active { background: var(--sa-brand-soft); color: var(--sa-brand-2); font-weight: 600; }
+.browser-item:hover .browser-remark { color: var(--sa-text-2); }
+/* 备注编辑按钮：悬停才出现，避免列表常态下过挤 */
+.remark-edit { flex-shrink: 0; visibility: hidden; font-size: 11px; }
+.browser-item:hover .remark-edit { visibility: visible; }
 .browser-state { padding: 14px 8px; text-align: center; font-size: 12px; color: var(--sa-text-3); }
 .browser-state.err { color: var(--sa-danger); }
+
+/* ---- 表结构面板 ---- */
+.structure-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--sa-border);
+  border-radius: var(--sa-radius-sm);
+  background: var(--sa-surface);
+  padding: 12px 14px;
+}
+.structure-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.structure-body { min-height: 48px; }
+.structure-table { margin-top: 2px; }
 
 /* ---- SQL 编辑器（textarea + 高亮 overlay） ---- */
 .sql-editor {

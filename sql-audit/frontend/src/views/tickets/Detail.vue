@@ -33,15 +33,7 @@
 
         <div class="page-actions">
           <el-button
-            v-if="ticket.status === 'auditing'"
-            type="primary"
-            :loading="acting"
-            @click="handleSubmitApproval"
-          >
-            提交审批
-          </el-button>
-          <el-button
-            v-else-if="canCancel"
+            v-if="canCancel"
             type="danger"
             plain
             :loading="acting"
@@ -76,22 +68,19 @@
         <div class="kv-grid">
           <div class="kv"><span class="k">工单号</span><span class="v mono">TK-{{ ticket.id }}</span></div>
           <div class="kv"><span class="k">创建人</span><span class="v">{{ creatorName }}</span></div>
-          <div class="kv"><span class="k">环境</span><span class="v">
-            <el-tag :type="envMeta(ticket.environment).type" effect="plain" size="small">
-              {{ envMeta(ticket.environment).label }}
-            </el-tag>
-          </span></div>
           <div class="kv"><span class="k">创建时间</span><span class="v">{{ formatTime(ticket.createdAt) }}</span></div>
+          <div class="kv"><span class="k">trace</span><span class="v mono">{{ ticket.traceId || '-' }}</span></div>
           <div class="kv full">
             <span class="k">目标实例</span>
             <div class="v inst-list">
-              <div v-for="inst in targetInstances" :key="inst.id" class="inst-item">
-                <span class="inst-name">{{ inst.name }}</span>
-                <span class="inst-meta mono">{{ inst.host }}{{ inst.port ? ':' + inst.port : '' }}</span>
-                <span class="inst-meta">默认库 {{ inst.defaultSchema || '-' }}</span>
-                <el-tag size="small" effect="plain" type="info">{{ inst.dialect || '?' }}</el-tag>
+              <div v-if="targetInstance" class="inst-item">
+                <span class="inst-name">{{ targetInstance.name }}</span>
+                <span class="inst-meta mono">{{ targetInstance.host }}{{ targetInstance.port ? ':' + targetInstance.port : '' }}</span>
+                <span class="inst-meta">默认库 {{ targetInstance.defaultSchema || '-' }}</span>
+                <DbBadge v-if="targetInstance.dialect" :dialect="targetInstance.dialect" />
+                <el-tag v-else size="small" effect="plain" type="info">?</el-tag>
               </div>
-              <span v-if="!targetInstances.length" class="v">-</span>
+              <span v-else class="v">{{ ticket.instanceName || (ticket.instanceId != null ? `实例 ${ticket.instanceId}` : '-') }}</span>
             </div>
           </div>
         </div>
@@ -118,15 +107,44 @@
               {{ coverageMeta(u.coverage).label }}
             </el-tag>
             <span v-if="u.note" class="rb-note">{{ u.note }}</span>
-            <router-link
-              v-if="rollbackOf(i)"
-              class="rb-link"
-              :to="{ path: '/rollback', query: { rollbackId: rollbackOf(i).id } }"
-            >查看回滚 #{{ rollbackOf(i).id }}</router-link>
+            <span class="rb-actions">
+              <el-button
+                v-if="rollbackOf(i) && session.can(API.ROLLBACKS)"
+                link
+                type="primary"
+                size="small"
+                @click="goRollbackSql(rollbackOf(i).id)"
+              >查看回滚 SQL</el-button>
+              <el-button
+                v-else-if="hasPreviewSql(u) && session.can(API.ROLLBACKS)"
+                link
+                type="primary"
+                size="small"
+                @click="openPreview(u)"
+              >预览回滚 SQL</el-button>
+            </span>
           </div>
         </div>
         <div v-else class="rb-empty">暂无回滚清单</div>
       </div>
+
+      <!-- 回滚 SQL 预览弹窗（提交时推导的反向语句模板，非执行后前镜像） -->
+      <el-dialog v-model="previewVisible" title="回滚 SQL 预览" width="720px" top="6vh">
+        <el-alert
+          type="warning"
+          :closable="false"
+          show-icon
+          class="preview-alert"
+          title="预览语句由提交时的规则推导生成；执行后的实际回滚语句以前镜像为准。"
+        />
+        <div v-for="(sql, idx) in previewStatements" :key="idx" class="preview-item">
+          <div class="preview-no mono">#{{ idx + 1 }}</div>
+          <pre class="sql-block mono">{{ sql }}</pre>
+        </div>
+        <template #footer>
+          <el-button @click="previewVisible = false">关闭</el-button>
+        </template>
+      </el-dialog>
     </template>
   </div>
 </template>
@@ -137,8 +155,10 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Loading } from '@element-plus/icons-vue'
 import { api } from '../../api'
-import { envMeta, statusMeta, riskMeta, coverageMeta } from '../../constants'
+import { API } from '../../api/capabilities'
+import { statusMeta, riskMeta, coverageMeta, TERMINAL_TICKET_STATUSES } from '../../constants'
 import { useSessionStore } from '../../stores/session'
+import DbBadge from '../../components/DbBadge.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -154,21 +174,26 @@ const instances = ref([])
 const ticketUnits = ref([])
 const rollbacks = ref([])
 
-// 状态机：可取消（draft / submitted）
+/** 提交人本人（取消仅限提交人；提交即生成审批节点，无独立提交审批步骤） */
+const isCreator = computed(() => !!ticket.value && ticket.value.creatorId === session.user?.id)
+
+// 状态机：可取消 = 提交人 + 非终态（对齐后端 TicketService.cancel 的「任意非终态可取消」语义）
 const canCancel = computed(
-  () => ticket.value && ['draft', 'submitted'].includes(ticket.value.status)
+  () => isCreator.value && !TERMINAL_TICKET_STATUSES.includes(ticket.value.status)
 )
 
-// 执行前二次确认：CRITICAL 高危单审批通过后，非提交人确认执行（§3.4）
+// 执行前二次确认：CRITICAL 高危单审批通过后，由持有 approval.confirm 能力的非提交人确认
 const canConfirmExecution = computed(
   () => ticket.value
     && ticket.value.status === 'approved'
     && ticket.value.riskLevel === 'CRITICAL'
-    && ticket.value.creatorId !== session.user?.id
+    && !isCreator.value
+    && session.can(API.APPROVAL_CONFIRM)
 )
 
-// 非操作态只读说明（auditing / draft / submitted 走按钮，其余只读）
+// 只读状态说明（提交人 + 非终态可取消，见 canCancel；此处为各状态的中文提示）
 const READONLY_HINTS = {
+  auditing: '该工单正在审批中：提交时已生成审批节点，等待审批人处理。',
   approved: '该工单已通过审批，等待排期执行。',
   rejected: '该工单已被驳回，如需继续请联系审批人。',
   scheduled: '该工单已排期，等待执行。',
@@ -197,9 +222,11 @@ const readonlyHintType = computed(() => {
 })
 
 const creatorName = computed(() => {
-  const c = ticket.value?.creatorId
-  const me = session.user
-  return c === me?.id ? (me?.displayName || me?.name || `用户 ${c}`) : c != null ? `用户 ${c}` : '-'
+  const t = ticket.value
+  if (!t) return '-'
+  if (t.creatorName) return t.creatorName
+  if (t.creatorId != null && t.creatorId === session.user?.id) return session.displayName || '我'
+  return t.creatorId != null ? `用户 ${t.creatorId}` : '-'
 })
 
 const rollbackUnits = computed(() => {
@@ -229,18 +256,12 @@ const shardInfo = computed(() => {
   }
 })
 
-// 实例 id → 实例详情（展示 name / host:port / 默认库 / 方言）
-const instanceMap = computed(() => {
-  const m = new Map()
-  for (const inst of instances.value) m.set(inst.id, inst)
-  return m
+// 目标实例详情（单实例；拿不到元数据时回退展示工单上的 instanceName / id）
+const targetInstance = computed(() => {
+  const id = ticket.value?.instanceId
+  if (id == null) return null
+  return instances.value.find((inst) => inst.id === id) || null
 })
-
-const targetInstances = computed(() =>
-  (ticket.value?.instanceIds || [])
-    .map((id) => instanceMap.value.get(id))
-    .filter(Boolean)
-)
 
 // 单元 id → 回滚主记录；rollbackSummary 的 unit 是 1-based 序号，
 // 与 listTicketUnits 的 unit_order 稳定排序对齐（下标 i 对应 unit_order i+1）
@@ -256,6 +277,25 @@ function rollbackOf(index) {
   return rollbackByUnitId.value.get(unit.id) || null
 }
 
+// 回滚 SQL 预览（rollbackSummary.previewSql：提交时推导的反向语句模板，旧工单可能没有）
+const previewVisible = ref(false)
+const previewStatements = ref([])
+
+function hasPreviewSql(u) {
+  return Array.isArray(u.previewSql) && u.previewSql.length > 0
+}
+
+/** 有实际回滚主记录 → 跳回滚管理页自动展开反向语句 */
+function goRollbackSql(rollbackId) {
+  router.push({ path: '/rollback', query: { rollbackId } })
+}
+
+/** 无实际回滚主记录 → 页内弹窗展示提交时推导的预览语句 */
+function openPreview(u) {
+  previewStatements.value = u.previewSql
+  previewVisible.value = true
+}
+
 onMounted(load)
 
 async function load() {
@@ -268,11 +308,11 @@ async function load() {
     loading.value = false
     return
   }
-  // 辅助信息（实例 / 单元 / 回滚）失败不阻断主信息展示
+  // 辅助信息（实例 / 单元 / 回滚）失败或无权限时不阻断主信息展示
   const [insts, units, rbs] = await Promise.all([
-    api.listUserInstances().catch(() => []),
+    session.can(API.INSTANCES) ? api.listUserInstances().catch(() => []) : Promise.resolve([]),
     api.listTicketUnits(route.params.id).catch(() => []),
-    api.listRollbacks().catch(() => [])
+    session.can(API.ROLLBACKS) ? loadRollbacksForTicket(ticket.value.id) : Promise.resolve([])
   ])
   instances.value = insts
   ticketUnits.value = units
@@ -280,17 +320,22 @@ async function load() {
   loading.value = false
 }
 
-async function handleSubmitApproval() {
-  acting.value = true
-  try {
-    await api.submitApproval(ticket.value.id, true)
-    ElMessage.success('已提交审批')
-    await load()
-  } catch {
-    // 错误已由拦截器统一弹 message
-  } finally {
-    acting.value = false
+/**
+ * 拉取本工单的全部回滚主记录（服务端分页 + ticketId 过滤，逐页取全，
+ * 供「单元 → 回滚记录」映射；大工单执行单元可能超过单页 200 条上限）。
+ */
+async function loadRollbacksForTicket(ticketId) {
+  const out = []
+  const size = 200
+  let page = 1
+  for (;;) {
+    const res = await api.listRollbacks(page, size, ticketId).catch(() => null)
+    if (!res || !Array.isArray(res.items) || res.items.length === 0) break
+    out.push(...res.items)
+    if (out.length >= (res.total || 0) || page > 100) break
+    page += 1
   }
+  return out
 }
 
 async function handleCancel() {
@@ -305,7 +350,7 @@ async function handleCancel() {
   }
   acting.value = true
   try {
-    await api.cancelTicket(ticket.value.id, session.user?.id)
+    await api.cancelTicket(ticket.value.id)
     ElMessage.success('工单已取消')
     await load()
   } catch {
@@ -357,7 +402,6 @@ function formatTime(value) {
 </script>
 
 <style scoped>
-.page { max-width: 960px; }
 .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 .head-left { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .back-btn { font-size: 12px; color: var(--sa-text-3); }
@@ -391,8 +435,12 @@ function formatTime(value) {
 .rb-unit { font-size: 12px; font-weight: 700; color: var(--sa-brand-2); }
 .rb-note { font-size: 12px; color: var(--sa-text-2); }
 .rb-empty { font-size: 12px; color: var(--sa-text-3); }
-.rb-link { margin-left: auto; font-size: 12px; color: var(--sa-brand-2); }
-.rb-link:hover { text-decoration: underline; }
+.rb-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+
+/* 回滚 SQL 预览弹窗 */
+.preview-alert { margin-bottom: 12px; }
+.preview-item { margin-bottom: 12px; }
+.preview-no { font-size: 12px; font-weight: 700; color: var(--sa-brand-2); margin-bottom: 4px; }
 
 .inst-list { display: flex; flex-direction: column; gap: 6px; }
 .inst-item { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }

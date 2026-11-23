@@ -18,9 +18,36 @@
       <div class="card-head">
         <h3 class="card-title">审计日志</h3>
         <div class="head-actions">
-          <el-button size="small" :loading="verifying" @click="runVerify">校验链完整性</el-button>
+          <el-button
+            v-if="session.can(API.AUDIT_VERIFY)"
+            size="small"
+            :loading="verifying"
+            @click="runVerify"
+          >校验链完整性</el-button>
           <el-button size="small" :loading="loading" @click="load">刷新</el-button>
         </div>
+      </div>
+
+      <div class="filter-bar">
+        <span class="filter-label">seq 区间</span>
+        <el-input-number
+          v-model="fromSeq"
+          :min="1"
+          :controls="false"
+          size="small"
+          class="seq-input"
+          placeholder="起始"
+        />
+        <span class="filter-sep">-</span>
+        <el-input-number
+          v-model="toSeq"
+          :min="1"
+          :controls="false"
+          size="small"
+          class="seq-input"
+          placeholder="结束"
+        />
+        <el-button size="small" type="primary" plain :loading="loading" @click="onRangeSearch">查询</el-button>
       </div>
 
       <div v-loading="loading" class="table-wrap">
@@ -77,6 +104,18 @@
           </el-table-column>
         </el-table>
         <el-empty v-else-if="!loading" description="暂无审计日志" />
+
+        <div class="pagination">
+          <el-pagination
+            v-model:current-page="page"
+            v-model:page-size="pageSize"
+            :total="total"
+            :page-sizes="[10, 20, 50]"
+            layout="total, sizes, prev, pager, next"
+            @current-change="load"
+            @size-change="onSizeChange"
+          />
+        </div>
       </div>
     </div>
   </div>
@@ -85,6 +124,10 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { api } from '../../api'
+import { API } from '../../api/capabilities'
+import { useSessionStore } from '../../stores/session'
+
+const session = useSessionStore()
 
 // action 中文映射：对齐后端 AuditAction 枚举（大写下划线），未知动作原样展示（mono）
 const ACTION_META = {
@@ -93,6 +136,9 @@ const ACTION_META = {
   USER_UPDATE: { label: '更新用户', known: true },
   PASSWORD_RESET: { label: '重置密码', known: true },
   ROLE_ASSIGN: { label: '分配角色', known: true },
+  ROLE_CREATE: { label: '新增角色', known: true },
+  ROLE_UPDATE: { label: '修改角色', known: true },
+  ROLE_DELETE: { label: '删除角色', known: true },
   INSTANCE_CREATE: { label: '新增实例', known: true },
   INSTANCE_UPDATE: { label: '修改实例', known: true },
   INSTANCE_DELETE: { label: '删除实例', known: true },
@@ -133,16 +179,36 @@ function formatTime(v) {
 
 const loading = ref(false)
 const logs = ref([])
+// seq 区间（后端默认 1..100，保持既有默认）+ 服务端分页
+const fromSeq = ref(1)
+const toSeq = ref(100)
+const page = ref(1)
+const pageSize = ref(20)
+const total = ref(0)
 
 async function load() {
   loading.value = true
   try {
-    logs.value = await api.searchAuditLogs()
+    const res = await api.searchAuditLogs(fromSeq.value, toSeq.value, page.value, pageSize.value)
+    logs.value = res?.items || []
+    total.value = res?.total || 0
   } catch {
     /* 拦截器已提示错误 */
   } finally {
     loading.value = false
   }
+}
+
+/** 修改 seq 区间重新查询：回到第 1 页 */
+function onRangeSearch() {
+  page.value = 1
+  load()
+}
+
+/** 修改每页条数：回到第 1 页再取数 */
+function onSizeChange() {
+  page.value = 1
+  load()
 }
 
 const verifying = ref(false)
@@ -186,6 +252,13 @@ onMounted(load)
 .head-actions { display: flex; gap: 8px; }
 
 .table-wrap { margin-top: 14px; min-height: 120px; }
+
+.filter-bar { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+.filter-label { font-size: 12px; color: var(--sa-text-3); }
+.filter-sep { color: var(--sa-text-3); }
+.seq-input { width: 120px; }
+
+.pagination { display: flex; justify-content: flex-end; margin-top: 14px; }
 
 .mono { font-family: var(--sa-font-mono); font-size: 12px; }
 .time { font-size: 12px; color: var(--sa-text-2); font-variant-numeric: tabular-nums; }

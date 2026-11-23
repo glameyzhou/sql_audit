@@ -19,30 +19,24 @@
 
         <el-form-item label="目标实例" required>
           <el-select
-            v-model="form.instanceIds"
-            multiple
-            collapse-tags
-            collapse-tags-tooltip
+            v-model="form.instanceId"
             placeholder="选择目标实例"
+            filterable
             :loading="instancesLoading"
             style="width: 100%"
           >
-            <el-option v-for="ins in filteredInstances" :key="ins.id" :label="ins.name" :value="ins.id">
+            <el-option v-for="ins in userInstances" :key="ins.id" :label="ins.name" :value="ins.id">
               <span>{{ ins.name }}</span>
-              <span class="option-env">{{ envMeta(ins.environment).label }}</span>
+              <span class="option-meta">
+                <DbBadge :dialect="ins.dialect" />
+                <span>· 默认库 {{ ins.defaultSchema || '-' }}</span>
+              </span>
             </el-option>
             <template #empty>
-              <span>暂无实例，请先在「实例管理」新增</span>
+              <span>暂无可提交的实例（角色数据范围内无实例）</span>
             </template>
           </el-select>
-          <div v-if="envFallback" class="form-tip warn">
-            当前环境「{{ envInfo.label }}」下暂无实例，已展示全部实例
-          </div>
-        </el-form-item>
-
-        <el-form-item label="环境" required>
-          <el-tag :type="envInfo.type" effect="dark" size="large">{{ envInfo.label }}</el-tag>
-          <span class="env-readonly-tip">环境为全局状态，可在顶栏「环境」切换</span>
+          <div class="form-tip">一张工单只作用于一个实例；审批链按该实例路由（全局链 + 实例专用链）</div>
         </el-form-item>
 
         <el-form-item label="SQL 语句" required>
@@ -61,7 +55,7 @@
           <div class="shard-block">
             <div class="shard-toggle">
               <el-switch v-model="shard.enabled" active-text="分表执行" />
-              <span class="shard-tip">为 DDL 生成所有分表的 SQL：在表名处写占位符 {sfx}</span>
+              <span class="shard-tip">为 DDL 生成所有分表的 SQL：在表名处写占位符 {sfx}，按数字后缀展开（t_demo{sfx} → t_demo_0、t_demo_1）</span>
             </div>
 
             <div v-if="shard.enabled" class="shard-config">
@@ -74,8 +68,8 @@
                 <el-input-number v-model="shard.range.start" :min="0" size="small" controls-position="right" />
                 <span class="shard-sep">～</span>
                 <el-input-number v-model="shard.range.end" :min="shard.range.start" size="small" controls-position="right" />
-                <span class="shard-label">前缀</span>
-                <el-input v-model="shard.range.prefix" size="small" class="shard-prefix" placeholder="_" />
+                <span class="shard-label">后缀分隔符</span>
+                <el-input v-model="shard.range.sep" size="small" class="shard-suffix-sep" placeholder="数字后缀的前导分隔符，如 _" />
                 <span class="shard-label">补零</span>
                 <el-select v-model="shard.range.pad" size="small" class="shard-pad">
                   <el-option label="无" :value="0" />
@@ -99,7 +93,13 @@
         </el-form-item>
 
         <el-form-item>
-          <el-button type="primary" :disabled="!canPreview" :loading="previewing" @click="handlePreview">
+          <el-button
+            v-if="session.can(API.TICKET_PREVIEW)"
+            type="primary"
+            :disabled="!canPreview"
+            :loading="previewing"
+            @click="handlePreview"
+          >
             预检
           </el-button>
           <el-button type="primary" plain :disabled="!canSubmit" :loading="submitting" @click="handleSubmit">
@@ -164,13 +164,15 @@ import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
-import { ENV, envMeta, riskMeta, coverageMeta } from '../../constants'
+import { API } from '../../api/capabilities'
+import { riskMeta, coverageMeta } from '../../constants'
 import { useSessionStore } from '../../stores/session'
+import DbBadge from '../../components/DbBadge.vue'
 
 const router = useRouter()
 const session = useSessionStore()
 
-// 实例列表：来自后端（按当前登录用户过滤）
+// 实例列表：来自后端（已按当前用户角色的数据范围过滤）
 const userInstances = ref([])
 const instancesLoading = ref(false)
 
@@ -186,34 +188,15 @@ async function loadUserInstances() {
 }
 onMounted(loadUserInstances)
 
-// 当前全局环境（只读展示，切换入口在顶栏「环境」）
-const envInfo = computed(() => ENV[session.env] || ENV.test)
-
-// 按全局环境过滤实例；当前环境无匹配时回退展示全部
-const filteredInstances = computed(() => {
-  const list = userInstances.value || []
-  const matched = list.filter((i) => i.environment === session.env)
-  return matched.length ? matched : list
-})
-const envFallback = computed(() => {
-  const list = userInstances.value || []
-  return list.length > 0 && !list.some((i) => i.environment === session.env)
-})
-watch(envFallback, (fallback) => {
-  if (fallback) {
-    ElMessage.warning(`当前环境「${envInfo.value.label}」下暂无实例，已展示全部实例`)
-  }
-})
-
-// 方言由所选实例派生（多选时取第一个，无元数据回退 MYSQL）
+// 方言由所选实例派生（无元数据回退 MYSQL）
 const selectedDialect = computed(() => {
-  const first = userInstances.value.find((i) => form.value.instanceIds.includes(i.id))
-  return first?.dialect || 'MYSQL'
+  const inst = userInstances.value.find((i) => i.id === form.value.instanceId)
+  return inst?.dialect || 'MYSQL'
 })
 
 const form = ref({
   title: '',
-  instanceIds: [],
+  instanceId: null,
   sql: ''
 })
 
@@ -221,7 +204,7 @@ const form = ref({
 const shard = reactive({
   enabled: false,
   mode: 'range',   // 'range' 数字区间 | 'list' 自定义列表
-  range: { start: 0, end: 99, pad: 0, prefix: '_' },
+  range: { start: 0, end: 99, pad: 0, sep: '_' },
   list: ''
 })
 
@@ -238,15 +221,14 @@ const errorBlocked = computed(() => !!preview.value?.errorBlocked)
 const canSubmit = computed(
   () =>
     form.value.title.trim().length > 0 &&
-    form.value.instanceIds.length > 0 &&
-    !!session.env &&
+    form.value.instanceId != null &&
     form.value.sql.trim().length > 0 &&
     !errorBlocked.value
 )
 
 // SQL / 目标实例变更后作废旧预检结果，避免误用过期 errorBlocked 拦截提交
 watch(
-  () => [form.value.sql, form.value.instanceIds],
+  () => [form.value.sql, form.value.instanceId],
   () => {
     if (preview.value) preview.value = null
     // 手动改动 SQL 后，之前生成的分表配置失效（生成动作通过 suppressShardClear 跳过）
@@ -258,11 +240,11 @@ watch(
 // —— 分表执行：{sfx} 占位符展开 ——
 function buildSuffixes() {
   if (shard.mode === 'range') {
-    const { start, end, pad, prefix } = shard.range
+    const { start, end, pad, sep } = shard.range
     const out = []
     for (let i = start; i <= end; i++) {
       const n = pad > 0 ? String(i).padStart(pad, '0') : String(i)
-      out.push(prefix + n)
+      out.push(sep + n)
     }
     return out
   }
@@ -288,7 +270,7 @@ async function handlePreview() {
   if (!canPreview.value) return
   previewing.value = true
   try {
-    preview.value = await api.preview(form.value.sql, selectedDialect.value, form.value.instanceIds)
+    preview.value = await api.preview(form.value.sql, selectedDialect.value, form.value.instanceId)
   } catch {
     // 错误已由拦截器统一弹 message
   } finally {
@@ -308,19 +290,18 @@ async function handleSubmit() {
   }
   submitting.value = true
   try {
+    // 提交人身份一律取登录态，前端不再传任何身份字段
     const { ticketId } = await api.submitTicket({
       title: form.value.title.trim(),
-      creatorId: session.user?.id,
-      instanceIds: form.value.instanceIds,
-      environment: session.env,
+      instanceId: form.value.instanceId,
       sql: form.value.sql,
       shardConfig: shardConfig.value ? JSON.stringify(shardConfig.value) : null,
       dialect: selectedDialect.value
     })
-    ElMessage.success('工单创建成功')
+    ElMessage.success('已提交，进入审批流程')
     router.push(`/tickets/${ticketId}`)
   } catch {
-    // ERROR_RULE_BLOCKED 等错误已由拦截器统一弹 message
+    // ERROR_RULE_BLOCKED / APPROVAL_FLOW_NOT_CONFIGURED 等错误已由拦截器统一弹 message
   } finally {
     submitting.value = false
   }
@@ -333,7 +314,6 @@ function severityClass(severity) {
 </script>
 
 <style scoped>
-.page { max-width: 1080px; }
 .page-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; }
 .page-title { font-size: 18px; font-weight: 700; color: var(--sa-text); letter-spacing: 0.2px; }
 .page-sub { font-size: 12px; color: var(--sa-text-3); }
@@ -348,9 +328,7 @@ function severityClass(severity) {
 .card + .card { margin-top: 18px; }
 
 .form-tip { font-size: 11.5px; color: var(--sa-text-3); line-height: 1.5; margin-top: 6px; }
-.form-tip.warn { color: var(--sa-warning); }
-.option-env { float: right; font-size: 11px; color: var(--sa-text-3); margin-left: 12px; }
-.env-readonly-tip { font-size: 11.5px; color: var(--sa-text-3); margin-left: 10px; }
+.option-meta { float: right; font-size: 11px; color: var(--sa-text-3); margin-left: 12px; }
 .sql-input :deep(.el-textarea__inner) { font-family: var(--sa-font-mono); font-size: 12px; line-height: 1.6; }
 
 /* ---- 分表执行 ---- */
@@ -360,7 +338,7 @@ function severityClass(severity) {
 .shard-config { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .shard-sep { color: var(--sa-text-3); }
 .shard-label { font-size: 12px; color: var(--sa-text-2); }
-.shard-prefix { width: 60px; }
+.shard-suffix-sep { width: 130px; }
 .shard-pad { width: 80px; }
 .shard-list { width: 220px; }
 

@@ -27,7 +27,6 @@
         </template>
       </nav>
       <div class="side-foot">
-        <div class="kv"><span class="k">环境</span><span class="v">{{ currentEnvMeta.label }}</span></div>
         <div class="kv"><span class="k">通道</span><span class="v ok">唯一出口已生效</span></div>
       </div>
     </aside>
@@ -39,34 +38,9 @@
         </button>
         <div class="crumb">极星动力 / <b>{{ $route.meta.title || '' }}</b></div>
         <div class="grow" />
-        <!-- 全局环境切换（醒目：dev 灰 / test 黄 / prod 红，颜色取 ENV 映射） -->
-        <div class="env-area">
-          <span class="env-label">环境</span>
-          <el-dropdown trigger="click" @command="onEnvChange">
-            <el-tag :type="currentEnvMeta.type" effect="dark" size="large" class="env-tag">
-              {{ currentEnvMeta.label }}
-              <el-icon class="env-caret"><ArrowDown /></el-icon>
-            </el-tag>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item
-                  v-for="(meta, key) in ENV"
-                  :key="key"
-                  :command="key"
-                  :disabled="key === session.env"
-                >
-                  <el-tag :type="meta.type" effect="light" size="small" class="env-option-tag">
-                    {{ meta.label }}
-                  </el-tag>
-                  <span v-if="key === session.env" class="env-check">✓ 当前</span>
-                </el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-        </div>
         <div class="user-area">
           <span class="user-name">{{ session.displayName || '未登录' }}</span>
-          <span class="user-role">{{ roleLabel }}</span>
+          <span class="user-role">{{ session.roleLabel }}</span>
           <el-button link size="small" @click="logout">退出登录</el-button>
         </div>
       </header>
@@ -80,35 +54,35 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Fold, Expand, Odometer, Plus, Document, Checked, Monitor, RefreshLeft, Search, List, Operation, Connection, Coin, User, Avatar, Lock, ArrowDown } from '@element-plus/icons-vue'
-import { ElMessageBox } from 'element-plus'
+import { Fold, Expand, Odometer, Plus, Document, Checked, Monitor, RefreshLeft, Search, List, Operation, Connection, Coin, User, Avatar, Lock } from '@element-plus/icons-vue'
 import { useSessionStore } from '../stores/session'
-import { ROLE_LABELS, ENV } from '../constants'
+import { API } from '../api/capabilities'
 import logoUrl from '../assets/logo.svg'
 
-// 菜单分组与 router/index.js 的具名路由一一对应（对齐原型 navItems）
+// 菜单分组与 router/index.js 的具名路由一一对应；
+// api 字段与路由 meta.api 取自同一组能力常量（API.*），两处不会漂移。
 const navGroups = [
   { label: '工作台', items: [
-    { path: '/dashboard', title: '工作台', icon: Odometer }
+    { path: '/dashboard', title: '工作台', icon: Odometer, api: API.TICKETS_MINE }
   ]},
   { label: '变更链路', items: [
-    { path: '/tickets/submit', title: '提交变更', icon: Plus },
-    { path: '/tickets', title: '工单中心', icon: Document },
-    { path: '/approval', title: '审批中心', icon: Checked },
-    { path: '/execution', title: '执行监控', icon: Monitor },
-    { path: '/rollback', title: '回滚管理', icon: RefreshLeft }
+    { path: '/tickets/submit', title: '提交变更', icon: Plus, api: API.TICKET_CREATE },
+    { path: '/tickets', title: '工单中心', icon: Document, api: API.TICKETS_MINE },
+    { path: '/approval', title: '审批中心', icon: Checked, api: API.APPROVALS_PENDING },
+    { path: '/execution', title: '执行监控', icon: Monitor, api: API.EXECUTIONS },
+    { path: '/rollback', title: '回滚管理', icon: RefreshLeft, api: API.ROLLBACKS }
   ]},
   { label: '查询与审计', items: [
-    { path: '/query', title: '线上查询', icon: Search },
-    { path: '/audit', title: '审计日志', icon: List }
+    { path: '/query', title: '线上查询', icon: Search, api: API.QUERY_RUN },
+    { path: '/audit', title: '审计日志', icon: List, api: API.AUDIT_LOGS }
   ]},
   { label: '配置', items: [
-    { path: '/rules', title: '规则配置', icon: Operation },
-    { path: '/flows', title: '审批流配置', icon: Connection },
-    { path: '/instances', title: '实例管理', icon: Coin },
-    { path: '/users', title: '用户管理', icon: User, adminOnly: true },
-    { path: '/roles', title: '角色管理', icon: Avatar, adminOnly: true },
-    { path: '/permissions', title: '权限配置', icon: Lock, adminOnly: true }
+    { path: '/rules', title: '规则配置', icon: Operation, api: API.RULES },
+    { path: '/flows', title: '审批流配置', icon: Connection, api: API.FLOWS },
+    { path: '/instances', title: '实例管理', icon: Coin, api: API.CONFIG_INSTANCES },
+    { path: '/users', title: '用户管理', icon: User, api: API.USERS },
+    { path: '/roles', title: '角色管理', icon: Avatar, api: API.ROLES },
+    { path: '/permissions', title: '权限目录', icon: Lock, api: API.PERMISSIONS }
   ]}
 ]
 
@@ -117,38 +91,12 @@ const router = useRouter()
 const session = useSessionStore()
 const collapsed = ref(false)
 
-// 按角色过滤菜单：adminOnly 项仅管理员可见（后端仍以 @RequireRole 兜底）
+// 按能力过滤菜单：无该页接口能力则不展示；分组内全部被过滤时整组隐藏
 const menuGroups = computed(() =>
-  navGroups.map((g) => ({
-    ...g,
-    items: g.items.filter((it) => !it.adminOnly || session.roles.includes('ADMIN'))
-  }))
+  navGroups
+    .map((g) => ({ ...g, items: g.items.filter((it) => session.can(it.api)) }))
+    .filter((g) => g.items.length > 0)
 )
-
-// 真实角色（后端 user.roles 数组 → 中文），多角色以顿号连接
-const roleLabel = computed(
-  () => session.roles.map((r) => ROLE_LABELS[r] || r).join('、') || '未知角色'
-)
-
-// 当前全局环境的展示元信息（ENV 三档：dev 灰 / test 黄 / prod 红）
-const currentEnvMeta = computed(() => ENV[session.env] || ENV.test)
-
-/** 顶栏环境切换：点击选项后写入 session（state + localStorage），全局即时生效 */
-async function onEnvChange(key) {
-  // 切到生产二次确认（商业平台安全习惯：生产操作醒目防误触），离开生产不拦
-  if (key === 'prod' && session.env !== 'prod') {
-    try {
-      await ElMessageBox.confirm(
-        '后续提交变更 / 查询将作用于【生产】环境，请确认您清楚本次操作对象。',
-        '切换到生产环境',
-        { confirmButtonText: '确认切换', cancelButtonText: '取消', type: 'warning' }
-      )
-    } catch {
-      return
-    }
-  }
-  session.setEnv(key)
-}
 
 function logout() {
   session.logout()
@@ -252,12 +200,6 @@ function isActive(path) {
 .crumb { font-size: 12px; color: var(--sa-text-3); white-space: nowrap; }
 .crumb b { color: var(--sa-text); font-weight: 600; }
 .grow { flex: 1; }
-.env-area { display: flex; align-items: center; gap: 6px; }
-.env-label { font-size: 11px; color: var(--sa-text-3); font-weight: 600; }
-.env-tag { cursor: pointer; font-weight: 700; letter-spacing: 1px; }
-.env-tag .env-caret { margin-left: 2px; font-size: 12px; }
-.env-option-tag { margin-right: 6px; }
-.env-check { font-size: 11px; color: var(--sa-text-3); }
 .user-area { display: flex; align-items: center; gap: 8px; }
 .user-name { color: var(--sa-text); font-size: 12px; font-weight: 600; }
 .user-role {

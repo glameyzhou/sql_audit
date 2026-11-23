@@ -5,14 +5,14 @@
         <div class="page-title">规则配置</div>
         <div class="page-desc">审核规则引擎 · severity：ERROR 阻断 / WARN 提示</div>
       </div>
-      <span class="role-tag">当前角色：{{ roleLabel }} · {{ canEditRulesFlows ? '可编辑' : '只读' }}</span>
+      <span class="role-tag">当前角色：{{ session.roleLabel }} · {{ canEditRules ? '可编辑' : '只读' }}</span>
     </div>
 
     <el-card class="pane-card" shadow="never">
       <div class="pane-toolbar">
         <span class="toolbar-desc">审核规则引擎 · severity：ERROR 阻断 / WARN 提示</span>
         <el-button
-          v-if="canEditRulesFlows"
+          v-if="session.can(API.RULE_CREATE)"
           type="primary"
           size="small"
           class="toolbar-action"
@@ -21,15 +21,19 @@
       </div>
 
       <el-table v-loading="rulesLoading" :data="rules" class="pane-table" empty-text="暂无规则">
-        <el-table-column label="规则 code" width="220">
+        <el-table-column label="规则 code" min-width="220">
           <template #default="{ row }">
             <span class="cell-mono mono">{{ row.code }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="方言" width="120">
-          <template #default="{ row }"><span class="cell-dim">{{ row.dialect }}</span></template>
+        <el-table-column label="方言" min-width="120">
+          <template #default="{ row }">
+            <!-- 规则 dialect 含 ALL（不限）与空值：真实方言用徽章，ALL 展示「不限」 -->
+            <DbBadge v-if="isRealDialect(row.dialect)" :dialect="row.dialect" />
+            <span v-else class="cell-dim">{{ row.dialect === 'ALL' ? '不限' : (row.dialect || '-') }}</span>
+          </template>
         </el-table-column>
-        <el-table-column label="语句类型" width="140">
+        <el-table-column label="语句类型" min-width="140">
           <template #default="{ row }"><span class="cell-dim">{{ row.statementType }}</span></template>
         </el-table-column>
         <el-table-column label="级别" width="100">
@@ -44,13 +48,34 @@
         </el-table-column>
         <el-table-column label="启用" width="90" align="center">
           <template #default="{ row }">
-            <el-switch :model-value="!!row.enabled" disabled active-text="开" inactive-text="关" inline-prompt />
+            <el-switch
+              v-if="session.can(API.RULE_UPDATE)"
+              v-model="row.enabled"
+              :loading="row.toggling"
+              active-text="开"
+              inactive-text="关"
+              inline-prompt
+              @change="toggleRule(row)"
+            />
+            <el-switch v-else :model-value="!!row.enabled" disabled active-text="开" inactive-text="关" inline-prompt />
           </template>
         </el-table-column>
-        <el-table-column v-if="canEditRulesFlows" label="操作" width="130" align="center" fixed="right">
+        <el-table-column v-if="canEditRules" label="操作" width="130" align="center" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" size="small" @click="openRuleDialog(row)">编辑</el-button>
-            <el-button link type="danger" size="small" @click="removeRule(row)">删除</el-button>
+            <el-button
+              v-if="session.can(API.RULE_UPDATE)"
+              link
+              type="primary"
+              size="small"
+              @click="openRuleDialog(row)"
+            >编辑</el-button>
+            <el-button
+              v-if="session.can(API.RULE_DELETE)"
+              link
+              type="danger"
+              size="small"
+              @click="removeRule(row)"
+            >删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -110,20 +135,21 @@
 import { reactive, ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
-import { ROLE_LABELS } from '../../constants'
+import { API } from '../../api/capabilities'
 import { useSessionStore } from '../../stores/session'
+import DbBadge from '../../components/DbBadge.vue'
+
+/** 规则 dialect 含 ALL（不限）与空值，只有真实方言用徽章展示 */
+function isRealDialect(d) {
+  return ['MYSQL', 'PG', 'IOTDB'].includes(String(d || '').toUpperCase())
+}
 
 const session = useSessionStore()
 
-const roleLabel = computed(
-  () => session.roles.map((r) => ROLE_LABELS[r] || r).join('、') || '未知角色'
+/** 任一写操作可见即显示操作列（真实鉴权以后端为准） */
+const canEditRules = computed(
+  () => session.can(API.RULE_UPDATE) || session.can(API.RULE_DELETE)
 )
-
-// ---- 权限（真实鉴权以后端为准，此处仅控制可见性）----
-const isAdmin = computed(() => session.roles.includes('ADMIN'))
-const isDba = computed(() => session.roles.includes('DBA'))
-/** 规则 / 审批流：ADMIN 或 DBA 可写 */
-const canEditRulesFlows = computed(() => isAdmin.value || isDba.value)
 
 // ---- 规则 ----
 const rules = ref([])
@@ -196,6 +222,36 @@ async function removeRule(row) {
     await loadRules()
   } catch {
     // 错误提示已由响应拦截器统一处理
+  }
+}
+
+/**
+ * 启用列开关：确认后整行提交（PUT /config/rules/{id} 需要完整规则体）。
+ * 后端更新后 reload 规则配置，即时生效，无需重启。
+ */
+async function toggleRule(row) {
+  const target = !!row.enabled
+  const action = target ? '启用' : '停用'
+  try {
+    await ElMessageBox.confirm(
+      target
+        ? `确认启用规则 ${row.code}？启用后该规则恢复拦截。`
+        : `确认停用规则 ${row.code}？停用后该规则不再拦截对应 SQL，请谨慎操作。`,
+      `${action}规则`,
+      { type: 'warning', confirmButtonText: action, cancelButtonText: '取消' }
+    )
+  } catch {
+    row.enabled = !target // 用户取消，回滚开关显示
+    return
+  }
+  row.toggling = true
+  try {
+    await api.updateRule(row.id, { ...row, enabled: target })
+    ElMessage.success(`规则已${action}`)
+  } catch {
+    row.enabled = !target // 请求失败，回滚开关显示
+  } finally {
+    row.toggling = false
   }
 }
 

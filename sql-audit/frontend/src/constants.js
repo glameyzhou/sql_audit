@@ -1,5 +1,5 @@
 /**
- * 共享常量：状态 / 风险 / 回滚覆盖的中文与颜色映射（对齐后端枚举）。
+ * 共享常量：状态 / 风险 / 回滚覆盖 / RBAC 的中文与颜色映射（对齐后端枚举）。
  *
  * 后端 DB 存小写存储码（Java 侧是 TicketStatus 枚举，存储码见其 getCode），前端 key 用小写。
  * el-tag type 只支持 primary/success/info/warning/danger。
@@ -23,6 +23,25 @@ export const TICKET_STATUS = {
   expired: { label: '已过期', type: 'info' }
 }
 
+/**
+ * 工单终局状态（不可取消）。
+ * 对齐后端 TicketStatus：isTerminal() 覆盖 closed / cancelled / expired；
+ * succeeded / partially_succeeded / failed 亦只能走向 closed（状态机
+ * canTransitionTo(CANCELLED) 一律为 false），与终态同样不可取消。
+ * executing / needs_confirm 虽非严格终态，但状态机 canTransitionTo(CANCELLED)
+ * 同样为 false（后端拒绝取消）——此处镜像该行为隐藏取消按钮，后端始终是唯一权威。
+ */
+export const TERMINAL_TICKET_STATUSES = [
+  'succeeded',
+  'partially_succeeded',
+  'failed',
+  'executing',
+  'needs_confirm',
+  'closed',
+  'cancelled',
+  'expired'
+]
+
 /** 风险等级（RiskLevel） */
 export const RISK_LEVEL = {
   LOW: { label: '低危', type: 'success' },
@@ -40,35 +59,54 @@ export const ROLLBACK_COVERAGE = {
   SHADOW: { label: '影子表', type: 'info' }
 }
 
-/** 环境（三档：dev/test/prod；原「预发 staging」统一改名 test，旧数据兼容见各视图 envMeta） */
-export const ENV = {
-  dev: { label: '开发', type: 'info' },
-  test: { label: '测试', type: 'warning' },
-  prod: { label: '生产', type: 'danger' }
+/** 角色数据范围（InstanceScope，角色级实例授权） */
+export const INSTANCE_SCOPE = {
+  ALL: { label: '全部实例', type: 'success' },
+  SELECTED: { label: '指定实例', type: 'warning' }
 }
 
-/** 角色中文映射（后端 user.roles 数组元素） */
-export const ROLE_LABELS = {
-  DEV: '开发',
-  LEAD: '主管',
-  DBA: 'DBA',
-  ADMIN: '管理员'
+/** 审批节点审批人类型（ApproverType） */
+export const APPROVER_TYPE = {
+  USER: '指定人',
+  ROLE: '角色',
+  INSTANCE_OWNER: '实例负责人'
+}
+
+/** 审批组签署模式（ApprovalMode） */
+export const APPROVAL_MODE = {
+  AND: '会签（全部通过）',
+  OR: '或签（任一通过）'
+}
+
+/** 审批记录结果（ApprovalResult） */
+export const APPROVAL_RESULT = {
+  PENDING: { label: '待审批', type: 'warning' },
+  APPROVED: { label: '已通过', type: 'success' },
+  REJECTED: { label: '已驳回', type: 'danger' },
+  TRANSFERRED: { label: '已转交', type: 'info' },
+  SKIPPED: { label: '已跳过', type: 'info' }
 }
 
 /** session 持久化键（session store 写入，api 拦截器读取） */
 export const STORAGE_KEYS = {
   token: 'sa_token',
-  user: 'sa_user',
-  env: 'sa_env'
+  user: 'sa_user'
 }
 
-/**
- * 环境元信息（带 legacy 兼容：历史数据 environment 可能为 'staging'，统一按「测试」展示）。
- * 三档之外的未知值返回兜底 info。
- */
-export function envMeta(env) {
-  if (env === 'staging') return ENV.test
-  return ENV[env] || { label: env || '-', type: 'info' }
+export function scopeMeta(scope) {
+  return INSTANCE_SCOPE[scope] || { label: scope || '-', type: 'info' }
+}
+
+export function approverTypeLabel(type) {
+  return APPROVER_TYPE[type] || type || '-'
+}
+
+export function approvalModeLabel(mode) {
+  return APPROVAL_MODE[mode] || mode || '-'
+}
+
+export function approvalResultMeta(result) {
+  return APPROVAL_RESULT[result] || { label: result || '-', type: 'info' }
 }
 
 /** 状态标签的兜底：未知状态显示原文 */

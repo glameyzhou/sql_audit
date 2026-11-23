@@ -8,7 +8,11 @@
       </div>
       <div class="head-actions">
         <el-button @click="$router.push('/tickets')">工单中心</el-button>
-        <el-button type="primary" @click="$router.push('/tickets/submit')">
+        <el-button
+          v-if="session.can(API.TICKET_CREATE)"
+          type="primary"
+          @click="$router.push('/tickets/submit')"
+        >
           <el-icon style="margin-right: 4px"><Plus /></el-icon>提交变更
         </el-button>
       </div>
@@ -87,7 +91,12 @@
         :image-size="80"
       >
         <el-button v-if="error" type="primary" plain @click="load">重新加载</el-button>
-        <el-button v-else type="primary" plain @click="$router.push('/tickets/submit')">提交变更</el-button>
+        <el-button
+          v-else-if="session.can(API.TICKET_CREATE)"
+          type="primary"
+          plain
+          @click="$router.push('/tickets/submit')"
+        >提交变更</el-button>
       </el-empty>
     </el-card>
   </div>
@@ -98,6 +107,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Plus, ArrowRight, Tickets, Stamp, Monitor, WarningFilled } from '@element-plus/icons-vue'
 import { api } from '../../api'
+import { API } from '../../api/capabilities'
 import { statusMeta, riskMeta } from '../../constants'
 import { useSessionStore } from '../../stores/session'
 
@@ -107,7 +117,9 @@ const tickets = ref([])
 const loading = ref(false)
 const error = ref(false)
 
-const total = computed(() => tickets.value.length)
+/** 「我的工单」总数（服务端分页响应的 total；最近列表只取首页前若干条） */
+const myTotal = ref(0)
+const total = computed(() => myTotal.value)
 const auditing = computed(() => tickets.value.filter((t) => t.status === 'auditing').length)
 const executing = computed(() => tickets.value.filter((t) => t.status === 'executing').length)
 const attention = computed(
@@ -145,10 +157,14 @@ async function load() {
   loading.value = true
   error.value = false
   try {
-    tickets.value = (await api.listTickets(session.user?.id)) || []
+    // 分页响应 { items, total }：统计卡片用 total，最近列表用首页 items
+    const res = await api.listTickets(1, 20)
+    tickets.value = res?.items || []
+    myTotal.value = res?.total || 0
   } catch {
     error.value = true
     tickets.value = []
+    myTotal.value = 0
   } finally {
     loading.value = false
   }
@@ -165,7 +181,7 @@ onMounted(load)
 .page-desc { font-size: 12.5px; color: var(--sa-text-3); margin-top: 3px; }
 .head-actions { display: flex; gap: 8px; }
 
-.stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
 .stat-card :deep(.el-card__body) { display: flex; align-items: center; gap: 14px; padding: 18px; }
 .stat-icon {
   width: 44px; height: 44px; flex: none; border-radius: 10px;
@@ -183,8 +199,4 @@ onMounted(load)
 .cell-mono { font-family: var(--sa-font-mono); font-size: 12px; color: var(--sa-text); font-weight: 600; }
 .cell-sub { font-size: 11px; color: var(--sa-text-3); margin-top: 2px; }
 .cell-dim { color: var(--sa-text-3); font-size: 12px; }
-
-@media (max-width: 1000px) {
-  .stat-grid { grid-template-columns: repeat(2, 1fr); }
-}
 </style>

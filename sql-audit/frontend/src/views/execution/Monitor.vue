@@ -32,7 +32,7 @@
               <span class="cell-mono mono">{{ row.ticketId }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="语句类型" width="130">
+          <el-table-column label="语句类型" min-width="130">
             <template #default="{ row }">
               <span class="cell-mono mono">{{ row.statementType || '-' }}</span>
             </template>
@@ -44,7 +44,7 @@
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="执行人" width="140">
+          <el-table-column label="执行人" min-width="140">
             <template #default="{ row }">
               <span class="cell-dim">{{ row.leaseOwner || '-' }}</span>
             </template>

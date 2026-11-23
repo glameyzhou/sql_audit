@@ -5,13 +5,14 @@
         <div class="page-title">用户管理</div>
         <div class="page-desc">本地账号 · 角色分配 · 密码重置（全程写审计）</div>
       </div>
-      <span class="role-tag">当前角色：{{ roleLabel }} · 仅管理员可访问</span>
+      <span class="role-tag">当前角色：{{ session.roleLabel }}</span>
     </div>
 
     <el-card class="pane-card" shadow="never">
       <div class="pane-toolbar">
-        <span class="toolbar-desc">本地账号 · 角色分配 · 密码重置（全程写审计）</span>
+        <span class="toolbar-desc">新建账号不带角色，创建后用「分配角色」授予（角色变更即时生效）</span>
         <el-button
+          v-if="session.can(API.USER_CREATE)"
           type="primary"
           size="small"
           class="toolbar-action"
@@ -20,10 +21,10 @@
       </div>
 
       <el-table v-loading="usersLoading" :data="users" class="pane-table" empty-text="暂无用户">
-        <el-table-column label="用户名" width="160">
+        <el-table-column label="用户名" min-width="160">
           <template #default="{ row }"><span class="cell-mono mono">{{ row.username }}</span></template>
         </el-table-column>
-        <el-table-column label="显示名" width="140">
+        <el-table-column label="显示名" min-width="140">
           <template #default="{ row }"><span class="cell-row-title">{{ row.displayName || '-' }}</span></template>
         </el-table-column>
         <el-table-column label="邮箱" min-width="180">
@@ -43,18 +44,44 @@
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="最近登录" width="170">
+          <template #default="{ row }"><span class="cell-dim">{{ formatTime(row.lastLoginAt) }}</span></template>
+        </el-table-column>
         <el-table-column label="角色" min-width="180">
           <template #default="{ row }">
-            <el-tag v-for="r in row.roles" :key="r" effect="light" size="small" class="role-chip">
-              {{ roleNameByCode[r] || r }}
-            </el-tag>
+            <el-tag
+              v-for="r in row.roles"
+              :key="r.code"
+              effect="light"
+              size="small"
+              class="role-chip"
+            >{{ r.name || r.code }}</el-tag>
+            <span v-if="!row.roles || !row.roles.length" class="cell-dim">未分配</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="220" align="center" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" size="small" @click="openEditUserDialog(row)">编辑</el-button>
-            <el-button link type="warning" size="small" @click="openResetPwdDialog(row)">重置密码</el-button>
-            <el-button link type="primary" size="small" @click="openAssignRolesDialog(row)">分配角色</el-button>
+            <el-button
+              v-if="session.can(API.USER_UPDATE)"
+              link
+              type="primary"
+              size="small"
+              @click="openEditUserDialog(row)"
+            >编辑</el-button>
+            <el-button
+              v-if="session.can(API.USER_PASSWORD)"
+              link
+              type="warning"
+              size="small"
+              @click="openResetPwdDialog(row)"
+            >重置密码</el-button>
+            <el-button
+              v-if="session.can(API.USER_ROLES)"
+              link
+              type="primary"
+              size="small"
+              @click="openAssignRolesDialog(row)"
+            >分配角色</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -80,11 +107,12 @@
         <el-form-item label="初始密码" required>
           <el-input v-model="createUserForm.password" type="password" show-password placeholder="至少 8 位" />
         </el-form-item>
-        <el-form-item label="角色">
-          <el-select v-model="createUserForm.roles" multiple style="width: 100%" placeholder="选择角色">
-            <el-option v-for="r in roles" :key="r.code" :label="r.name" :value="r.code" />
-          </el-select>
-        </el-form-item>
+        <el-alert
+          type="info"
+          :closable="false"
+          show-icon
+          title="新建账号不带角色，创建后请用列表中的「分配角色」授予权限"
+        />
       </el-form>
       <template #footer>
         <el-button @click="createUserDialogVisible = false">取消</el-button>
@@ -160,29 +188,30 @@
 </template>
 
 <script setup>
-import { reactive, ref, computed, onMounted } from 'vue'
+import { reactive, ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../../api'
-import { ROLE_LABELS } from '../../constants'
+import { API } from '../../api/capabilities'
 import { useSessionStore } from '../../stores/session'
 
 const session = useSessionStore()
 
-const roleLabel = computed(
-  () => session.roles.map((r) => ROLE_LABELS[r] || r).join('、') || '未知角色'
-)
-
-// ---- 角色（动态，含自定义角色）----
+// ---- 角色选项（目录接口，所有登录用户可读，含自定义角色）----
 const roles = ref([])
-const roleNameByCode = computed(
-  () => Object.fromEntries(roles.value.map((r) => [r.code, r.name]))
-)
 
 async function loadRoles() {
-  roles.value = await api.listRoles()
+  roles.value = (await api.listDirectoryRoles().catch(() => [])) || []
 }
 
-// ---- 用户管理（ADMIN）----
+function formatTime(v) {
+  if (!v) return '-'
+  const d = new Date(v)
+  if (Number.isNaN(d.getTime())) return String(v)
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+// ---- 用户管理（user.manage）----
 const users = ref([])
 const usersLoading = ref(false)
 const userSaving = ref(false)
@@ -201,12 +230,12 @@ onMounted(() => {
   loadRoles()
 })
 
-// 新增用户
+// 新增用户（不带角色：角色走 PUT /api/users/{id}/roles，属 rbac.manage）
 const createUserDialogVisible = ref(false)
-const createUserForm = reactive({ username: '', displayName: '', email: '', password: '', roles: [] })
+const createUserForm = reactive({ username: '', displayName: '', email: '', password: '' })
 
 function openCreateUserDialog() {
-  Object.assign(createUserForm, { username: '', displayName: '', email: '', password: '', roles: [] })
+  Object.assign(createUserForm, { username: '', displayName: '', email: '', password: '' })
   createUserDialogVisible.value = true
 }
 
@@ -298,7 +327,8 @@ function openAssignRolesDialog(row) {
   Object.assign(assignRolesForm, {
     id: row.id,
     username: row.username,
-    roles: row.roles ? [...row.roles] : []
+    // 行上的 roles 是 [{ code, name }]，表单里存 code 数组
+    roles: (row.roles || []).map((r) => r.code)
   })
   assignRolesDialogVisible.value = true
 }
@@ -310,8 +340,10 @@ async function saveAssignRoles() {
     ElMessage.success('角色已更新')
     assignRolesDialogVisible.value = false
     await loadUsers()
+    // 改的若是自己，能力集合随之变化，立即刷新 /auth/me
+    if (assignRolesForm.id === session.user?.id) await session.fetchMe().catch(() => {})
   } catch {
-    // 错误提示已由响应拦截器统一处理
+    // 错误提示已由响应拦截器统一处理（含 RBAC_LOCKOUT 防自锁 409）
   } finally {
     userSaving.value = false
   }
