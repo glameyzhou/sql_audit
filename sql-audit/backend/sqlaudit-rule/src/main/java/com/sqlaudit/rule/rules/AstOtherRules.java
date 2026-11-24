@@ -63,6 +63,11 @@ public final class AstOtherRules {
             @Override
             public List<com.sqlaudit.common.model.RuleHit> check(RuleContext ctx) {
                 ParsedStatement ps = ctx.statement();
+                if (ps.getDialect() == Dialect.IOTDB) {
+                    // IoTDB 白名单 parser 不产 AST、不解析 LIMIT（getLimitAst 恒 null），
+                    // 无法判定是否带 LIMIT；行数上限由查询通道 setMaxRows 兜底，此处不判
+                    return List.of();
+                }
                 if (ps.getStatementType() == StatementType.SELECT && ps.getLimitAst() == null) {
                     return List.of(hit("SELECT 未带 LIMIT，平台将自动注入默认 LIMIT"));
                 }

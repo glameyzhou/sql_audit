@@ -4,6 +4,7 @@ import com.sqlaudit.common.crypto.CredentialCrypto;
 import com.sqlaudit.common.crypto.CredentialCryptoException;
 import com.sqlaudit.common.enums.AccountType;
 import com.sqlaudit.common.enums.Dialect;
+import com.sqlaudit.common.enums.IotdbSqlDialect;
 import com.sqlaudit.executor.gate.ExecutionGate;
 import com.sqlaudit.storage.dao.CredentialDao;
 import com.sqlaudit.storage.dao.InstanceDao;
@@ -16,6 +17,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -72,7 +75,15 @@ public class JdbcStructureFingerprintProvider implements ExecutionGate.Structure
         }
         Dialect dialect = dialectOf(inst);
         if (dialect == Dialect.IOTDB) {
-            return IOTDB_NO_FINGERPRINT;
+            if (inst.getIotdbSqlDialect() != IotdbSqlDialect.TABLE) {
+                return IOTDB_NO_FINGERPRINT; // 树模型无 information_schema
+            }
+            Credential cred = credentialDao.findByInstanceAndType(instanceId, AccountType.RO_META);
+            if (cred == null) {
+                throw new IllegalStateException("实例缺少 RO_META 凭据: id=" + instanceId);
+            }
+            String structure = readIotdbTableStructure(inst, cred, schema, table);
+            return structure == null ? null : sha256Hex(structure);
         }
 
         // 2. RO_META 凭据（README §4.2：结构指纹走只读元数据账号，与执行账号物理隔离）
@@ -134,6 +145,64 @@ public class JdbcStructureFingerprintProvider implements ExecutionGate.Structure
             }
         } catch (SQLException e) {
             throw new IllegalStateException("取结构定义失败: " + e.getMessage(), e);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // IoTDB 表模型结构指纹
+    // ------------------------------------------------------------------
+
+    /** IoTDB 表模型结构指纹：information_schema.columns 聚合列名+类型+分类（表不存在返回 null）。 */
+    private static String readIotdbTableStructure(Instance inst, Credential cred,
+                                                  String schema, String table) {
+        // 白名单 parser 把对象路径整体放 table（db.table），schema 为 null → 拆出 database + 表名
+        String database = schema;
+        String tbl = table;
+        if ((database == null || database.isBlank()) && table != null && table.contains(".")) {
+            int dot = table.indexOf('.');
+            database = table.substring(0, dot);
+            tbl = table.substring(dot + 1);
+        }
+        if (database == null || database.isBlank() || tbl == null || tbl.isBlank()) {
+            return null; // 无法唯一定位库表 → 跳过（门禁不触发）
+        }
+        ensureIotdbDriverLoaded();
+        DriverManager.setLoginTimeout(5);
+        String sql = "SELECT column_name, datatype, category FROM information_schema.columns"
+                + " WHERE database = ? AND table_name = ? ORDER BY column_name";
+        StringBuilder sb = new StringBuilder();
+        try (Connection conn = DriverManager.getConnection(
+                iotdbJdbcUrl(inst), cred.getUsername(), plainPassword(cred));
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, database);
+            ps.setString(2, tbl);
+            try (ResultSet rs = ps.executeQuery()) {
+                boolean any = false;
+                while (rs.next()) {
+                    any = true;
+                    sb.append(rs.getString(1)).append(':').append(rs.getString(2))
+                            .append(':').append(rs.getString(3)).append('|');
+                }
+                if (!any) {
+                    return null; // 表不存在
+                }
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("取 IoTDB 表结构指纹失败: " + e.getMessage(), e);
+        }
+        return sb.toString();
+    }
+
+    private static String iotdbJdbcUrl(Instance inst) {
+        int port = inst.getPort() == null ? 6667 : inst.getPort();
+        return "jdbc:iotdb://" + inst.getHost() + ":" + port + "?sql_dialect=table";
+    }
+
+    private static void ensureIotdbDriverLoaded() {
+        try {
+            Class.forName("org.apache.iotdb.jdbc.IoTDBDriver");
+        } catch (ClassNotFoundException e) {
+            throw new IllegalStateException("IoTDB JDBC 驱动未加载: org.apache.iotdb.jdbc.IoTDBDriver", e);
         }
     }
 

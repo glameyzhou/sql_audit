@@ -9,6 +9,7 @@ import com.sqlaudit.common.enums.AuditTargetType;
 import com.sqlaudit.common.enums.Dialect;
 import com.sqlaudit.common.enums.ErrorCode;
 import com.sqlaudit.common.enums.InstanceStatus;
+import com.sqlaudit.common.enums.IotdbSqlDialect;
 import com.sqlaudit.common.enums.RiskLevel;
 import com.sqlaudit.common.enums.UserStatus;
 import com.sqlaudit.common.exception.SqlauditException;
@@ -417,7 +418,7 @@ public class ConfigController {
     /** 实例视图（契约 §6：含 ownerName）。 */
     public record InstanceView(Long id, String name, Dialect dialect, Long ownerId, String ownerName,
                                String host, Integer port, String defaultSchema,
-                               InstanceStatus status, LocalDateTime createdAt) {
+                               IotdbSqlDialect iotdbSqlDialect, InstanceStatus status, LocalDateTime createdAt) {
     }
 
     private InstanceView viewOf(Instance instance) {
@@ -428,7 +429,8 @@ public class ConfigController {
         }
         return new InstanceView(instance.getId(), instance.getName(), instance.getDialect(),
                 instance.getOwnerId(), ownerName, instance.getHost(), instance.getPort(),
-                instance.getDefaultSchema(), instance.getStatus(), instance.getCreatedAt());
+                instance.getDefaultSchema(), instance.getIotdbSqlDialect(),
+                instance.getStatus(), instance.getCreatedAt());
     }
 
     /**
@@ -437,7 +439,8 @@ public class ConfigController {
      */
     public record InstanceSaveRequest(Long id, String name, Dialect dialect, Long ownerId,
                                       String host, Integer port, String defaultSchema,
-                                      InstanceStatus status, String username, String password) {
+                                      IotdbSqlDialect iotdbSqlDialect, InstanceStatus status,
+                                      String username, String password) {
     }
 
     private static Instance toInstance(InstanceSaveRequest req) {
@@ -449,6 +452,7 @@ public class ConfigController {
         instance.setHost(req.host());
         instance.setPort(req.port());
         instance.setDefaultSchema(req.defaultSchema());
+        instance.setIotdbSqlDialect(req.iotdbSqlDialect());
         instance.setStatus(req.status() == null ? InstanceStatus.ACTIVE : req.status());
         return instance;
     }

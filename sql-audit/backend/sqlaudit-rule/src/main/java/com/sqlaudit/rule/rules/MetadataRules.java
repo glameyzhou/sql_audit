@@ -1,5 +1,6 @@
 package com.sqlaudit.rule.rules;
 
+import com.sqlaudit.common.enums.Dialect;
 import com.sqlaudit.common.enums.RuleCode;
 import com.sqlaudit.common.enums.StatementType;
 import com.sqlaudit.common.model.ParsedStatement;
@@ -75,6 +76,10 @@ public final class MetadataRules {
 
             @Override
             public List<com.sqlaudit.common.model.RuleHit> check(RuleContext ctx) {
+                if (ctx.statement().getDialect() == Dialect.IOTDB) {
+                    // IoTDB 无对象白名单实现；对象约束由白名单 parser + R_IOTDB_* 规则管
+                    return List.of();
+                }
                 TableMetadataProvider meta = ctx.metadata();
                 if (meta == null || !meta.isAvailable()) {
                     return List.of(); // 权限类规则元数据缺失时放行给后续层（见类 javadoc）

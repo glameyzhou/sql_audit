@@ -3,6 +3,7 @@ package com.sqlaudit.server.service;
 import com.sqlaudit.common.crypto.CredentialCrypto;
 import com.sqlaudit.common.enums.AccountType;
 import com.sqlaudit.common.enums.Dialect;
+import com.sqlaudit.common.enums.IotdbSqlDialect;
 import com.sqlaudit.query.channel.ConnectionProvider;
 import com.sqlaudit.storage.dao.CredentialDao;
 import com.sqlaudit.storage.dao.InstanceDao;
@@ -28,6 +29,9 @@ public class JdbcQueryConnectionProvider implements ConnectionProvider {
     /** 连接登录超时（秒）。 */
     private static final int LOGIN_TIMEOUT_SECONDS = 5;
 
+    /** IoTDB 2.x JDBC 驱动类（jar 无 SPI 注册，须 Class.forName 显式加载后 DriverManager 才能识别）。 */
+    private static final String IOTDB_DRIVER_CLASS = "org.apache.iotdb.jdbc.IoTDBDriver";
+
     private final InstanceDao instanceDao;
     private final CredentialDao credentialDao;
 
@@ -43,9 +47,6 @@ public class JdbcQueryConnectionProvider implements ConnectionProvider {
             throw new SQLException("实例不存在: id=" + instanceId);
         }
         Dialect dialect = instance.getDialect() == null ? Dialect.MYSQL : instance.getDialect();
-        if (dialect == Dialect.IOTDB) {
-            throw new SQLException("IoTDB 实例暂不支持线上查询: " + instance.getName());
-        }
 
         Credential credential = credentialDao.findByInstanceAndType(instanceId, AccountType.RO_DATA);
         if (credential == null) {
@@ -61,6 +62,7 @@ public class JdbcQueryConnectionProvider implements ConnectionProvider {
             throw new SQLException("查询凭据解密失败: " + e.getMessage(), e);
         }
 
+        ensureDriverLoaded(dialect);
         DriverManager.setLoginTimeout(LOGIN_TIMEOUT_SECONDS);
         return DriverManager.getConnection(jdbcUrl(instance, dialect),
                 credential.getUsername(), password);
@@ -68,16 +70,43 @@ public class JdbcQueryConnectionProvider implements ConnectionProvider {
 
     private static String jdbcUrl(Instance instance, Dialect dialect) {
         String host = instance.getHost();
-        int port = instance.getPort() == null
-                ? (dialect == Dialect.PG ? 5432 : 3306)
-                : instance.getPort();
+        int port = instance.getPort() == null ? defaultPort(dialect) : instance.getPort();
         String schema = instance.getDefaultSchema() == null ? "" : instance.getDefaultSchema();
         if (dialect == Dialect.PG) {
             return "jdbc:postgresql://" + host + ":" + port + "/" + schema
                     + "?connectTimeout=" + LOGIN_TIMEOUT_SECONDS + "&socketTimeout=30";
         }
+        if (dialect == Dialect.IOTDB) {
+            // IoTDB 2.x JDBC：URL 不带库名；树/表双模型是连接级方言开关（默认 tree），
+            // 表模型（宽表）须显式 ?sql_dialect=table
+            return instance.getIotdbSqlDialect() == IotdbSqlDialect.TABLE
+                    ? "jdbc:iotdb://" + host + ":" + port + "?sql_dialect=table"
+                    : "jdbc:iotdb://" + host + ":" + port + "/";
+        }
         return "jdbc:mysql://" + host + ":" + port + "/" + schema
                 + "?useSSL=false&allowPublicKeyRetrieval=true"
                 + "&connectTimeout=" + (LOGIN_TIMEOUT_SECONDS * 1000) + "&socketTimeout=30000";
+    }
+
+    private static int defaultPort(Dialect dialect) {
+        if (dialect == Dialect.PG) {
+            return 5432;
+        }
+        if (dialect == Dialect.IOTDB) {
+            return 6667;
+        }
+        return 3306;
+    }
+
+    /** IoTDB 驱动无 SPI 注册，Class.forName 触发其 static 块向 DriverManager 注册（幂等）。 */
+    private static void ensureDriverLoaded(Dialect dialect) {
+        if (dialect != Dialect.IOTDB) {
+            return;
+        }
+        try {
+            Class.forName(IOTDB_DRIVER_CLASS);
+        } catch (ClassNotFoundException e) {
+            throw new IllegalStateException("IoTDB JDBC 驱动未加载: " + IOTDB_DRIVER_CLASS, e);
+        }
     }
 }

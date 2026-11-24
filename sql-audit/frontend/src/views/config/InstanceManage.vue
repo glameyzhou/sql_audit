@@ -31,10 +31,16 @@
             <span class="cell-mono mono">{{ row.host }}:{{ row.port }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="方言" min-width="110">
+        <el-table-column label="方言" min-width="150">
           <template #default="{ row }">
             <DbBadge v-if="row.dialect" :dialect="row.dialect" />
             <span v-else class="cell-dim">-</span>
+            <el-tag
+              v-if="row.dialect === 'IOTDB' && row.iotdbSqlDialect"
+              size="small"
+              effect="plain"
+              style="margin-left: 6px"
+            >{{ row.iotdbSqlDialect === 'TABLE' ? '表模型' : '树模型' }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="100">
@@ -122,6 +128,12 @@
         <el-form-item label="默认 Schema">
           <el-input v-model="instanceForm.defaultSchema" placeholder="默认 schema" />
         </el-form-item>
+        <el-form-item v-if="instanceForm.dialect === 'IOTDB'" label="IoTDB 方言">
+          <el-select v-model="instanceForm.iotdbSqlDialect" placeholder="树 / 表" style="width: 100%">
+            <el-option label="树模型（root.db.device 时序路径）" value="TREE" />
+            <el-option label="表模型（宽表 / information_schema）" value="TABLE" />
+          </el-select>
+        </el-form-item>
 
         <!-- 数据库凭据：随实例加密保存（RO_META + RW_EXEC），同一组账号 -->
         <el-divider content-position="left">数据库凭据（随实例加密保存）</el-divider>
@@ -205,6 +217,7 @@ const instanceForm = reactive({
   host: '',
   port: 3306,
   defaultSchema: '',
+  iotdbSqlDialect: 'TREE',
   status: 'ACTIVE'
 })
 
@@ -224,6 +237,7 @@ async function openInstanceDialog(row = null) {
     host: row?.host || '',
     port: row?.port ?? 3306,
     defaultSchema: row?.defaultSchema || '',
+    iotdbSqlDialect: row?.iotdbSqlDialect || 'TREE',
     status: row?.status || 'ACTIVE'
   })
   Object.assign(credForm, { username: '', password: '' })
@@ -303,6 +317,10 @@ async function saveInstance() {
   instanceSaving.value = true
   try {
     const payload = { ...instanceForm }
+    // IoTDB 方言仅对 IOTDB 实例有意义，非 IOTDB 置空
+    if (payload.dialect !== 'IOTDB') {
+      payload.iotdbSqlDialect = null
+    }
     if (hasPwd) {
       payload.username = credForm.username.trim()
       payload.password = credForm.password

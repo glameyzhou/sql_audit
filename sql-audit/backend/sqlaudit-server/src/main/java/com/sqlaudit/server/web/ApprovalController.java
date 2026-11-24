@@ -3,6 +3,7 @@ package com.sqlaudit.server.web;
 import com.sqlaudit.common.enums.ApprovalMode;
 import com.sqlaudit.common.enums.ApprovalResult;
 import com.sqlaudit.common.enums.ApproverType;
+import com.sqlaudit.common.enums.Dialect;
 import com.sqlaudit.common.enums.ErrorCode;
 import com.sqlaudit.common.enums.RiskLevel;
 import com.sqlaudit.common.enums.StatementType;
@@ -11,11 +12,13 @@ import com.sqlaudit.executor.gate.ExecutionGate;
 import com.sqlaudit.server.auth.CurrentUser;
 import com.sqlaudit.server.auth.RoleAuthInterceptor;
 import com.sqlaudit.storage.dao.ApprovalDao;
+import com.sqlaudit.storage.dao.InstanceDao;
 import com.sqlaudit.storage.dao.RoleDao;
 import com.sqlaudit.storage.dao.TicketDao;
 import com.sqlaudit.storage.dao.TicketUnitDao;
 import com.sqlaudit.storage.dao.UserDao;
 import com.sqlaudit.storage.model.Approval;
+import com.sqlaudit.storage.model.Instance;
 import com.sqlaudit.storage.model.Role;
 import com.sqlaudit.storage.model.Ticket;
 import com.sqlaudit.storage.model.TicketUnit;
@@ -62,11 +65,13 @@ public class ApprovalController {
     private final UserDao userDao;
     private final RoleDao roleDao;
     private final ExecutionGate.StructureFingerprintProvider structureFingerprintProvider;
+    private final InstanceDao instanceDao;
 
     public ApprovalController(ApprovalFlowEngine approvalEngine, ApprovalDao approvalDao,
                               TicketDao ticketDao, TicketUnitDao ticketUnitDao,
                               UserDao userDao, RoleDao roleDao,
-                              ExecutionGate.StructureFingerprintProvider structureFingerprintProvider) {
+                              ExecutionGate.StructureFingerprintProvider structureFingerprintProvider,
+                              InstanceDao instanceDao) {
         this.approvalEngine = approvalEngine;
         this.approvalDao = approvalDao;
         this.ticketDao = ticketDao;
@@ -74,6 +79,7 @@ public class ApprovalController {
         this.userDao = userDao;
         this.roleDao = roleDao;
         this.structureFingerprintProvider = structureFingerprintProvider;
+        this.instanceDao = instanceDao;
     }
 
     /** 待我审批列表：仅当前组、本人可审、非本人提交（契约 §6）。 */
@@ -192,6 +198,12 @@ public class ApprovalController {
         };
     }
 
+    /** 目标实例是否为 IoTDB 方言（IoTDB 白名单 parser 的对象路径整体在 objectName，schemaName 恒 null）。 */
+    private boolean isIotdbInstance(long instanceId) {
+        Instance inst = instanceDao.findById(instanceId);
+        return inst != null && inst.getDialect() == Dialect.IOTDB;
+    }
+
     /**
      * README §4.2 审批时采集表结构指纹（在决策落库之前执行，失败即阻断、无副作用）。
      */
@@ -201,7 +213,12 @@ public class ApprovalController {
             if (unit.getStatementType() == StatementType.DDL) {
                 continue;
             }
-            if (unit.getSchemaName() == null || unit.getObjectName() == null) {
+            if (unit.getObjectName() == null) {
+                continue;
+            }
+            // IoTDB 白名单 parser 把对象路径整体放 objectName（schemaName 恒 null）；
+            // 其余方言 schemaName 缺失时对象无法唯一定位，跳过。
+            if (unit.getSchemaName() == null && !isIotdbInstance(unit.getInstanceId())) {
                 continue;
             }
             try {

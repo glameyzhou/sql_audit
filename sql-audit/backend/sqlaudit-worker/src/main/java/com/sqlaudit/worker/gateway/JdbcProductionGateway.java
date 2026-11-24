@@ -4,6 +4,7 @@ import com.sqlaudit.common.crypto.CredentialCrypto;
 import com.sqlaudit.common.crypto.CredentialCryptoException;
 import com.sqlaudit.common.enums.AccountType;
 import com.sqlaudit.common.enums.Dialect;
+import com.sqlaudit.common.enums.IotdbSqlDialect;
 import com.sqlaudit.executor.gateway.ProductionGateway;
 import com.sqlaudit.storage.dao.InstanceDao;
 import com.sqlaudit.storage.model.Instance;
@@ -13,6 +14,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
+import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
@@ -62,7 +64,7 @@ public class JdbcProductionGateway implements ProductionGateway {
         }
         Dialect dialect = dialectOf(inst);
         if (dialect == Dialect.IOTDB) {
-            return ExecutionResult.executionError("IoTDB 实例不支持 JDBC 前镜像执行: " + inst.getName());
+            return executeIotdb(inst, request);
         }
 
         // 2. RW_EXEC 凭据（平台库 t_credential，AES-GCM 解密）
@@ -114,6 +116,33 @@ public class JdbcProductionGateway implements ProductionGateway {
             }
         } catch (SQLException e) {
             return ExecutionResult.executionError("连接失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * IoTDB 执行（README §4.4）：无事务、无前镜像、无对账——IoTDB 驱动无行级反向操作、
+     * affected 恒 0、rollback 无效（写入即时生效），直接执行语句，恢复靠元数据快照 + SOP。
+     * 前镜像为 null、affectedRows 记 0（对账在引擎层本就不会对 IoTDB 触发）。
+     */
+    private ExecutionResult executeIotdb(Instance inst, ExecutionRequest request) {
+        Credential cred;
+        try {
+            cred = loadCredential(request.instanceId());
+        } catch (CredentialCryptoException e) {
+            return ExecutionResult.executionError("凭据解密失败: " + e.getMessage());
+        }
+        if (cred == null) {
+            return ExecutionResult.executionError("实例缺少 RW_EXEC 凭据: id=" + request.instanceId());
+        }
+        ensureIotdbDriverLoaded();
+        DriverManager.setLoginTimeout(5);
+        try (Connection conn = DriverManager.getConnection(
+                jdbcUrl(inst, Dialect.IOTDB), cred.username(), cred.password());
+             Statement st = conn.createStatement()) {
+            st.execute(request.statementSql());
+            return ExecutionResult.success(null, 0, null);
+        } catch (SQLException e) {
+            return ExecutionResult.executionError("IoTDB 执行失败: " + e.getMessage());
         }
     }
 
@@ -259,16 +288,41 @@ public class JdbcProductionGateway implements ProductionGateway {
 
     private static String jdbcUrl(Instance inst, Dialect dialect) {
         String host = inst.getHost();
-        int port = inst.getPort() == null ? 3306 : inst.getPort();
+        int port = inst.getPort() == null ? defaultPort(dialect) : inst.getPort();
         String schema = inst.getDefaultSchema() == null ? "" : inst.getDefaultSchema();
         if (dialect == Dialect.PG) {
             return "jdbc:postgresql://" + host + ":" + port + "/" + schema
                     + "?connectTimeout=3&socketTimeout=30";
         }
+        if (dialect == Dialect.IOTDB) {
+            // 树/表双模型是连接级方言开关（默认 tree），表模型（宽表）须 ?sql_dialect=table
+            return inst.getIotdbSqlDialect() == IotdbSqlDialect.TABLE
+                    ? "jdbc:iotdb://" + host + ":" + port + "?sql_dialect=table"
+                    : "jdbc:iotdb://" + host + ":" + port + "/";
+        }
         // MySQL：useAffectedRows 保持 false（默认）——getUpdateCount 返回 matched rows 才能对账（README §4.4）
         return "jdbc:mysql://" + host + ":" + port + "/" + schema
                 + "?useSSL=false&allowPublicKeyRetrieval=true&useAffectedRows=false"
                 + "&connectTimeout=3000&socketTimeout=30000";
+    }
+
+    private static int defaultPort(Dialect dialect) {
+        if (dialect == Dialect.PG) {
+            return 5432;
+        }
+        if (dialect == Dialect.IOTDB) {
+            return 6667;
+        }
+        return 3306;
+    }
+
+    /** IoTDB 2.x JDBC 驱动无 SPI 注册，Class.forName 触发其 static 块向 DriverManager 注册。 */
+    private static void ensureIotdbDriverLoaded() {
+        try {
+            Class.forName("org.apache.iotdb.jdbc.IoTDBDriver");
+        } catch (ClassNotFoundException e) {
+            throw new IllegalStateException("IoTDB JDBC 驱动未加载: org.apache.iotdb.jdbc.IoTDBDriver", e);
+        }
     }
 
     private record Credential(String username, String password) {

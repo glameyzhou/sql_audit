@@ -511,9 +511,12 @@ watch(selectedDb, (db) => {
   if (db) loadTables()
 })
 
-// 标识符引用符：MySQL 反引号 / PG 双引号
+// 标识符引用符：MySQL 反引号 / PG 双引号 / IoTDB 不引用（时序路径 root.sg.d1 / 表名）
 function quoteIdent(name) {
-  return currentDialect.value.toUpperCase() === 'PG' ? `"${name}"` : `\`${name}\``
+  const d = currentDialect.value.toUpperCase()
+  if (d === 'PG') return `"${name}"`
+  if (d === 'IOTDB') return name
+  return `\`${name}\``
 }
 
 // ==================== 表结构面板 + 表备注 ====================
@@ -541,13 +544,21 @@ async function pickTable(t) {
 
 /** 生成 SELECT ... LIMIT 10（PG 的 schema.table 限定名拆开引用）。 */
 function buildPreviewSelect(name) {
-  if (currentDialect.value.toUpperCase() === 'PG') {
+  const d = currentDialect.value.toUpperCase()
+  if (d === 'PG') {
     // PG：后端 listTables 返回 schema.table 限定名；数据库只是连接上下文不写进 SQL，
     // 拆成 "schema"."table" 分别引用，避免 "库"."schema.table" 这类非法限定
     const dot = name.indexOf('.')
     return dot > 0
       ? `SELECT * FROM ${quoteIdent(name.slice(0, dot))}.${quoteIdent(name.slice(dot + 1))} LIMIT 10`
       : `SELECT * FROM ${quoteIdent(name)} LIMIT 10`
+  }
+  if (d === 'IOTDB') {
+    // 表模型：SELECT * FROM db.table；树模型：name 已是设备全路径 root.sg.d1（不加库前缀）
+    const tableModel = currentInstance.value?.iotdbSqlDialect === 'TABLE'
+    return tableModel
+      ? `SELECT * FROM ${selectedDb.value}.${name} LIMIT 10`
+      : `SELECT * FROM ${name} LIMIT 10`
   }
   return `SELECT * FROM ${quoteIdent(selectedDb.value)}.${quoteIdent(name)} LIMIT 10`
 }

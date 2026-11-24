@@ -5,6 +5,7 @@ import com.sqlaudit.common.crypto.CredentialCryptoException;
 import com.sqlaudit.common.enums.AccountType;
 import com.sqlaudit.common.enums.Dialect;
 import com.sqlaudit.common.enums.ErrorCode;
+import com.sqlaudit.common.enums.IotdbSqlDialect;
 import com.sqlaudit.common.exception.SqlauditException;
 import com.sqlaudit.storage.dao.CredentialDao;
 import com.sqlaudit.storage.dao.InstanceDao;
@@ -50,6 +51,9 @@ public class JdbcMetadataService {
     /** 连接登录超时（秒），覆盖「连接超时 ≤5s」要求（PG/MySQL 驱动均支持 loginTimeout）。 */
     private static final int LOGIN_TIMEOUT_SECONDS = 5;
 
+    /** IoTDB 2.x JDBC 驱动类（jar 无 SPI 注册，须 Class.forName 显式加载后 DriverManager 才能识别）。 */
+    private static final String IOTDB_DRIVER_CLASS = "org.apache.iotdb.jdbc.IoTDBDriver";
+
     /** MySQL 系统库（SHOW DATABASES 结果过滤）。 */
     private static final List<String> MYSQL_SYSTEM_SCHEMAS =
             List.of("information_schema", "mysql", "performance_schema", "sys");
@@ -82,17 +86,15 @@ public class JdbcMetadataService {
         if (d == null) {
             return fail("不支持的数据库类型: " + dialect);
         }
-        if (d == Dialect.IOTDB) {
-            return fail("IoTDB 暂不支持连接测试");
-        }
         if (host == null || host.isBlank()) {
             return fail("host 不能为空");
         }
         int p = port == null ? defaultPort(d) : port;
         try {
+            ensureDriverLoaded(d);
             DriverManager.setLoginTimeout(LOGIN_TIMEOUT_SECONDS);
             try (Connection conn = DriverManager.getConnection(
-                    jdbcUrl(d, host, p, database), username, password)) {
+                    jdbcUrl(d, host, p, database, null), username, password)) {
                 // 拿到连接即视为连通，不校验具体库权限
             }
             return Map.of("ok", true, "message", "连接成功");
@@ -118,6 +120,9 @@ public class JdbcMetadataService {
      */
     public List<String> listDatabases(long instanceId) {
         Resolved r = resolveMeta(instanceId);
+        if (r.dialect() == Dialect.IOTDB) {
+            return listIotdbDatabases(r);
+        }
         String sql = r.dialect() == Dialect.PG
                 ? "SELECT datname FROM pg_database WHERE datistemplate=false ORDER BY datname"
                 : "SHOW DATABASES";
@@ -160,6 +165,9 @@ public class JdbcMetadataService {
             throw new SqlauditException(ErrorCode.INVALID_REQUEST, "库名不能为空");
         }
         Resolved r = resolveMeta(instanceId);
+        if (r.dialect() == Dialect.IOTDB) {
+            return listIotdbTables(r, database);
+        }
         if (r.dialect() == Dialect.MYSQL) {
             String sql = "SELECT TABLE_NAME, TABLE_COMMENT FROM information_schema.TABLES"
                     + " WHERE TABLE_SCHEMA = ? AND TABLE_TYPE IN ('BASE TABLE', 'VIEW')"
@@ -221,6 +229,9 @@ public class JdbcMetadataService {
             throw new SqlauditException(ErrorCode.INVALID_REQUEST, "表名不能为空");
         }
         Resolved r = resolveMeta(instanceId);
+        if (r.dialect() == Dialect.IOTDB) {
+            return listIotdbColumns(r, database, table);
+        }
         if (r.dialect() == Dialect.MYSQL) {
             String sql = "SELECT COLUMN_NAME FROM information_schema.COLUMNS"
                     + " WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?"
@@ -284,14 +295,10 @@ public class JdbcMetadataService {
         if (table == null || table.isBlank()) {
             throw new SqlauditException(ErrorCode.INVALID_REQUEST, "表名不能为空");
         }
-        Instance inst = instanceDao.findById(instanceId);
-        if (inst == null) {
-            throw new SqlauditException(ErrorCode.INSTANCE_NOT_FOUND, "实例不存在: id=" + instanceId);
-        }
-        if (dialectOf(inst) == Dialect.IOTDB) {
-            throw new SqlauditException(ErrorCode.INVALID_REQUEST, "IoTDB 暂不支持表结构查看");
-        }
         Resolved r = resolveMeta(instanceId);
+        if (r.dialect() == Dialect.IOTDB) {
+            return iotdbTableStructure(r, database, table);
+        }
         if (r.dialect() == Dialect.MYSQL) {
             String sql = "SELECT ORDINAL_POSITION, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE,"
                     + " COLUMN_KEY, COLUMN_DEFAULT, COLUMN_COMMENT"
@@ -390,6 +397,154 @@ public class JdbcMetadataService {
     }
 
     // ------------------------------------------------------------------
+    // IoTDB 库表浏览（树/表双模型，按实例 iotdbSqlDialect 分流）
+    // ------------------------------------------------------------------
+
+    /** 实例 IoTDB SQL 方言（null 按 TREE）。 */
+    private static IotdbSqlDialect iotdbSqlDialectOf(Resolved r) {
+        return r.instance().getIotdbSqlDialect() == null
+                ? IotdbSqlDialect.TREE : r.instance().getIotdbSqlDialect();
+    }
+
+    /** IoTDB 路径/标识符净化：只允许路径字符，防 {@code SHOW <prefix>.*} / {@code DESC a.b} 注入。 */
+    private static String sanitizeIotdbPath(String s) {
+        if (s == null || !s.matches("[a-zA-Z0-9_.\\-]+")) {
+            throw new SqlauditException(ErrorCode.INVALID_REQUEST, "非法 IoTDB 路径/标识符: " + s);
+        }
+        return s;
+    }
+
+    /** IoTDB 库清单：{@code SHOW DATABASES}，过滤表模型内置 {@code information_schema}。 */
+    private List<String> listIotdbDatabases(Resolved r) {
+        try (Connection conn = open(r, null);
+             Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery("SHOW DATABASES")) {
+            List<String> out = new ArrayList<>();
+            while (rs.next()) {
+                String name = rs.getString(1);
+                if ("information_schema".equalsIgnoreCase(name)) {
+                    continue;
+                }
+                out.add(name);
+            }
+            return out;
+        } catch (SQLException e) {
+            throw new SqlauditException(ErrorCode.META_QUERY_FAILED, "库列表查询失败: " + e.getMessage(), e);
+        }
+    }
+
+    /** IoTDB 表清单：表模型查 {@code information_schema.tables}（BASE TABLE）；树模型查 {@code SHOW DEVICES <db>.*}。 */
+    private List<TableRef> listIotdbTables(Resolved r, String database) {
+        if (iotdbSqlDialectOf(r) == IotdbSqlDialect.TABLE) {
+            String sql = "SELECT table_name, comment FROM information_schema.tables"
+                    + " WHERE database = ? AND table_type = 'BASE TABLE' ORDER BY table_name";
+            try (Connection conn = open(r, null);
+                 PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setString(1, database);
+                try (ResultSet rs = ps.executeQuery()) {
+                    List<TableRef> out = new ArrayList<>();
+                    while (rs.next()) {
+                        out.add(new TableRef(rs.getString(1), blankToNull(rs.getString(2))));
+                    }
+                    return out;
+                }
+            } catch (SQLException e) {
+                throw new SqlauditException(ErrorCode.META_QUERY_FAILED, "表列表查询失败: " + e.getMessage(), e);
+            }
+        }
+        String sql = "SHOW DEVICES " + sanitizeIotdbPath(database) + ".*";
+        try (Connection conn = open(r, null);
+             Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(sql)) {
+            List<TableRef> out = new ArrayList<>();
+            while (rs.next()) {
+                out.add(new TableRef(rs.getString(1), null));
+            }
+            return out;
+        } catch (SQLException e) {
+            throw new SqlauditException(ErrorCode.META_QUERY_FAILED, "设备列表查询失败: " + e.getMessage(), e);
+        }
+    }
+
+    /** IoTDB 列清单：表模型 {@code DESC <db>.<table>}；树模型 {@code SHOW TIMESERIES <device>.*} 取测点名。 */
+    private List<String> listIotdbColumns(Resolved r, String database, String table) {
+        if (iotdbSqlDialectOf(r) == IotdbSqlDialect.TABLE) {
+            String sql = "DESC " + sanitizeIotdbPath(database) + "." + sanitizeIotdbPath(table);
+            return iotdbFirstColumn(r, sql, table);
+        }
+        String device = sanitizeIotdbPath(table);
+        String sql = "SHOW TIMESERIES " + device + ".*";
+        try (Connection conn = open(r, null);
+             Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(sql)) {
+            List<String> out = new ArrayList<>();
+            while (rs.next()) {
+                String ts = rs.getString(1);
+                out.add(ts.startsWith(device + ".") ? ts.substring(device.length() + 1) : ts);
+            }
+            return out;
+        } catch (SQLException e) {
+            throw new SqlauditException(ErrorCode.META_QUERY_FAILED,
+                    "测点列表查询失败（设备 " + table + "）: " + e.getMessage(), e);
+        }
+    }
+
+    /** 只取第一列的结果集（表模型 DESC / 树模型 SHOW 通用）。 */
+    private List<String> iotdbFirstColumn(Resolved r, String sql, String label) {
+        try (Connection conn = open(r, null);
+             Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(sql)) {
+            List<String> out = new ArrayList<>();
+            while (rs.next()) {
+                out.add(rs.getString(1));
+            }
+            return out;
+        } catch (SQLException e) {
+            throw new SqlauditException(ErrorCode.META_QUERY_FAILED,
+                    "列列表查询失败（表 " + label + "）: " + e.getMessage(), e);
+        }
+    }
+
+    /** IoTDB 表结构：表模型 {@code DESC}（ColumnName/DataType/Category）；树模型 {@code SHOW TIMESERIES}（测点 + 类型）。 */
+    private List<TableColumn> iotdbTableStructure(Resolved r, String database, String table) {
+        if (iotdbSqlDialectOf(r) == IotdbSqlDialect.TABLE) {
+            String sql = "DESC " + sanitizeIotdbPath(database) + "." + sanitizeIotdbPath(table);
+            try (Connection conn = open(r, null);
+                 Statement st = conn.createStatement();
+                 ResultSet rs = st.executeQuery(sql)) {
+                List<TableColumn> out = new ArrayList<>();
+                int ord = 0;
+                while (rs.next()) {
+                    // DESC 返回 ColumnName / DataType / Category（TAG/FIELD/ATTRIBUTE/TIME）
+                    out.add(new TableColumn(++ord, rs.getString(1), rs.getString(2), true, "", null, null));
+                }
+                return out;
+            } catch (SQLException e) {
+                throw new SqlauditException(ErrorCode.META_QUERY_FAILED,
+                        "表结构查询失败（表 " + table + "）: " + e.getMessage(), e);
+            }
+        }
+        String device = sanitizeIotdbPath(table);
+        String sql = "SHOW TIMESERIES " + device + ".*";
+        try (Connection conn = open(r, null);
+             Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(sql)) {
+            List<TableColumn> out = new ArrayList<>();
+            int ord = 0;
+            while (rs.next()) {
+                String ts = rs.getString(1);
+                String name = ts.startsWith(device + ".") ? ts.substring(device.length() + 1) : ts;
+                // SHOW TIMESERIES 列序：Timeseries / Alias / Database / DataType / ...
+                out.add(new TableColumn(++ord, name, rs.getString(4), true, "", null, null));
+            }
+            return out;
+        } catch (SQLException e) {
+            throw new SqlauditException(ErrorCode.META_QUERY_FAILED,
+                    "测点结构查询失败（设备 " + table + "）: " + e.getMessage(), e);
+        }
+    }
+
+    // ------------------------------------------------------------------
     // 实例路由与凭据
     // ------------------------------------------------------------------
 
@@ -400,9 +555,6 @@ public class JdbcMetadataService {
             throw new SqlauditException(ErrorCode.INSTANCE_NOT_FOUND, "实例不存在: id=" + instanceId);
         }
         Dialect dialect = dialectOf(inst);
-        if (dialect == Dialect.IOTDB) {
-            throw new SqlauditException(ErrorCode.IOTDB_NOT_SUPPORTED, "IoTDB 实例暂不支持库表浏览");
-        }
         Credential cred = credentialDao.findByInstanceAndType(instanceId, AccountType.RO_META);
         if (cred == null) {
             throw new SqlauditException(ErrorCode.RO_META_CREDENTIAL_MISSING,
@@ -441,10 +593,24 @@ public class JdbcMetadataService {
 
     /** 按解析结果开 JDBC 连接（DriverManager，loginTimeout ≤5s；调用方负责关闭）。 */
     private static Connection open(Resolved r, String database) throws SQLException {
+        ensureDriverLoaded(r.dialect());
         DriverManager.setLoginTimeout(LOGIN_TIMEOUT_SECONDS);
         return DriverManager.getConnection(
-                jdbcUrl(r.dialect(), r.instance().getHost(), portOf(r), database),
+                jdbcUrl(r.dialect(), r.instance().getHost(), portOf(r), database,
+                        r.instance().getIotdbSqlDialect()),
                 r.credential().getUsername(), r.password());
+    }
+
+    /** IoTDB 驱动无 SPI 注册，Class.forName 触发其 static 块向 DriverManager 注册（幂等）。 */
+    private static void ensureDriverLoaded(Dialect dialect) {
+        if (dialect != Dialect.IOTDB) {
+            return;
+        }
+        try {
+            Class.forName(IOTDB_DRIVER_CLASS);
+        } catch (ClassNotFoundException e) {
+            throw new IllegalStateException("IoTDB JDBC 驱动未加载: " + IOTDB_DRIVER_CLASS, e);
+        }
     }
 
     /** 建连用库名：MySQL 用实例默认库（可为空）；PG 用默认库，空则回落 postgres 引导库。 */
@@ -462,15 +628,29 @@ public class JdbcMetadataService {
     }
 
     private static int defaultPort(Dialect dialect) {
-        return dialect == Dialect.PG ? 5432 : 3306;
+        if (dialect == Dialect.PG) {
+            return 5432;
+        }
+        if (dialect == Dialect.IOTDB) {
+            return 6667;
+        }
+        return 3306;
     }
 
     /** 拼 JDBC URL（库名可为空；超时参数按方言单位：MySQL 毫秒、PG 秒）。 */
-    private static String jdbcUrl(Dialect dialect, String host, int port, String database) {
+    private static String jdbcUrl(Dialect dialect, String host, int port, String database,
+                                  IotdbSqlDialect iotdbSqlDialect) {
         String db = database == null || database.isBlank() ? "" : database;
         if (dialect == Dialect.PG) {
             return "jdbc:postgresql://" + host + ":" + port + "/" + db
                     + "?connectTimeout=" + LOGIN_TIMEOUT_SECONDS + "&socketTimeout=30";
+        }
+        if (dialect == Dialect.IOTDB) {
+            // IoTDB 2.x JDBC：URL 不带库名；树/表双模型是连接级方言开关（默认 tree），
+            // 表模型须 ?sql_dialect=table
+            return iotdbSqlDialect == IotdbSqlDialect.TABLE
+                    ? "jdbc:iotdb://" + host + ":" + port + "?sql_dialect=table"
+                    : "jdbc:iotdb://" + host + ":" + port + "/";
         }
         return "jdbc:mysql://" + host + ":" + port + "/" + db
                 + "?useSSL=false&allowPublicKeyRetrieval=true"

@@ -69,6 +69,11 @@ public class RollbackPersisterImpl implements UnitExecutionEngine.RollbackPersis
         if (result.outcome() != ProductionGateway.Outcome.SUCCESS) {
             return false; // 引擎只对 SUCCESS 调用本方法，防御性兜底
         }
+        if (dialectOf(unit) == Dialect.IOTDB) {
+            // IoTDB 回滚走快照 SOP（README §4.4），无前镜像/反向 SQL，不落 rollback_sql；
+            // 快照恢复入口已在提交期 rollback_summary 记录。返回 true 让引擎正常置 succeeded。
+            return true;
+        }
         // 元数据路由：INSERT 反向主键推导按 unit 实例取真实表结构
         InstanceContext.set(unit.getInstanceId());
         try {

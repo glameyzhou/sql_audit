@@ -15,6 +15,7 @@ import com.alibaba.druid.sql.ast.statement.SQLSelectItem;
 import com.alibaba.druid.sql.ast.statement.SQLUpdateSetItem;
 import com.alibaba.druid.sql.ast.statement.SQLUpdateStatement;
 import com.alibaba.druid.sql.dialect.mysql.ast.statement.MySqlUpdateStatement;
+import com.sqlaudit.common.enums.Dialect;
 import com.sqlaudit.common.enums.RuleCode;
 import com.sqlaudit.common.enums.StatementType;
 import com.sqlaudit.common.model.ParsedStatement;
@@ -52,6 +53,10 @@ public final class AstDmlRules {
             @Override
             public List<com.sqlaudit.common.model.RuleHit> check(com.sqlaudit.rule.RuleContext ctx) {
                 ParsedStatement ps = ctx.statement();
+                if (ps.getDialect() == Dialect.IOTDB) {
+                    // IoTDB 白名单 parser 无 AST WHERE；DELETE 时间范围由 R_IOTDB_NO_TIME_RANGE 管
+                    return List.of();
+                }
                 if (ps.getStatementType() != StatementType.UPDATE && ps.getStatementType() != StatementType.DELETE) {
                     return List.of();
                 }

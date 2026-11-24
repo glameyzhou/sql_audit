@@ -3,6 +3,7 @@ package com.sqlaudit.storage.impl.jdbc.mysql;
 import com.sqlaudit.common.enums.CodedEnum;
 import com.sqlaudit.common.enums.Dialect;
 import com.sqlaudit.common.enums.InstanceStatus;
+import com.sqlaudit.common.enums.IotdbSqlDialect;
 import com.sqlaudit.storage.dao.InstanceDao;
 import com.sqlaudit.storage.model.Instance;
 import java.sql.PreparedStatement;
@@ -39,6 +40,7 @@ public class MySqlInstanceDao implements InstanceDao {
         u.setHost(rs.getString("host"));
         u.setPort(rs.getObject("port", Integer.class));
         u.setDefaultSchema(rs.getString("default_schema"));
+        u.setIotdbSqlDialect(IotdbSqlDialect.fromCode(rs.getString("iotdb_sql_dialect")));
         u.setStatus(InstanceStatus.fromCode(rs.getString("status")));
         u.setCreatedBy(rs.getLong("created_by"));
         Timestamp created = rs.getTimestamp("created_at");
@@ -75,8 +77,8 @@ public class MySqlInstanceDao implements InstanceDao {
         jdbc.update(conn -> {
             PreparedStatement ps = conn.prepareStatement(
                     "INSERT INTO t_instance (name, dialect, owner_id, host, port, default_schema, "
-                            + "status, created_by, created_at, updated_at, deleted_at) "
-                            + "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                            + "iotdb_sql_dialect, status, created_by, created_at, updated_at, deleted_at) "
+                            + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                     Statement.RETURN_GENERATED_KEYS);
             ps.setString(1, instance.getName());
             ps.setString(2, CodedEnum.code(instance.getDialect()));
@@ -84,15 +86,16 @@ public class MySqlInstanceDao implements InstanceDao {
             ps.setString(4, instance.getHost());
             ps.setInt(5, instance.getPort());
             ps.setString(6, instance.getDefaultSchema());
-            ps.setString(7, CodedEnum.code(instance.getStatus() != null
+            ps.setString(7, CodedEnum.code(instance.getIotdbSqlDialect()));
+            ps.setString(8, CodedEnum.code(instance.getStatus() != null
                     ? instance.getStatus() : InstanceStatus.ACTIVE));
-            ps.setLong(8, instance.getCreatedBy());
+            ps.setLong(9, instance.getCreatedBy());
             LocalDateTime now = LocalDateTime.now();
-            ps.setTimestamp(9, Timestamp.valueOf(instance.getCreatedAt() != null
+            ps.setTimestamp(10, Timestamp.valueOf(instance.getCreatedAt() != null
                     ? instance.getCreatedAt() : now));
-            ps.setTimestamp(10, Timestamp.valueOf(instance.getUpdatedAt() != null
+            ps.setTimestamp(11, Timestamp.valueOf(instance.getUpdatedAt() != null
                     ? instance.getUpdatedAt() : now));
-            ps.setTimestamp(11, instance.getDeletedAt() == null
+            ps.setTimestamp(12, instance.getDeletedAt() == null
                     ? null : Timestamp.valueOf(instance.getDeletedAt()));
             return ps;
         }, kh);
@@ -106,13 +109,14 @@ public class MySqlInstanceDao implements InstanceDao {
         // 全量更新（软删行不更新）；updated_at 显式写（不用 ON UPDATE，与 PG 行为一致）
         return jdbc.update(
                 "UPDATE t_instance SET name=?, dialect=?, owner_id=?, host=?, port=?, default_schema=?, "
-                        + "status=?, updated_at=? WHERE id=? AND deleted_at IS NULL",
+                        + "iotdb_sql_dialect=?, status=?, updated_at=? WHERE id=? AND deleted_at IS NULL",
                 instance.getName(),
                 CodedEnum.code(instance.getDialect()),
                 instance.getOwnerId(),
                 instance.getHost(),
                 instance.getPort(),
                 instance.getDefaultSchema(),
+                CodedEnum.code(instance.getIotdbSqlDialect()),
                 CodedEnum.code(instance.getStatus()),
                 Timestamp.valueOf(LocalDateTime.now()),
                 instance.getId());

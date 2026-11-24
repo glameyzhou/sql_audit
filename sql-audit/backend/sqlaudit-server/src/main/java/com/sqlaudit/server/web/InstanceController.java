@@ -1,6 +1,7 @@
 package com.sqlaudit.server.web;
 
 import com.sqlaudit.common.enums.Dialect;
+import com.sqlaudit.common.enums.IotdbSqlDialect;
 import com.sqlaudit.server.service.DataScopeService;
 import com.sqlaudit.server.service.JdbcMetadataService;
 import com.sqlaudit.storage.dao.InstanceDao;
@@ -48,7 +49,8 @@ public class InstanceController {
         for (Instance instance : instanceDao.listAll()) {
             if (scope.covers(instance.getId())) {
                 out.add(new InstanceRef(instance.getId(), instance.getName(),
-                        instance.getDialect(), instance.getDefaultSchema()));
+                        instance.getDialect(), instance.getDefaultSchema(),
+                        instance.getIotdbSqlDialect()));
             }
         }
         return out;
@@ -109,8 +111,9 @@ public class InstanceController {
         dataScopeService.requireInScope(dataScopeService.requestScope(request), instanceId);
     }
 
-    /** 实例视图（契约 §6：{id, name, dialect, defaultSchema}）。 */
-    public record InstanceRef(Long id, String name, Dialect dialect, String defaultSchema) {
+    /** 实例视图（契约 §6：{id, name, dialect, defaultSchema, iotdbSqlDialect}）。 */
+    public record InstanceRef(Long id, String name, Dialect dialect, String defaultSchema,
+                              IotdbSqlDialect iotdbSqlDialect) {
     }
 
     /** 连通性测试请求体（方言取值：MYSQL / POSTGRESQL / IOTDB）。 */

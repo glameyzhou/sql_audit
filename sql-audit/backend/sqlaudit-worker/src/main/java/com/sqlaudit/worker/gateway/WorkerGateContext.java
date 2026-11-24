@@ -100,6 +100,11 @@ public class WorkerGateContext implements GateContext {
                 return false;
             }
             Dialect dialect = dialectOf(inst);
+            if (dialect == Dialect.IOTDB) {
+                // IoTDB 回滚恒为快照 SOP（coverage NONE），无「主键/触发器/外键变化导致降级」概念，
+                // 不因无行级反向操作而阻断执行（README §4.4：白名单 + 快照恢复 SOP）
+                return true;
+            }
             String sql = unit.getStatement();
             List<ParsedStatement> parsed = parser.parse(sql, dialect);
             if (parsed.isEmpty()) {

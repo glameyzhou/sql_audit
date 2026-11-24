@@ -2,6 +2,7 @@ package com.sqlaudit.storage.model;
 
 import com.sqlaudit.common.enums.Dialect;
 import com.sqlaudit.common.enums.InstanceStatus;
+import com.sqlaudit.common.enums.IotdbSqlDialect;
 import java.time.LocalDateTime;
 
 /**
@@ -23,6 +24,8 @@ public class Instance {
     private Integer port;
     /** 默认库；IoTDB 存 storage group 路径 */
     private String defaultSchema;
+    /** IoTDB SQL 方言（TREE/TABLE）；仅 IOTDB 实例有意义，非 IOTDB 为 null（null 按 TREE） */
+    private IotdbSqlDialect iotdbSqlDialect;
     /** ACTIVE / DISABLED */
     private InstanceStatus status;
     private Long createdBy;
@@ -84,6 +87,14 @@ public class Instance {
 
     public void setDefaultSchema(String defaultSchema) {
         this.defaultSchema = defaultSchema;
+    }
+
+    public IotdbSqlDialect getIotdbSqlDialect() {
+        return iotdbSqlDialect;
+    }
+
+    public void setIotdbSqlDialect(IotdbSqlDialect iotdbSqlDialect) {
+        this.iotdbSqlDialect = iotdbSqlDialect;
     }
 
     public InstanceStatus getStatus() {
