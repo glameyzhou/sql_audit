@@ -66,57 +66,79 @@
           </el-form-item>
         </div>
 
-        <!-- 工作台：左「数据表」+ 右「SQL 编辑 + 结果预览」 -->
-        <div class="workbench">
+        <!-- 工作台：左「数据表」+ 右「SQL 编辑 + 结果预览」；表列表可折叠成竖条给右侧让位 -->
+        <div class="workbench" :class="{ 'table-collapsed': tableColCollapsed }">
           <div class="table-col">
-            <div class="pane-head">
-              <span>数据表</span>
+            <!-- 折叠态：仅留竖条（展开按钮 + 竖排标题），横向空间全让给编辑器与结果 -->
+            <div v-if="tableColCollapsed" class="table-rail">
               <el-button
-                :icon="Refresh"
+                :icon="Expand"
                 link
                 size="small"
-                title="刷新表列表"
-                :loading="tableLoading"
-                :disabled="!selectedDb"
-                @click="loadTables"
+                title="展开表列表"
+                @click="tableColCollapsed = false"
               />
+              <span class="rail-text">数据表</span>
             </div>
-            <div v-loading="tableLoading" class="pane-body">
-              <div v-if="instanceId == null" class="browser-state">先选择上方实例</div>
-              <div v-else-if="dbError" class="browser-state err">库列表加载失败，点「数据库」旁刷新重试</div>
-              <div v-else-if="!selectedDb" class="browser-state">先选择上方数据库</div>
-              <div v-else-if="tableError" class="browser-state err">加载失败，点击刷新重试</div>
-              <div v-else-if="!tables.length" class="browser-state">（空）</div>
-              <div v-else class="browser-list">
-                <div
-                  v-for="t in tables"
-                  :key="t.name"
-                  class="browser-item"
-                  title="点击查看表结构，双击预览前 10 行"
-                  @click="pickTable(t)"
-                  @dblclick="previewTenRows(t)"
-                >
-                  <div class="browser-item-main">
-                    <span class="browser-name mono">{{ t.name }}</span>
-                    <el-button
-                      v-if="session.can(API.TABLE_REMARK_UPDATE)"
-                      class="remark-edit"
-                      link
-                      size="small"
-                      title="编辑备注"
-                      @click.stop="openRemarkDialog(t)"
-                    >备注</el-button>
+            <template v-else>
+              <div class="pane-head">
+                <span>数据表</span>
+                <span class="pane-actions">
+                  <el-button
+                    :icon="Refresh"
+                    link
+                    size="small"
+                    title="刷新表列表"
+                    :loading="tableLoading"
+                    :disabled="!selectedDb"
+                    @click="loadTables"
+                  />
+                  <el-button
+                    :icon="Fold"
+                    link
+                    size="small"
+                    title="折叠表列表"
+                    @click="tableColCollapsed = true"
+                  />
+                </span>
+              </div>
+              <div v-loading="tableLoading" class="pane-body">
+                <div v-if="instanceId == null" class="browser-state">先选择上方实例</div>
+                <div v-else-if="dbError" class="browser-state err">库列表加载失败，点「数据库」旁刷新重试</div>
+                <div v-else-if="!selectedDb" class="browser-state">先选择上方数据库</div>
+                <div v-else-if="tableError" class="browser-state err">加载失败，点击刷新重试</div>
+                <div v-else-if="!tables.length" class="browser-state">（空）</div>
+                <div v-else class="browser-list">
+                  <div
+                    v-for="t in tables"
+                    :key="t.name"
+                    class="browser-item"
+                    title="点击查看表结构，双击预览前 10 行"
+                    @click="pickTable(t)"
+                    @dblclick="previewTenRows(t)"
+                  >
+                    <div class="browser-item-main">
+                      <span class="browser-name mono">{{ t.name }}</span>
+                      <el-button
+                        v-if="session.can(API.TABLE_REMARK_UPDATE)"
+                        class="remark-edit"
+                        link
+                        size="small"
+                        title="编辑备注"
+                        @click.stop="openRemarkDialog(t)"
+                      >备注</el-button>
+                    </div>
+                    <div v-if="remarkOf(t)" class="browser-remark">{{ remarkOf(t) }}</div>
                   </div>
-                  <div v-if="remarkOf(t)" class="browser-remark">{{ remarkOf(t) }}</div>
                 </div>
               </div>
-            </div>
+            </template>
           </div>
 
           <div class="editor-col">
             <div class="pane-head">
               <span>SQL 工作台</span>
-              <span class="pane-hint">表结构请点左侧表查看；SHOW/DESC 等语句在只读通道不可用</span>
+              <span class="pane-hint">支持 SELECT / EXPLAIN 看执行计划 / SHOW TABLES / DESC 表名（PG 同样适用）；EXPLAIN ANALYZE 会真实执行，已禁用</span>
             </div>
 
           <!-- textarea 透明文字 + 背后 <pre> 高亮层（同字体同 padding，滚动同步） -->
@@ -162,8 +184,8 @@
               <span class="run-hint">查询经 LIMIT 三层保护并写入审计链</span>
             </div>
 
-            <!-- 表结构面板（点左侧表名打开；查询通道只读，SHOW/DESC 不可用） -->
-            <div v-if="structure" class="structure-panel">
+            <!-- 表结构面板（点左侧表名打开；查询通道只读，SHOW/DESC 不可用；可折叠只留标题行） -->
+            <div v-if="structure" class="structure-panel" :class="{ collapsed: structureCollapsed }">
               <div class="result-head">
                 <span class="result-title">表结构 · {{ structure.table }}</span>
                 <div class="structure-actions">
@@ -173,10 +195,13 @@
                     :disabled="structure.loading || structure.error || !structure.columns.length"
                     @click="previewTenRows(structure.table)"
                   >查看前 10 行</el-button>
+                  <el-button size="small" @click="structureCollapsed = !structureCollapsed">
+                    {{ structureCollapsed ? '展开' : '折叠' }}
+                  </el-button>
                   <el-button size="small" @click="structure = null">关闭</el-button>
                 </div>
               </div>
-              <div v-loading="structure.loading" class="structure-body">
+              <div v-show="!structureCollapsed" v-loading="structure.loading" class="structure-body">
                 <div v-if="structure.error" class="browser-state err">
                   表结构加载失败（可能是权限不足或表不存在）
                 </div>
@@ -315,7 +340,7 @@
 
 <script setup>
 import { ref, reactive, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
-import { Refresh } from '@element-plus/icons-vue'
+import { Refresh, Fold, Expand } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import { API } from '../../api/capabilities'
 import { useSessionStore } from '../../stores/session'
@@ -372,6 +397,8 @@ async function loadInstances() {
 const databases = ref([])
 // 表列表元素 = { name, comment }（comment 为原库原生注释，可为 null）
 const tables = ref([])
+// 左侧表列表折叠开关（折叠后仅留竖条，编辑器/结果区占满整行）
+const tableColCollapsed = ref(false)
 const selectedDb = ref('')
 const dbLoading = ref(false)
 const dbError = ref(false)
@@ -403,9 +430,11 @@ async function loadDatabases() {
   try {
     const list = await api.listDatabases(id)
     if (seq !== dbSeq) return
-    databases.value = list || []
-    // 默认选中实例的默认库（存在时），否则取第一个，省去一次点击
+    // 实例配置了默认库 → 下拉收敛为仅默认库（「实例=默认库」语义，跨库已由后端边界拒绝）；
+    // 未配置默认库 → 保留全量库列表（无锚点，用户可自由选库，边界同样不限制）。
     const preferred = currentInstance.value?.defaultSchema
+    databases.value = preferred && list?.includes(preferred) ? [preferred] : (list || [])
+    // 默认选中默认库（存在时），否则取第一个，省去一次点击
     selectedDb.value = preferred && databases.value.includes(preferred)
       ? preferred
       : (databases.value[0] || '')
@@ -491,11 +520,14 @@ function quoteIdent(name) {
 
 // 结构面板状态：{ table, loading, error, columns }；null = 未打开
 const structure = ref(null)
+// 表结构面板折叠（收起字段表只留标题行，给结果区让位）
+const structureCollapsed = ref(false)
 
 // 点表（单击）→ 打开表结构面板（不再自动跑 SELECT）
 async function pickTable(t) {
   if (!selectedDb.value) return
   const name = t?.name ?? String(t)
+  structureCollapsed.value = false
   structure.value = { table: name, loading: true, error: false, columns: [] }
   try {
     const cols = await api.listTableStructure(instanceId.value, selectedDb.value, name)
@@ -633,7 +665,9 @@ const SQL_KEYWORDS = [
   'IN', 'LIKE', 'IS', 'BETWEEN', 'EXISTS', 'UNION', 'ALL', 'DISTINCT', 'COUNT', 'SUM', 'AVG', 'MIN',
   'MAX', 'CREATE', 'ALTER', 'DROP', 'TABLE', 'INDEX', 'SET', 'VALUES', 'INTO', 'PRIMARY', 'KEY',
   'FOREIGN', 'REFERENCES', 'DESC', 'ASC', 'CASE', 'WHEN', 'THEN', 'ELSE', 'END', 'SHOW', 'USE',
-  'TRUNCATE', 'ADD', 'COLUMN', 'DEFAULT', 'IF', 'BEGIN', 'COMMIT', 'ROLLBACK', 'WITH', 'OFFSET', 'FETCH'
+  'TRUNCATE', 'ADD', 'COLUMN', 'DEFAULT', 'IF', 'BEGIN', 'COMMIT', 'ROLLBACK', 'WITH', 'OFFSET', 'FETCH',
+  // 查询控制台实用语句（后端翻译/放行）：EXPLAIN 执行计划、SHOW TABLES、DESC 表结构
+  'EXPLAIN', 'ANALYZE', 'TABLES', 'DATABASES', 'DESCRIBE'
 ]
 const KEYWORD_SET = new Set(SQL_KEYWORDS)
 
@@ -998,9 +1032,12 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
   gap: 18px;
-  align-items: start;
+  /* stretch：表列表跟随右侧编辑器/结果区的高度撑满（右侧更高时列表也跟着变高） */
+  align-items: stretch;
 }
-.table-col { min-width: 0; }
+/* 表列表折叠态：左列缩成竖条宽度 */
+.workbench.table-collapsed { grid-template-columns: 34px minmax(0, 1fr); gap: 10px; }
+.table-col { min-width: 0; display: flex; flex-direction: column; }
 .editor-col { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
 .pane-head {
   display: flex;
@@ -1013,16 +1050,38 @@ onBeforeUnmount(() => {
   margin-bottom: 6px;
   padding: 0 2px;
   min-height: 24px;
+  flex-shrink: 0;
 }
 .pane-hint { font-size: 11.5px; font-weight: 400; color: var(--sa-text-3); }
+/* pane-head 右侧按钮组（刷新 + 折叠） */
+.pane-actions { display: inline-flex; align-items: center; gap: 2px; flex-shrink: 0; }
 .pane-body {
   border: 1px solid var(--sa-border);
   border-radius: var(--sa-radius-sm);
   background: var(--sa-surface-2);
-  min-height: 120px;
-  max-height: 360px;
+  min-height: 260px;
+  flex: 1 1 auto;
   overflow: auto;
   padding: 4px;
+}
+/* 折叠后的表列表竖条：展开按钮 + 竖排标题 */
+.table-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--sa-border);
+  border-radius: var(--sa-radius-sm);
+  background: var(--sa-surface-2);
+  padding: 10px 0;
+}
+.rail-text {
+  writing-mode: vertical-rl;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sa-text-3);
+  letter-spacing: 6px;
+  user-select: none;
 }
 .db-picker { display: flex; align-items: center; gap: 6px; }
 .browser-list { display: flex; flex-direction: column; gap: 1px; }
@@ -1071,6 +1130,8 @@ onBeforeUnmount(() => {
   padding: 12px 14px;
 }
 .structure-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+/* 折叠态：只留标题行，收紧上下内边距 */
+.structure-panel.collapsed { padding: 8px 14px; }
 .structure-body { min-height: 48px; }
 .structure-table { margin-top: 2px; }
 

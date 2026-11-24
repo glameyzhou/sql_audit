@@ -25,7 +25,7 @@
             :loading="instancesLoading"
             style="width: 100%"
           >
-            <el-option v-for="ins in userInstances" :key="ins.id" :label="ins.name" :value="ins.id">
+            <el-option v-for="ins in userInstances" :key="ins.id" :label="instanceLabel(ins)" :value="ins.id">
               <span>{{ ins.name }}</span>
               <span class="option-meta">
                 <DbBadge :dialect="ins.dialect" />
@@ -193,6 +193,12 @@ const selectedDialect = computed(() => {
   const inst = userInstances.value.find((i) => i.id === form.value.instanceId)
   return inst?.dialect || 'MYSQL'
 })
+
+// 下拉选项 label（用于 filterable 搜索与选中回显）：名称 + 方言 + 默认库，让使用者明确目标库
+function instanceLabel(ins) {
+  const schema = ins.defaultSchema ? ` · 默认库 ${ins.defaultSchema}` : ''
+  return `${ins.name || '未命名实例'} · ${ins.dialect || '?'}${schema}`
+}
 
 const form = ref({
   title: '',

@@ -296,7 +296,7 @@ async function saveInstance() {
   } else if (hasPwd && !hasUser) {
     ElMessage.warning('请填写凭据账号')
     return
-  } else if (!hasPwd && hasUser !== credOriginalUsername.value) {
+  } else if (!hasPwd && credForm.username.trim() !== credOriginalUsername.value) {
     ElMessage.warning('修改凭据账号需同时填写新密码')
     return
   }

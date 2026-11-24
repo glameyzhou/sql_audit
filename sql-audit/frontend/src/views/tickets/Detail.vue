@@ -76,11 +76,14 @@
               <div v-if="targetInstance" class="inst-item">
                 <span class="inst-name">{{ targetInstance.name }}</span>
                 <span class="inst-meta mono">{{ targetInstance.host }}{{ targetInstance.port ? ':' + targetInstance.port : '' }}</span>
-                <span class="inst-meta">默认库 {{ targetInstance.defaultSchema || '-' }}</span>
+                <span class="inst-meta">默认库 {{ ticket.instanceDefaultSchema || targetInstance.defaultSchema || '-' }}</span>
                 <DbBadge v-if="targetInstance.dialect" :dialect="targetInstance.dialect" />
                 <el-tag v-else size="small" effect="plain" type="info">?</el-tag>
               </div>
-              <span v-else class="v">{{ ticket.instanceName || (ticket.instanceId != null ? `实例 ${ticket.instanceId}` : '-') }}</span>
+              <span v-else class="v">
+                {{ ticket.instanceName || (ticket.instanceId != null ? `实例 ${ticket.instanceId}` : '-') }}
+                <span v-if="ticket.instanceDefaultSchema" class="inst-meta">默认库 {{ ticket.instanceDefaultSchema }}</span>
+              </span>
             </div>
           </div>
         </div>

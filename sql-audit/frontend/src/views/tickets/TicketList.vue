@@ -53,7 +53,10 @@
 
         <el-table-column label="实例" min-width="150">
           <template #default="{ row }">
-            <span class="instances">{{ row.instanceName || `实例 ${row.instanceId}` }}</span>
+            <span class="instances">
+              {{ row.instanceName || `实例 ${row.instanceId}` }}
+              <span v-if="row.instanceDefaultSchema" class="instance-db">· 默认库 {{ row.instanceDefaultSchema }}</span>
+            </span>
           </template>
         </el-table-column>
 
@@ -173,6 +176,7 @@ function formatTime(value) {
 
 .time { font-size: 12px; color: var(--sa-text-2); font-variant-numeric: tabular-nums; }
 .instances { font-size: 12.5px; color: var(--sa-text-2); }
+.instance-db { font-size: 11.5px; color: var(--sa-text-3); font-family: var(--sa-font-mono); }
 .creator { font-size: 12.5px; color: var(--sa-text-2); }
 
 .pagination { display: flex; justify-content: flex-end; margin-top: 14px; }
