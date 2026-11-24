@@ -34,13 +34,25 @@ public final class QueryGate {
     }
 
     /**
-     * 门禁检查。
+     * 门禁检查（不校验实例默认库边界，向后兼容旧调用方）。
      *
      * @param sql     用户 SQL（可能是分号分隔的多条语句）
      * @param dialect 目标方言
      * @return 判定结果，见 {@link GateResult}
      */
     public GateResult check(String sql, Dialect dialect) {
+        return check(sql, dialect, null);
+    }
+
+    /**
+     * 门禁检查（含实例默认库边界校验）。
+     *
+     * @param sql            用户 SQL（可能是分号分隔的多条语句）
+     * @param dialect        目标方言
+     * @param expectedSchema 实例默认库；null 表示不校验（旧调用方 / 实例未配置时由调用方决定语义）
+     * @return 判定结果，见 {@link GateResult}
+     */
+    public GateResult check(String sql, Dialect dialect, String expectedSchema) {
         java.util.List<ParsedStatement> statements = parser.parse(sql, dialect);
 
         if (statements.size() != 1) {
@@ -48,6 +60,13 @@ public final class QueryGate {
         }
 
         ParsedStatement ps = statements.get(0);
+
+        // 实例默认库边界：MySQL 下限定名引用其他库 → 拒绝（PG/IoTDB 恒不校验，见 checker javadoc）
+        java.util.List<String> boundary = SchemaBoundaryChecker.violations(dialect, expectedSchema, ps);
+        if (!boundary.isEmpty()) {
+            return GateResult.reject(String.join("、", boundary));
+        }
+
         if (!ps.isReadOnly() || !ps.getDangerousClauses().isEmpty()) {
             String clauses = ps.getDangerousClauses().stream()
                     .map(Enum::name)

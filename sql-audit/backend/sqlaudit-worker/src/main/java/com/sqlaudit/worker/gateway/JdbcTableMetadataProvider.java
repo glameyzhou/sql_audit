@@ -81,6 +81,17 @@ public class JdbcTableMetadataProvider implements TableMetadataProvider {
             // IoTDB 无 information_schema 等价物：不承诺元数据，返回 null（白名单 SOP 兜底）
             return null;
         }
+        // 第二道防线（第一道在提交门禁 SchemaBoundaryChecker）：MySQL 下实例配置了默认库、
+        // 语句却引用其他 schema → 表按不存在处理（R_OBJECT_NOT_ALLOWED 会接住）。
+        // 默认库未配置时不限制；PG 不校验（defaultSchema=URL database，schema 前缀是库内命名空间）。
+        if (dialect == Dialect.MYSQL && schema != null && !schema.isBlank()) {
+            String def = inst.getDefaultSchema();
+            if (def != null && !def.isBlank() && !def.equalsIgnoreCase(schema)) {
+                log.warn("[metadata] 实例 {} 语句引用默认库之外的 schema（{}），按表缺失处理",
+                        inst.getId(), schema);
+                return null;
+            }
+        }
         Credential cred;
         try {
             cred = credentialDao.findByInstanceAndType(inst.getId(), AccountType.RO_META);

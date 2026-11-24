@@ -75,4 +75,26 @@ class QueryGateTest {
         assertTrue(r.allowed());
         assertFalse(r.limitInjectable());
     }
+
+    // ---------------- 实例默认库边界（SchemaBoundaryChecker 联动） ----------------
+
+    @Test
+    void schemaBoundary_mysqlCrossDb_rejected() {
+        GateResult r = gate.check("SELECT * FROM other_db.t", Dialect.MYSQL, "jx");
+        assertFalse(r.allowed());
+        assertTrue(r.reason().contains("other_db.t"));
+    }
+
+    @Test
+    void schemaBoundary_pgNeverRejected() {
+        GateResult r = gate.check("SELECT * FROM public.t", Dialect.PG, "jx");
+        assertTrue(r.allowed());
+    }
+
+    @Test
+    void schemaBoundary_legacySignature_unchanged() {
+        // 旧签名（不校验边界）行为不变：跨库 SELECT 仍按只读放行
+        GateResult r = gate.check("SELECT * FROM other_db.t", Dialect.MYSQL);
+        assertTrue(r.allowed());
+    }
 }

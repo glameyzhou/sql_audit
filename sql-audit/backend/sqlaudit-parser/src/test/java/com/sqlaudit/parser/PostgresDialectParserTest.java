@@ -70,6 +70,23 @@ class PostgresDialectParserTest {
     }
 
     @Test
+    void plainExplain_isReadOnly() {
+        // 查询控制台兜底能力：普通 EXPLAIN（看执行计划）必须只读放行（PG JDBC 返回 QUERY PLAN 结果集）
+        ParsedStatement ps = one("EXPLAIN SELECT * FROM t WHERE id = 1");
+        assertTrue(ps.getDangerousClauses().isEmpty());
+        assertTrue(ps.isReadOnly());
+        assertEquals(com.sqlaudit.common.enums.StatementType.SELECT, ps.getStatementType());
+    }
+
+    @Test
+    void explainWithParenOptions_parseFailNeverDowngrade() {
+        // Druid 1.2.23 解析不了 PG 的 EXPLAIN (ANALYZE, BUFFERS)——解析失败铁律：非只读
+        ParsedStatement ps = one("EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM t");
+        assertFalse(ps.isReadOnly(), "解析失败绝不降级放行（ANALYZE 会真实执行）");
+        assertTrue(ps.getDangerousClauses().contains(DangerousClause.LOW_CONFIDENCE));
+    }
+
+    @Test
     void deleteReturning_typeDelete() {
         ParsedStatement ps = one("DELETE FROM t WHERE id = 1 RETURNING *");
         assertEquals(com.sqlaudit.common.enums.StatementType.DELETE, ps.getStatementType());

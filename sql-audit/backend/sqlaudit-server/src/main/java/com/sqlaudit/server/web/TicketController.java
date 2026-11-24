@@ -143,10 +143,11 @@ public class TicketController {
 
     // ---------------- 视图 ----------------
 
-    /** 工单 JSON（契约 §6：去 instanceIds / environment，加 creatorName / instanceName）。 */
+    /** 工单 JSON（契约 §6：去 instanceIds / environment，加 creatorName / instanceName / instanceDefaultSchema）。 */
     public record TicketView(
             Long id, String title, Long creatorId, String creatorName,
-            Long instanceId, String instanceName, RiskLevel riskLevel, TicketStatus status,
+            Long instanceId, String instanceName, String instanceDefaultSchema,
+            RiskLevel riskLevel, TicketStatus status,
             String rollbackSummary, String sqlText, String shardConfig,
             boolean needsSecondConfirm, Long confirmedBy, LocalDateTime confirmedAt,
             String traceId, LocalDateTime createdAt, LocalDateTime updatedAt) {
@@ -159,12 +160,15 @@ public class TicketController {
             creatorName = creator == null ? null : creator.getDisplayName();
         }
         String instanceName = null;
+        String instanceDefaultSchema = null;
         if (t.getInstanceId() != null) {
             Instance instance = instanceDao.findById(t.getInstanceId());
             instanceName = instance == null ? null : instance.getName();
+            instanceDefaultSchema = instance == null ? null : instance.getDefaultSchema();
         }
         return new TicketView(t.getId(), t.getTitle(), t.getCreatorId(), creatorName,
-                t.getInstanceId(), instanceName, t.getRiskLevel(), t.getStatus(),
+                t.getInstanceId(), instanceName, instanceDefaultSchema,
+                t.getRiskLevel(), t.getStatus(),
                 t.getRollbackSummary(), t.getSqlText(), t.getShardConfig(),
                 t.isNeedsSecondConfirm(), t.getConfirmedBy(), t.getConfirmedAt(),
                 t.getTraceId(), t.getCreatedAt(), t.getUpdatedAt());

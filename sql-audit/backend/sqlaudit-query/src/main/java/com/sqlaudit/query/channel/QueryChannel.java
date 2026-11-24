@@ -3,6 +3,7 @@ package com.sqlaudit.query.channel;
 import com.sqlaudit.common.enums.Dialect;
 import com.sqlaudit.query.gate.GateResult;
 import com.sqlaudit.query.gate.QueryGate;
+import com.sqlaudit.query.gate.SchemaBoundaryChecker;
 import com.sqlaudit.query.limit.InjectionResult;
 import com.sqlaudit.query.limit.LimitInjector;
 
@@ -63,7 +64,7 @@ public final class QueryChannel {
     }
 
     /**
-     * 执行一次查询（门禁 → LIMIT 注入 → 三层保护下执行）。
+     * 执行一次查询（门禁 → LIMIT 注入 → 三层保护下执行；不校验实例默认库边界）。
      *
      * <p>门禁拒绝 / 执行异常均不抛出，以 {@link QueryResult#isSuccess()}=false + reason 返回，
      * 调用方（W2 web 层）据此生成 query_log 与用户提示。</p>
@@ -74,10 +75,26 @@ public final class QueryChannel {
      * @return 执行结果
      */
     public QueryResult execute(long instanceId, String sql, Dialect dialect) {
+        return execute(instanceId, sql, dialect, null);
+    }
+
+    /**
+     * 执行一次查询（门禁 → LIMIT 注入 → 三层保护下执行；含实例默认库边界校验）。
+     *
+     * <p>{@code expectedSchema} 为实例默认库，非 null 时门禁校验「语句不得引用其他库」
+     * （MySQL 限定名跨库；PG/IoTDB 不校验，见 {@link SchemaBoundaryChecker}）。</p>
+     *
+     * @param instanceId     目标实例
+     * @param sql            用户 SQL（单语句）
+     * @param dialect        目标方言
+     * @param expectedSchema 实例默认库（null 不校验）
+     * @return 执行结果
+     */
+    public QueryResult execute(long instanceId, String sql, Dialect dialect, String expectedSchema) {
         long startNanos = System.nanoTime();
 
-        // 门禁：只读单语句判定（复用 parser 契约）
-        GateResult gateResult = gate.check(sql, dialect);
+        // 门禁：只读单语句判定 + 实例默认库边界（复用 parser 契约）
+        GateResult gateResult = gate.check(sql, dialect, expectedSchema);
         if (!gateResult.allowed()) {
             return QueryResult.rejected(instanceId, sql, gateResult.reason(), elapsedMs(startNanos));
         }

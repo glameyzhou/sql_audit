@@ -67,8 +67,8 @@ public final class QueryResult {
         this.notice = notice;
     }
 
-    /** 门禁拒绝（elapsedMs 为门禁耗时）。 */
-    static QueryResult rejected(long instanceId, String sql, String reason, long elapsedMs) {
+    /** 门禁拒绝（elapsedMs 为门禁耗时）。web 层对「控制台实用语句不可翻译」等场景同用此出口。 */
+    public static QueryResult rejected(long instanceId, String sql, String reason, long elapsedMs) {
         return new QueryResult(false, reason, null, null, 0, elapsedMs, false,
                 instanceId, sql, sql, null, false, false, null);
     }
@@ -142,5 +142,18 @@ public final class QueryResult {
 
     public String getNotice() {
         return notice;
+    }
+
+    /**
+     * 追加结果页提示（控制台命令翻译说明等调用方补充文案）。
+     * notice 已有内容时合并为一行（追加在前，注入层提示在后）；extra 为空返回自身。
+     */
+    public QueryResult withNotice(String extra) {
+        if (extra == null || extra.isBlank()) {
+            return this;
+        }
+        String merged = (notice == null || notice.isBlank()) ? extra : extra + "；" + notice;
+        return new QueryResult(success, reason, columns, rows, rowCount, elapsedMs, truncated,
+                instanceId, sql, rewrittenSql, originalLimit, injected, tightened, merged);
     }
 }

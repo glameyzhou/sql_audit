@@ -92,7 +92,13 @@ sql_audit/                            ← git 仓库根
 5. **回滚**：执行时采集前镜像并生成反向 SQL（见 §4.4），出事用「回滚管理」页逐条幂等回放。
 6. **审计**：每一步操作写 append-only 审计链（hash 链防篡改），谁改了什么、改没改成功全程可追溯。
 
-配套能力：**线上 SQL 查询**（办公网无法直连生产库，通过查询通道带 LIMIT 保护 + 动态脱敏 + 查询审计，查询页提供库/表浏览与语法高亮编辑器）。
+配套能力：**线上 SQL 查询**（办公网无法直连生产库，通过查询通道带 LIMIT 保护 + 动态脱敏 + 查询审计，查询页提供库/表浏览与语法高亮编辑器）。查询编辑器除 `SELECT` 外另支持三类实用语句（两方言行为一致）：
+
+- `EXPLAIN SELECT ...`——执行计划（看索引命中），parser 解包为内部 SELECT 判只读放行，且不做 LIMIT 注入（避免污染计划）；`EXPLAIN ANALYZE` 因会真实执行被拒，PG 的 `EXPLAIN (ANALYZE, ...)` 解析失败走 LOW_CONFIDENCE 铁律同样拒绝；
+- `SHOW TABLES`——当前默认库的表清单，web 层翻译为 information_schema 只读 SELECT（`table_schema` 以实例默认库字面量嵌入，不用 `DATABASE()` / `current_schema()`——二者是刻意不入函数白名单的信息面函数）；
+- `DESC / DESCRIBE 表名`——表结构，同上翻译为 information_schema.columns 查询（MySQL 版带 `column_comment`，PG 无列注释则不带）。
+
+翻译入口在 QueryController（`ConsoleCommandRewriter`，sqlaudit-query 模块）：识别只认严格白名单形态（裸 `SHOW TABLES` / `DESC 单标识符`，多余子句一律不认），翻译产物**仍走完整门禁 + LIMIT 三层保护**；审计 detail 记用户原文。
 
 ### 4.2 工单生命周期（时序与状态机）
 

@@ -13,6 +13,7 @@ import com.sqlaudit.common.model.RollbackPlan;
 import com.sqlaudit.common.model.RuleHit;
 import com.sqlaudit.common.model.SqlObject;
 import com.sqlaudit.parser.SqlParserService;
+import com.sqlaudit.query.gate.SchemaBoundaryChecker;
 import com.sqlaudit.rollback.capability.CapabilityContext;
 import com.sqlaudit.rollback.capability.RollbackCapabilityAssessor;
 import com.sqlaudit.rule.engine.AuditOutcome;
@@ -20,6 +21,8 @@ import com.sqlaudit.rule.engine.RuleEngine;
 import com.sqlaudit.rule.risk.ApprovalChain;
 import com.sqlaudit.rule.risk.ApprovalRouter;
 import com.sqlaudit.rule.risk.RiskAssessor;
+import com.sqlaudit.storage.dao.InstanceDao;
+import com.sqlaudit.storage.model.Instance;
 import com.sqlaudit.storage.model.Ticket;
 import com.sqlaudit.storage.model.TicketUnit;
 import com.sqlaudit.workflow.ApprovalFlowEngine;
@@ -66,17 +69,19 @@ public class TicketSubmissionService {
     private final TicketService ticketService;
     private final ApprovalFlowEngine approvalEngine;
     private final ApprovalRouter approvalRouter;
+    private final InstanceDao instanceDao;
 
     public TicketSubmissionService(SqlParserService parser, RuleEngine ruleEngine,
                                    RollbackCapabilityAssessor capabilityAssessor,
                                    TicketService ticketService, ApprovalFlowEngine approvalEngine,
-                                   ApprovalRouter approvalRouter) {
+                                   ApprovalRouter approvalRouter, InstanceDao instanceDao) {
         this.parser = parser;
         this.ruleEngine = ruleEngine;
         this.capabilityAssessor = capabilityAssessor;
         this.ticketService = ticketService;
         this.approvalEngine = approvalEngine;
         this.approvalRouter = approvalRouter;
+        this.instanceDao = instanceDao;
     }
 
     /** 一个 unit 的预览视图（前端提交页展示；statementType 按存储码序列化）。 */
@@ -193,6 +198,22 @@ public class TicketSubmissionService {
 
     private PreviewResult doPreview(String sql, Dialect dialect) {
         List<ParsedStatement> parsed = parser.parse(sql, dialect);
+
+        // 实例默认库边界（平台配置哪个库就只动哪个库）：MySQL 下限定名引用其他库 → 400 拒绝。
+        // 预览与提交共用本方法，一处拦截两处生效。instanceId 经 InstanceContext（ThreadLocal）注入。
+        Long instanceId = InstanceContext.get();
+        if (instanceId != null && instanceId > 0) {
+            Instance inst = instanceDao.findById(instanceId);
+            String defaultSchema = inst == null ? null : inst.getDefaultSchema();
+            for (ParsedStatement ps : parsed) {
+                List<String> violations = SchemaBoundaryChecker.violations(dialect, defaultSchema, ps);
+                if (!violations.isEmpty()) {
+                    throw new SqlauditException(ErrorCode.SCHEMA_OUT_OF_BOUND,
+                            String.join("；", violations));
+                }
+            }
+        }
+
         AuditOutcome outcome = ruleEngine.audit(parsed);
 
         List<UnitPreview> unitViews = new ArrayList<>();

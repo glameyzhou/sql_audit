@@ -10,11 +10,14 @@ import com.sqlaudit.common.exception.SqlauditException;
 import com.sqlaudit.common.model.AuditEvent;
 import com.sqlaudit.query.channel.QueryChannel;
 import com.sqlaudit.query.channel.QueryResult;
+import com.sqlaudit.query.console.ConsoleCommandRewriter;
 import com.sqlaudit.server.auth.AuditActor;
 import com.sqlaudit.server.auth.AuditEvents;
 import com.sqlaudit.server.auth.CurrentUser;
 import com.sqlaudit.server.auth.RoleAuthInterceptor;
 import com.sqlaudit.server.service.DataScopeService;
+import com.sqlaudit.storage.dao.InstanceDao;
+import com.sqlaudit.storage.model.Instance;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -42,13 +45,15 @@ public class QueryController {
     private final QueryChannel queryChannel;
     private final AuditWriter auditWriter;
     private final DataScopeService dataScopeService;
+    private final InstanceDao instanceDao;
     private final ZoneId zone;
 
     public QueryController(QueryChannel queryChannel, AuditWriter auditWriter,
-                           DataScopeService dataScopeService, ZoneId zone) {
+                           DataScopeService dataScopeService, InstanceDao instanceDao, ZoneId zone) {
         this.queryChannel = queryChannel;
         this.auditWriter = auditWriter;
         this.dataScopeService = dataScopeService;
+        this.instanceDao = instanceDao;
         this.zone = zone;
     }
 
@@ -61,7 +66,22 @@ public class QueryController {
             throw new SqlauditException(ErrorCode.SQL_TOO_LARGE,
                     "查询 SQL 过长（上限 " + MAX_QUERY_SQL_BYTES + " 字节）");
         }
-        QueryResult result = queryChannel.execute(req.instanceId(), req.sql(), req.dialect());
+        // 实例默认库（平台配置的库，查询只允许动它）：MySQL 下门禁校验限定名不越界
+        Instance instance = req.instanceId() > 0 ? instanceDao.findById(req.instanceId()) : null;
+        String defaultSchema = instance == null ? null : instance.getDefaultSchema();
+
+        // 控制台实用语句（SHOW TABLES / DESC）：翻译成 information_schema 只读 SELECT 后
+        // 仍走完整门禁 + 三层保护；审计 detail 记用户原文（req.sql()）
+        ConsoleCommandRewriter.Rewrite rewrite = rewriteConsoleCommand(req, instance);
+        QueryResult result;
+        if (rewrite.rejectReason() != null) {
+            result = QueryResult.rejected(req.instanceId(), req.sql(), rewrite.rejectReason(), 0);
+        } else {
+            result = queryChannel.execute(req.instanceId(), rewrite.sql(), req.dialect(), defaultSchema);
+            if (rewrite.isTranslated()) {
+                result = result.withNotice(rewrite.notice());
+            }
+        }
         AuditActor actor = AuditActor.of(user, request);
         auditWriter.append(AuditEvents.base(actor)
                 .action(AuditAction.QUERY_EXECUTED)
@@ -75,6 +95,24 @@ public class QueryController {
                 .createdAt(OffsetDateTime.now(zone))
                 .build());
         return result;
+    }
+
+    /**
+     * 控制台实用语句翻译入口：方言优先取请求体，缺省回落实例配置；
+     * 实例不存在 / 方言未知 / IoTDB / SQL 为空时原样透传（后续由通道按老规则处置）。
+     */
+    private ConsoleCommandRewriter.Rewrite rewriteConsoleCommand(QueryRequest req, Instance instance) {
+        if (req.sql() == null || req.sql().isBlank()) {
+            return ConsoleCommandRewriter.Rewrite.passthrough(req.sql());
+        }
+        if (instance == null) {
+            return ConsoleCommandRewriter.Rewrite.passthrough(req.sql());
+        }
+        Dialect dialect = req.dialect() != null ? req.dialect() : instance.getDialect();
+        if (dialect == null) {
+            return ConsoleCommandRewriter.Rewrite.passthrough(req.sql());
+        }
+        return ConsoleCommandRewriter.rewrite(req.sql(), dialect, instance.getDefaultSchema());
     }
 
     /** dialect 按存储码（MYSQL / PG / IOTDB）反序列化，未知取值由统一错误出口转 400。 */

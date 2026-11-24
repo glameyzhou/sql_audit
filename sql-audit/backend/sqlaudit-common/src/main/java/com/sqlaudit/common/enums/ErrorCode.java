@@ -69,6 +69,8 @@ public enum ErrorCode implements CodedEnum {
     INSTANCE_OUT_OF_SCOPE,
     /** SQL 文本超长（单工单 1 MiB / 单条查询 64 KiB，400） */
     SQL_TOO_LARGE,
+    /** 语句引用了实例默认库之外的对象（MySQL 限定名跨库，400） */
+    SCHEMA_OUT_OF_BOUND,
 
     // ---- 审批 ----
     TICKET_NOT_FOUND,
