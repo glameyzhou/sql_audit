@@ -8,9 +8,16 @@ import com.sqlaudit.storage.dao.TicketUnitDao;
 import com.sqlaudit.storage.model.ExecLock;
 import com.sqlaudit.storage.model.TicketUnit;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Objects;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 执行单元引擎——README §4.2 抢占与执行协议的编排核心（最高优先级工程约束）。
@@ -44,8 +51,21 @@ import java.util.Objects;
  */
 public class UnitExecutionEngine {
 
+    private static final Logger log = LoggerFactory.getLogger(UnitExecutionEngine.class);
+
     /** 租约时长（README §4.2：租约到期 = now + 30s）。 */
     public static final Duration LEASE_TTL = Duration.ofSeconds(30);
+
+    /** 心跳续租周期（README §4.2：每 5s 续租；reaper TTL = 15s ≥ 3 个心跳周期）。 */
+    public static final Duration HEARTBEAT_INTERVAL = Duration.ofSeconds(5);
+
+    /** 共享守护心跳调度器：长任务执行期间定时调用 renewLease，避免被 reaper 误判停滞。 */
+    private static final ScheduledExecutorService HEARTBEAT_SCHEDULER =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "sqlaudit-unit-heartbeat");
+                t.setDaemon(true);
+                return t;
+            });
 
     private final TicketUnitDao ticketUnitDao;
     private final ExecLockDao execLockDao;
@@ -118,8 +138,14 @@ public class UnitExecutionEngine {
                 return EngineResult.gated(gateResult.failedGate().getCode(), gateResult.reason());
             }
 
-            // 4. 生产库单事务执行（前镜像 → DML → 对账）
-            com.sqlaudit.executor.gateway.ProductionGateway.ExecutionResult exec = gatewayBridge.execute(unit);
+            // 4. 生产库单事务执行（前镜像 → DML → 对账），期间每 5s 心跳续租防长任务被 reaper 误杀
+            ScheduledFuture<?> heartbeat = startHeartbeat(unit.getId(), workerId);
+            com.sqlaudit.executor.gateway.ProductionGateway.ExecutionResult exec;
+            try {
+                exec = gatewayBridge.execute(unit);
+            } finally {
+                heartbeat.cancel(false);
+            }
 
         switch (exec.outcome()) {
             case SUCCESS -> {
@@ -153,6 +179,24 @@ public class UnitExecutionEngine {
             // 锁与租约同生命周期（README §4.2）：无论成败释放执行锁
             execLockDao.release(lockKey, unit.getId());
         }
+    }
+
+    /** 启动长任务定时心跳续租（每 5s 更新 lease_until 与 heartbeat_at）。 */
+    private ScheduledFuture<?> startHeartbeat(long unitId, String workerId) {
+        long intervalSec = HEARTBEAT_INTERVAL.toSeconds();
+        return HEARTBEAT_SCHEDULER.scheduleAtFixedRate(() -> {
+            try {
+                LocalDateTime tick = LocalDateTime.now();
+                int renewed = ticketUnitDao.renewLease(unitId, workerId, tick.plus(LEASE_TTL), tick);
+                if (renewed == 0) {
+                    log.debug("[heartbeat] 续租影响 0 行（unit 已完成或租约已易主）: unit={} worker={}",
+                            unitId, workerId);
+                }
+            } catch (Exception e) {
+                log.warn("[heartbeat] 心跳续租异常: unit={} worker={}: {}",
+                        unitId, workerId, e.getMessage());
+            }
+        }, intervalSec, intervalSec, TimeUnit.SECONDS);
     }
 
     /** 引擎结局。 */

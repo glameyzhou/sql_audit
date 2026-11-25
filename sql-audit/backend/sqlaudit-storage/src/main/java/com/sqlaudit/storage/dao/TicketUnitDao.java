@@ -58,6 +58,15 @@ public interface TicketUnitDao {
     /** worker 轮询候选（README §4.2）：pending 或租约已过期（intent_written=0）的 unit，稳定排序。 */
     List<TicketUnit> listClaimable(LocalDateTime now, int limit);
 
+    /**
+     * worker 轮询可执行工单的候选 unit（消除未审批工单占满 LIMIT 导致的队头阻塞）。
+     * JDBC 实现联表过滤 {@code t_ticket.status IN ('approved', 'executing')} 且满足二次确认条件；
+     * 内存版与测试 fake 默认回落 {@link #listClaimable}。
+     */
+    default List<TicketUnit> listClaimableForExecutableTickets(LocalDateTime now, int limit) {
+        return listClaimable(now, limit);
+    }
+
     /** 心跳续租（worker 每 5s）：影响行数 0 = 租约已被回收或 unit 已流转。 */
     int renewLease(long id, String leaseOwner, LocalDateTime leaseUntil, LocalDateTime heartbeatAt);
 

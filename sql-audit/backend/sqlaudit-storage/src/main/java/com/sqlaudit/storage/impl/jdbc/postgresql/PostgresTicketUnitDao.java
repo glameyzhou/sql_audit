@@ -3,6 +3,7 @@ package com.sqlaudit.storage.impl.jdbc.postgresql;
 import com.sqlaudit.common.crypto.SqlCipher;
 import com.sqlaudit.common.enums.CodedEnum;
 import com.sqlaudit.common.enums.StatementType;
+import com.sqlaudit.common.enums.TicketStatus;
 import com.sqlaudit.common.enums.UnitStatus;
 import com.sqlaudit.storage.dao.TicketUnitDao;
 import com.sqlaudit.storage.model.TicketUnit;
@@ -183,6 +184,20 @@ public class PostgresTicketUnitDao implements TicketUnitDao {
                         + "ORDER BY ticket_id, unit_order LIMIT ?",
                 decrypting(), UnitStatus.PENDING.getCode(), UnitStatus.LEASED.getCode(),
                 Timestamp.valueOf(now), limit);
+    }
+
+    @Override
+    public List<TicketUnit> listClaimableForExecutableTickets(LocalDateTime now, int limit) {
+        return jdbc.query(
+                "SELECT u.* FROM " + tableName + " u INNER JOIN t_ticket t ON t.id = u.ticket_id "
+                        + "WHERE u.intent_written=FALSE "
+                        + "AND (u.status=? OR (u.status=? AND u.lease_until < ?)) "
+                        + "AND t.status IN (?, ?) "
+                        + "AND (t.needs_second_confirm=FALSE OR t.confirmed_by IS NOT NULL) "
+                        + "ORDER BY u.ticket_id, u.unit_order LIMIT ?",
+                decrypting(), UnitStatus.PENDING.getCode(), UnitStatus.LEASED.getCode(),
+                Timestamp.valueOf(now),
+                TicketStatus.APPROVED.getCode(), TicketStatus.EXECUTING.getCode(), limit);
     }
 
     @Override

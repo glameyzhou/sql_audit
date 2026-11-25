@@ -508,11 +508,12 @@ public class ApprovalFlowEngine {
 
     /**
      * 工单当前是否允许进入执行（executor / worker 装配调用）：
-     * approved 且（无需二次确认 或 已确认）。
+     * approved / executing 且（无需二次确认 或 已确认）。
      */
     public boolean canExecute(long ticketId) {
         Ticket ticket = requireTicket(ticketId);
-        if (ticket.getStatus() != TicketStatus.APPROVED) {
+        TicketStatus status = ticket.getStatus();
+        if (status != TicketStatus.APPROVED && status != TicketStatus.EXECUTING) {
             return false;
         }
         return !ticket.isNeedsSecondConfirm() || ticket.getConfirmedBy() != null;

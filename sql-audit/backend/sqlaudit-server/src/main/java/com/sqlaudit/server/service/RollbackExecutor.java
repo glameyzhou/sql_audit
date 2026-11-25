@@ -26,7 +26,11 @@ import java.io.IOException;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 回滚执行服务（README §4.4 回放阶段与依赖检测）。
@@ -56,6 +60,8 @@ public class RollbackExecutor {
     private final AuditWriter auditWriter;
     private final ZoneId zone;
     private final ObjectMapper mapper = new ObjectMapper();
+    /** 进程内并发回滚互斥集合：防止同一 rollbackId 被并发点击重复回放。 */
+    private final Set<Long> inFlightRollbacks = ConcurrentHashMap.newKeySet();
 
     public RollbackExecutor(RollbackDao rollbackDao, TicketUnitDao ticketUnitDao,
                             ProductionGateway gateway, AuditWriter auditWriter, ZoneId zone) {
@@ -74,6 +80,18 @@ public class RollbackExecutor {
      * @return 执行结果（终态 applied / failed / partial）
      */
     public Result executeRollback(long rollbackId, AuditActor actor) {
+        if (!inFlightRollbacks.add(rollbackId)) {
+            throw new SqlauditException(ErrorCode.ROLLBACK_NOT_EXECUTABLE,
+                    "回滚记录 " + rollbackId + " 正在执行中，禁止重复并发回放");
+        }
+        try {
+            return doExecuteRollback(rollbackId, actor);
+        } finally {
+            inFlightRollbacks.remove(rollbackId);
+        }
+    }
+
+    private Result doExecuteRollback(long rollbackId, AuditActor actor) {
         LocalDateTime now = LocalDateTime.now();
 
         // 1. 存在性 + 状态 + 有效期校验（status 已由存储层按存储码解码为枚举，null 即库里为空）
@@ -86,9 +104,10 @@ public class RollbackExecutor {
             throw new SqlauditException(ErrorCode.ROLLBACK_INVALID_STATUS,
                     "未知回滚状态: " + rollback.getStatus());
         }
-        if (status != RollbackStatus.GENERATED && status != RollbackStatus.VERIFIED) {
+        if (status != RollbackStatus.GENERATED && status != RollbackStatus.VERIFIED
+                && status != RollbackStatus.PARTIAL) {
             throw new SqlauditException(ErrorCode.ROLLBACK_NOT_EXECUTABLE,
-                    "回滚当前状态 " + status.getCode() + " 不允许执行（仅 generated/verified 可执行）");
+                    "回滚当前状态 " + status.getCode() + " 不允许执行（仅 generated/verified/partial 可执行）");
         }
         if (rollback.getExpiresAt() != null && !rollback.getExpiresAt().isAfter(now)) {
             rollbackDao.updateStatus(rollbackId, RollbackStatus.EXPIRED,
@@ -102,7 +121,7 @@ public class RollbackExecutor {
         // 3. 解析生产实例（反向语句路由目标）
         long instanceId = resolveInstanceId(rollback);
 
-        // 4. 分批流式执行反向语句（按序；单 unit 内反向语句逐行独立，无顺序依赖）
+        // 4. 分批流式执行反向语句（按序；逐条幂等，跳过已 applied_at 非空的语句）
         int applied = 0;
         int total = 0;
         int offset = 0;
@@ -114,6 +133,10 @@ public class RollbackExecutor {
                 }
                 for (RollbackStatement stmt : batch) {
                     total++;
+                    if (stmt.getAppliedAt() != null) {
+                        applied++;
+                        continue; // 已应用的语句直接跳过，支持 partial 幂等续跑
+                    }
                     String sql = renderStatementSql(stmt);
                     ProductionGateway.ExecutionResult r = gateway.executeInTransaction(
                             new ProductionGateway.ExecutionRequest(sql, null, null, null, instanceId));
@@ -127,12 +150,12 @@ public class RollbackExecutor {
                     }
                     rollbackDao.markStatementApplied(stmt.getId(), now);
                     applied++;
-                    auditStatementApplied(actor, rollback, stmt, sql);
+                    auditStatementApplied(actor, rollback, instanceId, stmt, sql);
                 }
                 offset += batch.size();
             }
             rollbackDao.updateStatus(rollbackId, RollbackStatus.APPLIED, null);
-            auditExecute(actor, rollback, AuditResult.SUCCESS, applied, total, null);
+            auditExecute(actor, rollback, instanceId, AuditResult.SUCCESS, applied, total, null);
             return new Result(rollbackId, RollbackStatus.APPLIED.getCode(), applied, total, null);
         } catch (ExecutionFailure e) {
             RollbackStatus finalStatus = applied == 0 ? RollbackStatus.FAILED : RollbackStatus.PARTIAL;
@@ -140,7 +163,7 @@ public class RollbackExecutor {
             // 审计 result 落 FAILED / PARTIAL（存储码 = 枚举名），API 响应仍返回小写的回滚状态码
             AuditResult finalResult = finalStatus == RollbackStatus.PARTIAL
                     ? AuditResult.PARTIAL : AuditResult.FAILED;
-            auditExecute(actor, rollback, finalResult, applied, total, e.getMessage());
+            auditExecute(actor, rollback, instanceId, finalResult, applied, total, e.getMessage());
             log.warn("[rollback-exec] rollbackId={} 执行中断 status={} applied={}/{}: {}",
                     rollbackId, finalStatus.getCode(), applied, total, e.getMessage());
             return new Result(rollbackId, finalStatus.getCode(), applied, total, e.getMessage());
@@ -200,17 +223,19 @@ public class RollbackExecutor {
         }
     }
 
-    private void auditStatementApplied(AuditActor actor, RollbackSql rollback,
+    private void auditStatementApplied(AuditActor actor, RollbackSql rollback, long instanceId,
                                        RollbackStatement stmt, String sql) {
         try {
+            Map<String, Object> detail = new LinkedHashMap<>();
+            detail.put("rollbackId", rollback.getId());
+            detail.put("stmtOrder", stmt.getStmtOrder());
+            detail.put("sql", sql);
             auditWriter.append(AuditEvents.base(actor)
                     .action(AuditAction.ROLLBACK_STATEMENT_APPLIED)
                     .targetType(AuditTargetType.ROLLBACK_STATEMENT)
                     .targetId(String.valueOf(stmt.getId()))
-                    .instanceId(null)
-                    .detailPlaintext("{\"rollbackId\":" + rollback.getId()
-                            + ",\"stmtOrder\":" + stmt.getStmtOrder()
-                            + ",\"sql\":\"" + escape(sql) + "\"}")
+                    .instanceId(instanceId)
+                    .detailPlaintext(mapper.writeValueAsString(detail))
                     .result(AuditResult.SUCCESS)
                     .traceId("rollback-" + rollback.getId())
                     .createdAt(OffsetDateTime.now(zone))
@@ -221,19 +246,21 @@ public class RollbackExecutor {
         }
     }
 
-    private void auditExecute(AuditActor actor, RollbackSql rollback, AuditResult result,
-                              int applied, int total, String message) {
+    private void auditExecute(AuditActor actor, RollbackSql rollback, long instanceId,
+                              AuditResult result, int applied, int total, String message) {
         try {
+            Map<String, Object> detail = new LinkedHashMap<>();
+            detail.put("rollbackId", rollback.getId());
+            detail.put("unitId", rollback.getUnitId());
+            detail.put("applied", applied);
+            detail.put("total", total);
+            detail.put("message", message);
             auditWriter.append(AuditEvents.base(actor)
                     .action(AuditAction.ROLLBACK_EXECUTE)
                     .targetType(AuditTargetType.ROLLBACK)
                     .targetId(String.valueOf(rollback.getId()))
-                    .instanceId(null)
-                    .detailPlaintext("{\"rollbackId\":" + rollback.getId()
-                            + ",\"unitId\":" + (rollback.getUnitId() == null ? "null" : rollback.getUnitId())
-                            + ",\"applied\":" + applied
-                            + ",\"total\":" + total
-                            + ",\"message\":" + (message == null ? "null" : "\"" + escape(message) + "\"") + "}")
+                    .instanceId(instanceId)
+                    .detailPlaintext(mapper.writeValueAsString(detail))
                     .result(result)
                     .traceId("rollback-" + rollback.getId())
                     .createdAt(OffsetDateTime.now(zone))
@@ -241,10 +268,6 @@ public class RollbackExecutor {
         } catch (Exception e) {
             log.warn("[rollback-exec] 执行审计失败 rollbackId={}: {}", rollback.getId(), e.getMessage());
         }
-    }
-
-    private static String escape(String s) {
-        return s.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     private static String truncate(String s, int max) {

@@ -4,6 +4,8 @@ import com.sqlaudit.common.enums.ErrorCode;
 import com.sqlaudit.common.exception.IllegalStateTransitionException;
 import com.sqlaudit.common.exception.SqlauditException;
 import com.sqlaudit.server.auth.AuthenticationException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.TypeMismatchException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -24,6 +26,8 @@ import java.util.Map;
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     /** 业务异常；错误码取自异常自带的 {@link ErrorCode}，HTTP 状态按错误码映射。 */
     @ExceptionHandler(SqlauditException.class)
@@ -92,9 +96,10 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, String>> unexpected(Exception e) {
+        log.error("未捕获的系统异常", e);
         return ResponseEntity.internalServerError().body(Map.of(
                 "code", ErrorCode.INTERNAL_ERROR.getCode(),
-                "message", String.valueOf(e.getMessage())));
+                "message", "系统内部错误，请稍后重试或联系管理员"));
     }
 
     /** 错误码 → HTTP 状态（契约 §0 语义）。 */

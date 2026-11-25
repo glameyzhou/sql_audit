@@ -20,10 +20,17 @@ import com.sqlaudit.worker.gateway.GatewayBridgeImpl;
 import com.sqlaudit.worker.gateway.JdbcProductionGateway;
 import com.sqlaudit.worker.gateway.JdbcTableMetadataProvider;
 import com.sqlaudit.worker.gateway.JdbcStructureFingerprintProvider;
+import com.sqlaudit.common.enums.TicketStatus;
+import com.sqlaudit.common.enums.UnitStatus;
+import com.sqlaudit.storage.model.Ticket;
+import com.sqlaudit.storage.model.TicketUnit;
 import com.sqlaudit.worker.gateway.WorkerGateContext;
 import com.sqlaudit.worker.rollback.RollbackPersisterImpl;
 import com.sqlaudit.workflow.ApprovalFlowEngine;
+import com.sqlaudit.workflow.TicketStateMachine;
 import org.springframework.beans.factory.annotation.Value;
+
+import java.util.List;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -145,9 +152,67 @@ public class WorkerConfig {
      */
     @Bean
     public WorkerLoop workerLoop(
-            TicketUnitDao ticketUnitDao, UnitExecutionEngine engine, LeaseReaper reaper,
+            TicketUnitDao ticketUnitDao, TicketDao ticketDao, TicketStateMachine stateMachine,
+            UnitExecutionEngine engine, LeaseReaper reaper,
             ApprovalFlowEngine approvalFlowEngine,
             @Value("${sqlaudit.worker.id:server-embedded}") String workerId) {
-        return new WorkerLoop(ticketUnitDao, engine, reaper, workerId, approvalFlowEngine::canExecute);
+        return new WorkerLoop(ticketUnitDao, engine, reaper, workerId,
+                approvalFlowEngine::canExecute,
+                ticketId -> syncTicketStatus(ticketId, ticketDao, ticketUnitDao, stateMachine, workerId));
+    }
+
+    /**
+     * 根据工单下全部执行单元的状态聚合推进工单主状态：
+     * {@code approved → executing → (succeeded | partially_succeeded | failed | needs_confirm)}。
+     */
+    private static void syncTicketStatus(long ticketId, TicketDao ticketDao, TicketUnitDao unitDao,
+                                         TicketStateMachine stateMachine, String workerId) {
+        Ticket ticket = ticketDao.findById(ticketId);
+        if (ticket == null) {
+            return;
+        }
+        TicketStatus current = ticket.getStatus();
+        if (current != TicketStatus.APPROVED && current != TicketStatus.SCHEDULED
+                && current != TicketStatus.EXECUTING) {
+            return;
+        }
+        List<TicketUnit> units = unitDao.listByTicket(ticketId);
+        if (units.isEmpty()) {
+            return;
+        }
+        // 先从 approved/scheduled 推进到 executing，再判定是否已全部收敛到终态
+        if (current == TicketStatus.APPROVED || current == TicketStatus.SCHEDULED) {
+            stateMachine.transition(ticket, TicketStatus.EXECUTING, "worker:" + workerId);
+        }
+        boolean hasPending = false;
+        boolean hasNeedsConfirm = false;
+        int successCount = 0;
+        int failedCount = 0;
+        for (TicketUnit u : units) {
+            UnitStatus s = u.getStatus();
+            if (s == UnitStatus.PENDING || s == UnitStatus.LEASED || s == UnitStatus.EXECUTING) {
+                hasPending = true;
+            } else if (s == UnitStatus.NEEDS_CONFIRM) {
+                hasNeedsConfirm = true;
+            } else if (s == UnitStatus.SUCCESS || s == UnitStatus.SKIPPED) {
+                successCount++;
+            } else if (s == UnitStatus.FAILED) {
+                failedCount++;
+            }
+        }
+        if (hasPending) {
+            return;
+        }
+        TicketStatus target;
+        if (hasNeedsConfirm) {
+            target = TicketStatus.NEEDS_CONFIRM;
+        } else if (failedCount == 0) {
+            target = TicketStatus.SUCCEEDED;
+        } else if (successCount > 0) {
+            target = TicketStatus.PARTIALLY_SUCCEEDED;
+        } else {
+            target = TicketStatus.FAILED;
+        }
+        stateMachine.transition(ticket, target, "worker:" + workerId);
     }
 }

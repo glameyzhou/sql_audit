@@ -10,6 +10,7 @@ import com.sqlaudit.storage.dao.InstanceDao;
 import com.sqlaudit.storage.model.Instance;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import jakarta.annotation.PreDestroy;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.nio.charset.StandardCharsets;
@@ -47,8 +48,13 @@ public class JdbcProductionGateway implements ProductionGateway {
     private final InstanceDao instanceDao;
     private final JdbcTemplate platformJdbc;
 
-    /** 按实例 id 缓存的连接池，避免每次执行重建连接。 */
-    private final ConcurrentHashMap<Long, HikariDataSource> pools = new ConcurrentHashMap<>();
+    /** 单 unit 前镜像行数上限（README §4.4：防大影响面 DML 撑爆内存）。 */
+    private static final int MAX_PREIMAGE_ROWS = 5000;
+    /** 单 unit 前镜像估算字节上限（16 MiB，README §4.4）。 */
+    private static final long MAX_PREIMAGE_BYTES = 16L * 1024 * 1024;
+
+    /** 按实例 id 缓存的连接池（含配置指纹，实例地址或凭据变更时自动关闭旧池并重建）。 */
+    private final ConcurrentHashMap<Long, CachedPool> pools = new ConcurrentHashMap<>();
 
     public JdbcProductionGateway(InstanceDao instanceDao, JdbcTemplate platformJdbc) {
         this.instanceDao = instanceDao;
@@ -150,22 +156,45 @@ public class JdbcProductionGateway implements ProductionGateway {
     // 事务内步骤
     // ------------------------------------------------------------------
 
-    /** 前镜像逐行读为 Map&lt;列 label, 值&gt;（列序与 PreimagePlanner 对齐）。 */
+    /** 前镜像逐行读为 Map&lt;列 label, 值&gt;（列序与 PreimagePlanner 对齐；强制 5000 行 / 16MiB 上限）。 */
     private static List<Map<String, Object>> readPreimage(Connection conn, String preimageSql)
             throws SQLException {
         List<Map<String, Object>> rows = new ArrayList<>();
+        long estimatedBytes = 0L;
         try (PreparedStatement ps = conn.prepareStatement(preimageSql);
              ResultSet rs = ps.executeQuery()) {
             ResultSetMetaData meta = rs.getMetaData();
+            int colCount = meta.getColumnCount();
             while (rs.next()) {
+                if (rows.size() >= MAX_PREIMAGE_ROWS) {
+                    throw new SQLException("前镜像行数超过上限 " + MAX_PREIMAGE_ROWS + " 行，中止事务");
+                }
                 Map<String, Object> row = new LinkedHashMap<>();
-                for (int i = 1; i <= meta.getColumnCount(); i++) {
-                    row.put(meta.getColumnLabel(i), rs.getObject(i));
+                for (int i = 1; i <= colCount; i++) {
+                    Object val = rs.getObject(i);
+                    row.put(meta.getColumnLabel(i), val);
+                    estimatedBytes += estimateValueBytes(val);
+                }
+                if (estimatedBytes > MAX_PREIMAGE_BYTES) {
+                    throw new SQLException("前镜像数据量超过上限 " + (MAX_PREIMAGE_BYTES / (1024 * 1024)) + " MiB，中止事务");
                 }
                 rows.add(row);
             }
         }
         return rows;
+    }
+
+    private static long estimateValueBytes(Object val) {
+        if (val == null) {
+            return 8L;
+        }
+        if (val instanceof byte[] bytes) {
+            return bytes.length;
+        }
+        if (val instanceof CharSequence cs) {
+            return (long) cs.length() * 2L;
+        }
+        return 32L;
     }
 
     /** UPDATE/DELETE 执行（affected = matched rows 口径，MySQL useAffectedRows=false）。 */
@@ -190,18 +219,23 @@ public class JdbcProductionGateway implements ProductionGateway {
             if (rewritten.endsWith(";")) {
                 rewritten = rewritten.substring(0, rewritten.length() - 1);
             }
-            rewritten = rewritten + " RETURNING " + String.join(", ", pkColumns);
+            if (!rewritten.toUpperCase().contains(" RETURNING ")) {
+                rewritten = rewritten + " RETURNING " + String.join(", ", pkColumns);
+            }
             List<Object> pk = new ArrayList<>();
+            long rowCount = 0;
             try (PreparedStatement ps = conn.prepareStatement(rewritten);
                  ResultSet rs = ps.executeQuery()) {
+                int colCount = Math.min(pkColumns.size(), rs.getMetaData().getColumnCount());
                 while (rs.next()) {
-                    for (int i = 1; i <= pkColumns.size(); i++) {
+                    rowCount++;
+                    for (int i = 1; i <= colCount; i++) {
                         pk.add(rs.getObject(i));
                     }
                 }
             }
-            // INSERT 无对账，affected 取取回主键行数（多行 INSERT 时即插入行数）
-            return new InsertResult(pk.size(), pk);
+            // INSERT 无对账，affected 取实际插入行数（复合主键时不可按 pk.size() 计数）
+            return new InsertResult(rowCount, pk);
         }
 
         // MySQL：Statement.RETURN_GENERATED_KEYS（auto_increment 主键；或 LAST_INSERT_ID()）
@@ -222,17 +256,38 @@ public class JdbcProductionGateway implements ProductionGateway {
     // 连接与隔离级别
     // ------------------------------------------------------------------
 
-    /** 按实例缓存的连接池（惰性创建）。 */
+    /** 按实例缓存的连接池（配置或凭据变化时自动关闭旧池并重建）。 */
     private HikariDataSource poolFor(Instance inst, Credential cred) {
-        return pools.computeIfAbsent(inst.getId(), id -> {
+        String url = jdbcUrl(inst, dialectOf(inst));
+        String fingerprint = url + "|" + cred.username() + "|"
+                + (cred.password() == null ? "" : cred.password().hashCode());
+        CachedPool cached = pools.compute(inst.getId(), (id, existing) -> {
+            if (existing != null && existing.fingerprint().equals(fingerprint) && !existing.ds().isClosed()) {
+                return existing;
+            }
+            if (existing != null) {
+                existing.ds().close();
+            }
             HikariConfig cfg = new HikariConfig();
-            cfg.setJdbcUrl(jdbcUrl(inst, dialectOf(inst)));
+            cfg.setJdbcUrl(url);
             cfg.setUsername(cred.username());
             cfg.setPassword(cred.password());
             cfg.setMaximumPoolSize(4);
             cfg.setConnectionTimeout(5000);
-            return new HikariDataSource(cfg);
+            return new CachedPool(fingerprint, new HikariDataSource(cfg));
         });
+        return cached.ds();
+    }
+
+    @PreDestroy
+    public void close() {
+        for (CachedPool cached : pools.values()) {
+            cached.ds().close();
+        }
+        pools.clear();
+    }
+
+    private record CachedPool(String fingerprint, HikariDataSource ds) {
     }
 
     /**

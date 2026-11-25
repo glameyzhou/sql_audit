@@ -24,9 +24,13 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * 查询通道端点（README §4.1：三层保护在 QueryChannel 内；契约 §6 查询段）。
@@ -47,6 +51,7 @@ public class QueryController {
     private final DataScopeService dataScopeService;
     private final InstanceDao instanceDao;
     private final ZoneId zone;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     public QueryController(QueryChannel queryChannel, AuditWriter auditWriter,
                            DataScopeService dataScopeService, InstanceDao instanceDao, ZoneId zone) {
@@ -69,6 +74,9 @@ public class QueryController {
         // 实例默认库（平台配置的库，查询只允许动它）：MySQL 下门禁校验限定名不越界
         Instance instance = req.instanceId() > 0 ? instanceDao.findById(req.instanceId()) : null;
         String defaultSchema = instance == null ? null : instance.getDefaultSchema();
+        Dialect effectiveDialect = req.dialect() != null
+                ? req.dialect()
+                : (instance == null ? null : instance.getDialect());
 
         // 控制台实用语句（SHOW TABLES / DESC）：翻译成 information_schema 只读 SELECT 后
         // 仍走完整门禁 + 三层保护；审计 detail 记用户原文（req.sql()）
@@ -77,7 +85,7 @@ public class QueryController {
         if (rewrite.rejectReason() != null) {
             result = QueryResult.rejected(req.instanceId(), req.sql(), rewrite.rejectReason(), 0);
         } else {
-            result = queryChannel.execute(req.instanceId(), rewrite.sql(), req.dialect(), defaultSchema);
+            result = queryChannel.execute(req.instanceId(), rewrite.sql(), effectiveDialect, defaultSchema);
             if (rewrite.isTranslated()) {
                 result = result.withNotice(rewrite.notice());
             }
@@ -88,13 +96,23 @@ public class QueryController {
                 .targetType(AuditTargetType.INSTANCE)
                 .targetId(String.valueOf(req.instanceId()))
                 .instanceId(req.instanceId())
-                .detailPlaintext("{\"sql\":\"" + req.sql().replace("\\", "\\\\").replace("\"", "\\\"")
-                        + "\",\"rowCount\":" + result.getRowCount() + "}")
+                .detailPlaintext(buildAuditDetail(req.sql(), result.getRowCount()))
                 .result(result.isSuccess() ? AuditResult.SUCCESS : AuditResult.REJECTED)
                 .traceId("query-inst" + req.instanceId())
                 .createdAt(OffsetDateTime.now(zone))
                 .build());
         return result;
+    }
+
+    private String buildAuditDetail(String sql, int rowCount) {
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("sql", sql == null ? "" : sql);
+        detail.put("rowCount", rowCount);
+        try {
+            return objectMapper.writeValueAsString(detail);
+        } catch (Exception e) {
+            return "{\"rowCount\":" + rowCount + "}";
+        }
     }
 
     /**

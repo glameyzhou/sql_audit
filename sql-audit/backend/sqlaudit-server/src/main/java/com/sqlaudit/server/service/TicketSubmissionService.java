@@ -16,6 +16,7 @@ import com.sqlaudit.parser.SqlParserService;
 import com.sqlaudit.query.gate.SchemaBoundaryChecker;
 import com.sqlaudit.rollback.capability.CapabilityContext;
 import com.sqlaudit.rollback.capability.RollbackCapabilityAssessor;
+import com.sqlaudit.rule.TableMetadataProvider;
 import com.sqlaudit.rule.engine.AuditOutcome;
 import com.sqlaudit.rule.engine.RuleEngine;
 import com.sqlaudit.rule.risk.ApprovalChain;
@@ -70,11 +71,13 @@ public class TicketSubmissionService {
     private final ApprovalFlowEngine approvalEngine;
     private final ApprovalRouter approvalRouter;
     private final InstanceDao instanceDao;
+    private final TableMetadataProvider tableMetadataProvider;
 
     public TicketSubmissionService(SqlParserService parser, RuleEngine ruleEngine,
                                    RollbackCapabilityAssessor capabilityAssessor,
                                    TicketService ticketService, ApprovalFlowEngine approvalEngine,
-                                   ApprovalRouter approvalRouter, InstanceDao instanceDao) {
+                                   ApprovalRouter approvalRouter, InstanceDao instanceDao,
+                                   TableMetadataProvider tableMetadataProvider) {
         this.parser = parser;
         this.ruleEngine = ruleEngine;
         this.capabilityAssessor = capabilityAssessor;
@@ -82,6 +85,7 @@ public class TicketSubmissionService {
         this.approvalEngine = approvalEngine;
         this.approvalRouter = approvalRouter;
         this.instanceDao = instanceDao;
+        this.tableMetadataProvider = tableMetadataProvider;
     }
 
     /** 一个 unit 的预览视图（前端提交页展示；statementType 按存储码序列化）。 */
@@ -154,7 +158,11 @@ public class TicketSubmissionService {
 
     private long doSubmit(String title, long creatorId, long instanceId,
                           String sql, String shardConfig, Dialect dialect) {
-        PreviewResult preview = doPreview(sql, dialect);
+        EvaluatedPreview eval = evaluatePreview(sql, dialect);
+        PreviewResult preview = eval.preview();
+        if (eval.parsed().isEmpty()) {
+            throw new SqlauditException(ErrorCode.INVALID_REQUEST, "SQL 不能为空");
+        }
 
         // ERROR 阻断在入口拒绝（README §4.3）——不产生 draft，前端拿到 400 + 命中明细
         if (preview.errorBlocked()) {
@@ -163,9 +171,8 @@ public class TicketSubmissionService {
         }
 
         List<TicketUnit> units = new ArrayList<>();
-        List<ParsedStatement> parsed = parser.parse(sql, dialect);
-        for (ParsedStatement ps : parsed) {
-            units.add(toUnit(ps, instanceId));
+        for (ParsedStatement ps : eval.parsed()) {
+            units.add(toUnit(ps, instanceId, eval.dialect(), eval.defaultSchema()));
         }
 
         // 建单前试解析审批链（契约 §6：失败 400 且不建单）——传入未持久化的工单即可
@@ -179,8 +186,7 @@ public class TicketSubmissionService {
         var ticket = ticketService.createTicket(title, creatorId, instanceId,
                 preview.riskLevel(), preview.rollbackSummary(), sql, shardConfig, units);
 
-        AuditOutcome outcome = ruleEngine.audit(parsed);
-        ticketService.submitForAudit(ticket.getId(), outcome);
+        ticketService.submitForAudit(ticket.getId(), eval.outcome());
         // 提交即生成审批节点（两步合并）：LOW 空链直接 approved，其余进入审批。
         // 试解析（上方 resolveNodes）已保证非 LOW 空链 / 无可审人不会走到这里。
         ticketService.submitForApproval(ticket.getId());
@@ -197,16 +203,24 @@ public class TicketSubmissionService {
     // ------------------------------------------------------------------
 
     private PreviewResult doPreview(String sql, Dialect dialect) {
-        List<ParsedStatement> parsed = parser.parse(sql, dialect);
+        return evaluatePreview(sql, dialect).preview();
+    }
+
+    private EvaluatedPreview evaluatePreview(String sql, Dialect requestedDialect) {
+        Long instanceId = InstanceContext.get();
+        Instance inst = (instanceId != null && instanceId > 0) ? instanceDao.findById(instanceId) : null;
+        String defaultSchema = inst == null ? null : inst.getDefaultSchema();
+        Dialect effectiveDialect = requestedDialect != null
+                ? requestedDialect
+                : (inst != null && inst.getDialect() != null ? inst.getDialect() : Dialect.MYSQL);
+
+        List<ParsedStatement> parsed = parser.parse(sql, effectiveDialect);
 
         // 实例默认库边界（平台配置哪个库就只动哪个库）：MySQL 下限定名引用其他库 → 400 拒绝。
         // 预览与提交共用本方法，一处拦截两处生效。instanceId 经 InstanceContext（ThreadLocal）注入。
-        Long instanceId = InstanceContext.get();
-        if (instanceId != null && instanceId > 0) {
-            Instance inst = instanceDao.findById(instanceId);
-            String defaultSchema = inst == null ? null : inst.getDefaultSchema();
+        if (inst != null) {
             for (ParsedStatement ps : parsed) {
-                List<String> violations = SchemaBoundaryChecker.violations(dialect, defaultSchema, ps);
+                List<String> violations = SchemaBoundaryChecker.violations(effectiveDialect, defaultSchema, ps);
                 if (!violations.isEmpty()) {
                     throw new SqlauditException(ErrorCode.SCHEMA_OUT_OF_BOUND,
                             String.join("；", violations));
@@ -222,7 +236,7 @@ public class TicketSubmissionService {
             ParsedStatement ps = parsed.get(i);
             List<RuleHit> hits = outcome.hitsOf(i);
             RollbackPlan plan = capabilityAssessor.assess(
-                    new CapabilityContext(ps, hits, null));
+                    new CapabilityContext(ps, hits, tableMetadataProvider));
 
             unitViews.add(new UnitPreview(
                     i + 1,
@@ -247,11 +261,34 @@ public class TicketSubmissionService {
             summaryEntries.add(entry);
         }
 
-        StatementType main = parsed.isEmpty() ? StatementType.OTHER : parsed.get(0).getStatementType();
+        StatementType main = dominantStatementType(parsed);
         RiskLevel risk = RiskAssessor.assess(outcome.allHits(), main, false);
 
-        return new PreviewResult(dialect.name(), parsed.size(), risk,
+        PreviewResult preview = new PreviewResult(effectiveDialect.name(), parsed.size(), risk,
                 outcome.errorBlocked(), unitViews, toJson(summaryEntries));
+        return new EvaluatedPreview(preview, parsed, outcome, effectiveDialect, defaultSchema);
+    }
+
+    /** 多语句工单聚合主语句类型（DDL > DML > 首条语句），避免首条低危语句掩盖后续变更。 */
+    private static StatementType dominantStatementType(List<ParsedStatement> parsed) {
+        if (parsed.isEmpty()) {
+            return StatementType.OTHER;
+        }
+        StatementType dml = null;
+        for (ParsedStatement ps : parsed) {
+            StatementType t = ps.getStatementType();
+            if (t == StatementType.DDL) {
+                return StatementType.DDL;
+            }
+            if (dml == null && (t == StatementType.UPDATE || t == StatementType.DELETE || t == StatementType.INSERT)) {
+                dml = t;
+            }
+        }
+        return dml != null ? dml : parsed.get(0).getStatementType();
+    }
+
+    private record EvaluatedPreview(PreviewResult preview, List<ParsedStatement> parsed,
+                                    AuditOutcome outcome, Dialect dialect, String defaultSchema) {
     }
 
     private static String toJson(Object value) {
@@ -263,8 +300,8 @@ public class TicketSubmissionService {
         }
     }
 
-    /** ParsedStatement → TicketUnit（statement 明文；加密由 JDBC DAO 透明完成）。 */
-    private static TicketUnit toUnit(ParsedStatement ps, long instanceId) {
+    /** ParsedStatement → TicketUnit（statement 明文；未限定库名时回落实例 defaultSchema 防止绕过结构漂移门禁）。 */
+    private static TicketUnit toUnit(ParsedStatement ps, long instanceId, Dialect dialect, String defaultSchema) {
         var unit = new TicketUnit();
         unit.setInstanceId(instanceId);
         unit.setStatement(ps.getOriginalSql());
@@ -273,7 +310,11 @@ public class TicketSubmissionService {
         if (!ps.getObjects().isEmpty()) {
             SqlObject obj = ps.getObjects().get(0);
             unit.setObjectName(obj.getName());
-            unit.setSchemaName(obj.getSchema());
+            String schema = obj.getSchema();
+            if ((schema == null || schema.isBlank()) && dialect != Dialect.IOTDB) {
+                schema = defaultSchema;
+            }
+            unit.setSchemaName(schema);
         }
         return unit;
     }

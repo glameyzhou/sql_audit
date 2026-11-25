@@ -10,6 +10,7 @@ import com.sqlaudit.storage.model.Credential;
 import com.sqlaudit.storage.model.Instance;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import jakarta.annotation.PreDestroy;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -38,8 +39,8 @@ public class JdbcProductionGateway implements ProductionGateway {
     private final InstanceDao instanceDao;
     private final CredentialDao credentialDao;
 
-    /** 按实例 id 缓存的连接池，避免每次执行重建连接。 */
-    private final ConcurrentHashMap<Long, HikariDataSource> pools = new ConcurrentHashMap<>();
+    /** 按实例 id 缓存的连接池（含配置指纹，实例地址或凭据变更时自动关闭旧池并重建）。 */
+    private final ConcurrentHashMap<Long, CachedPool> pools = new ConcurrentHashMap<>();
 
     public JdbcProductionGateway(InstanceDao instanceDao, CredentialDao credentialDao) {
         this.instanceDao = instanceDao;
@@ -120,20 +121,40 @@ public class JdbcProductionGateway implements ProductionGateway {
     }
 
     private HikariDataSource poolFor(Instance inst, Dialect dialect, String username, String password) {
-        return pools.computeIfAbsent(inst.getId(), id -> {
+        String url = jdbcUrl(inst, dialect);
+        String fingerprint = url + "|" + username + "|" + (password == null ? "" : password.hashCode());
+        CachedPool cached = pools.compute(inst.getId(), (id, existing) -> {
+            if (existing != null && existing.fingerprint().equals(fingerprint) && !existing.ds().isClosed()) {
+                return existing;
+            }
+            if (existing != null) {
+                existing.ds().close();
+            }
             HikariConfig cfg = new HikariConfig();
-            cfg.setJdbcUrl(jdbcUrl(inst, dialect));
+            cfg.setJdbcUrl(url);
             cfg.setUsername(username);
             cfg.setPassword(password);
             cfg.setMaximumPoolSize(4);
             cfg.setConnectionTimeout(5000);
-            return new HikariDataSource(cfg);
+            return new CachedPool(fingerprint, new HikariDataSource(cfg));
         });
+        return cached.ds();
+    }
+
+    @PreDestroy
+    public void close() {
+        for (CachedPool cached : pools.values()) {
+            cached.ds().close();
+        }
+        pools.clear();
+    }
+
+    private record CachedPool(String fingerprint, HikariDataSource ds) {
     }
 
     private static String jdbcUrl(Instance inst, Dialect dialect) {
         String host = inst.getHost();
-        int port = inst.getPort() == null ? 3306 : inst.getPort();
+        int port = inst.getPort() == null ? (dialect == Dialect.PG ? 5432 : 3306) : inst.getPort();
         String schema = inst.getDefaultSchema() == null ? "" : inst.getDefaultSchema();
         if (dialect == Dialect.PG) {
             return "jdbc:postgresql://" + host + ":" + port + "/" + schema

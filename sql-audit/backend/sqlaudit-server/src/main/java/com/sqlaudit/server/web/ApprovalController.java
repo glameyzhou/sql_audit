@@ -11,6 +11,7 @@ import com.sqlaudit.common.exception.SqlauditException;
 import com.sqlaudit.executor.gate.ExecutionGate;
 import com.sqlaudit.server.auth.CurrentUser;
 import com.sqlaudit.server.auth.RoleAuthInterceptor;
+import com.sqlaudit.server.service.DataScopeService;
 import com.sqlaudit.storage.dao.ApprovalDao;
 import com.sqlaudit.storage.dao.InstanceDao;
 import com.sqlaudit.storage.dao.RoleDao;
@@ -66,12 +67,13 @@ public class ApprovalController {
     private final RoleDao roleDao;
     private final ExecutionGate.StructureFingerprintProvider structureFingerprintProvider;
     private final InstanceDao instanceDao;
+    private final DataScopeService dataScopeService;
 
     public ApprovalController(ApprovalFlowEngine approvalEngine, ApprovalDao approvalDao,
                               TicketDao ticketDao, TicketUnitDao ticketUnitDao,
                               UserDao userDao, RoleDao roleDao,
                               ExecutionGate.StructureFingerprintProvider structureFingerprintProvider,
-                              InstanceDao instanceDao) {
+                              InstanceDao instanceDao, DataScopeService dataScopeService) {
         this.approvalEngine = approvalEngine;
         this.approvalDao = approvalDao;
         this.ticketDao = ticketDao;
@@ -80,6 +82,7 @@ public class ApprovalController {
         this.roleDao = roleDao;
         this.structureFingerprintProvider = structureFingerprintProvider;
         this.instanceDao = instanceDao;
+        this.dataScopeService = dataScopeService;
     }
 
     /** 待我审批列表：仅当前组、本人可审、非本人提交（契约 §6）。 */
@@ -106,21 +109,27 @@ public class ApprovalController {
         return out;
     }
 
-    /** 审批决策（approve/reject/comment；决策落库 + 状态迁移整笔事务）。 */
+    /** 审批决策（approve/reject/comment；先鉴权与防自审，通过后再采指纹，整笔事务失败回滚）。 */
     @PostMapping("/{ticketId}/decide")
     @org.springframework.transaction.annotation.Transactional
     public ApprovalDecision decide(@PathVariable long ticketId, @RequestBody DecideRequest req,
                                    HttpServletRequest request) {
         long approverId = RoleAuthInterceptor.currentUser(request).id();
+        ApprovalDecision decision = approvalEngine.submitDecision(
+                ticketId, approverId, req.approve(), req.comment());
         if (req.approve()) {
             captureStructureFingerprints(ticketId);
         }
-        return approvalEngine.submitDecision(ticketId, approverId, req.approve(), req.comment());
+        return decision;
     }
 
-    /** 执行前二次确认（CRITICAL 工单，README §4.6；接口权限点 approval.confirm 控制，不校验角色）。 */
+    /** 执行前二次确认（CRITICAL 工单，README §4.6；校验实例数据范围与防自审）。 */
     @PostMapping("/{ticketId}/confirm-execution")
     public void confirmExecution(@PathVariable long ticketId, HttpServletRequest request) {
+        Ticket ticket = ticketDao.findById(ticketId);
+        if (ticket != null && ticket.getInstanceId() != null) {
+            dataScopeService.requireInScope(dataScopeService.requestScope(request), ticket.getInstanceId());
+        }
         long confirmerId = RoleAuthInterceptor.currentUser(request).id();
         approvalEngine.confirmExecution(ticketId, confirmerId);
     }

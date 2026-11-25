@@ -12,6 +12,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 /**
@@ -52,23 +53,32 @@ public class WorkerLoop {
     private final String workerId;
     /** README §4.2 前置门禁：工单是否已到可执行态（审批通过且完成必要的二次确认）。 */
     private final Predicate<Long> ticketCanExecute;
+    /** 执行单元结束后同步工单主状态的回调（可选，默认空操作）。 */
+    private final Consumer<Long> onUnitExecuted;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private volatile Thread loopThread;
 
     public WorkerLoop(TicketUnitDao unitDao, UnitExecutionEngine engine,
                       LeaseReaper reaper, String workerId, Predicate<Long> ticketCanExecute) {
+        this(unitDao, engine, reaper, workerId, ticketCanExecute, null);
+    }
+
+    public WorkerLoop(TicketUnitDao unitDao, UnitExecutionEngine engine,
+                      LeaseReaper reaper, String workerId, Predicate<Long> ticketCanExecute,
+                      Consumer<Long> onUnitExecuted) {
         this.unitDao = Objects.requireNonNull(unitDao);
         this.engine = Objects.requireNonNull(engine);
         this.reaper = Objects.requireNonNull(reaper);
         this.workerId = Objects.requireNonNull(workerId);
         this.ticketCanExecute = Objects.requireNonNull(ticketCanExecute);
+        this.onUnitExecuted = onUnitExecuted;
     }
 
-    /** 单轮执行（reap → 取候选 → canExecute 过滤 → 逐个竞争执行）。返回本轮执行成功的 unit 数。 */
+    /** 单轮执行（reap → 取候选 → canExecute 过滤 → 逐个竞争执行 → 同步工单状态）。返回本轮执行成功的 unit 数。 */
     public int runOnce(LocalDateTime now) {
         reaper.reap(now);
 
-        List<TicketUnit> candidates = unitDao.listClaimable(now, BATCH_LIMIT);
+        List<TicketUnit> candidates = unitDao.listClaimableForExecutableTickets(now, BATCH_LIMIT);
         int executed = 0;
         for (TicketUnit unit : candidates) {
             // README §4.2 前置门禁：未过审批（含需二次确认未确认）的工单跳过且不动状态，
@@ -99,6 +109,17 @@ public class WorkerLoop {
             }
             if (result.status() == UnitExecutionEngine.EngineResult.Status.SUCCESS) {
                 executed++;
+            }
+            if (onUnitExecuted != null
+                    && result.status() != UnitExecutionEngine.EngineResult.Status.NOT_CLAIMED
+                    && result.status() != UnitExecutionEngine.EngineResult.Status.LOCK_BUSY
+                    && result.status() != UnitExecutionEngine.EngineResult.Status.INTENT_REJECTED) {
+                try {
+                    onUnitExecuted.accept(unit.getTicketId());
+                } catch (Exception e) {
+                    log.warn("[worker-{}] 同步工单状态失败 ticket={}: {}",
+                            workerId, unit.getTicketId(), e.getMessage());
+                }
             }
         }
         return executed;
